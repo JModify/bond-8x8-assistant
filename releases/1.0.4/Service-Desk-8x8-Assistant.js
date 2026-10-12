@@ -1,0 +1,1240 @@
+/* Service Desk 8x8 Assistant — v1.0.4
+ * Author: Joshua Lavagna-Slater
+ * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
+ * New snippet. Paste this entire file, then press Ctrl+Enter.
+ * Monitoring starts automatically. Select the G1 agents; Mute silences assistant sounds.
+ * Tick Me in G1 for your own availability, disposition and lunch reminders.
+ * Browser audio may require a click in the page; normal interactions enable it.
+ * No downloads, external requests, credentials, or second login are used.
+ * Reads rendered queue/agent HTML; never changes your availability or answers calls.
+ * Keep the three inbound queue rows and selected agents rendered in the sidebar.
+ * Background browser throttling, page freezing, logout, closure and refresh
+ * can delay/stop monitoring. Rerun after a refresh. Not a guaranteed alarm service.
+ * In G2, assistance uses the break, waiting and coverage rules.
+ * In G1, Me gets queue-based Working Offline, disposition and lunch reminders.
+ * Timings are configurable in Assistant Settings. Only one personal alarm runs.
+ * G1 selections, assistant settings and sounds persist when storage is permitted.
+ * Break and disposition pages use compact personal timers without queue information.
+ * Other missing queue/group information hides the controls until it returns.
+ * Muting keeps monitoring, timers, notifications and statistics running.
+ * Statistics record observed Busy starts, not 8x8's complete historical call totals.
+ */
+(() => {
+  'use strict';
+  let root = window;
+  try { if (window.top.location.origin === location.origin) root = window.top; } catch {}
+  if (root.location.hostname !== 'vcc-au2.8x8.com') {
+    throw new Error('Run this snippet in your existing vcc-au2.8x8.com tab.');
+  }
+  const resumedWrapUp = root.__itsCallAssist?.wrapUpSession?.();
+  root.__itsCallAssist?.destroy();
+  const doc = root.document;
+  const VERSION = '1.0.4';
+  let wrapUpSession = resumedWrapUp || null;
+  const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+  const normal = s => clean(s).toLowerCase();
+  const QUEUE_CONFIG_KEY='service-desk-8x8-inbound-queues-v1';
+  function validQueueNames(value) {
+    return Array.isArray(value) && value.length===3 && value.every(name=>typeof name==='string' && clean(name))
+      && new Set(value.map(clean)).size===3;
+  }
+  let QUEUES=[];
+  try {
+    const value=JSON.parse(root.localStorage.getItem(QUEUE_CONFIG_KEY) || 'null');
+    if (validQueueNames(value)) QUEUES=value.map(clean);
+  } catch {}
+  if (!QUEUES.length && validQueueNames(root.__serviceDesk8x8Queues)) QUEUES=root.__serviceDesk8x8Queues.map(clean);
+  function duration(text) {
+    const s = normal(text);
+    if (!s) return null;
+    if (/^\d+:\d{2}(?::\d{2})?$/.test(s)) {
+      const clock=s.split(':').map(Number);
+      if (clock.slice(1).some(n=>n>=60)) return null;
+      return clock.reduce((total,n)=>total*60+n,0);
+    }
+    const parts = [...s.matchAll(/(\d+)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/g)];
+    if (!parts.length || clean(s.replace(/\d+\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/g, ''))) return null;
+    return parts.reduce((n, p) => n + Number(p[1]) * (p[2][0] === 'h' ? 3600 : p[2][0] === 'm' ? 60 : 1), 0);
+  }
+  function visible(node) {
+    if (!node || !node.getClientRects().length) return false;
+    const view = node.ownerDocument.defaultView;
+    for (let n = node; n?.nodeType === 1; n = n.parentElement) {
+      const css = view.getComputedStyle(n);
+      if (n.hidden || css.display === 'none' || css.visibility === 'hidden' || css.visibility === 'collapse') return false;
+    }
+    return true;
+  }
+  function documents() {
+    const found = [], seen = new Set();
+    function walk(d) {
+      if (!d || seen.has(d)) return;
+      seen.add(d); found.push(d);
+      for (const f of d.querySelectorAll('iframe,frame')) {
+        try { if (visible(f)) walk(f.contentDocument); } catch {}
+      }
+    }
+    walk(doc);
+    return found;
+  }
+  function agentRows(docs) {
+    return docs.flatMap(d => [...d.querySelectorAll('[data-test-id="agent-item"]')].filter(visible));
+  }
+  // Only inspect the supplied status markers. Never read caller names or details.
+  function readPersonalPage(docs) {
+    const breaks=docs.flatMap(d=>[...d.querySelectorAll('[data-test-id="on-break-timer"]')]).filter(visible);
+    const wraps=docs.flatMap(d=>[...d.querySelectorAll('[data-test-id="wrap-up-label"]')])
+      .filter(node=>visible(node) && dispositionStatus(node.textContent));
+    if (breaks.length===1 && !wraps.length) {
+      const timer=breaks[0],text=clean(timer.textContent),seconds=duration(text);
+      if (seconds===null) return null;
+      const reason=clean(timer.parentElement?.parentElement?.querySelector('[title]')?.getAttribute('title'));
+      return {kind:'break',status:'On Break',timer:text,seconds,reason,liveTimer:text};
+    }
+    if (wraps.length===1 && !breaks.length) {
+      const card=wraps[0].closest('[data-test-id="phone-card-test-id"]');
+      const timer=card?.querySelector('[data-test-id="progress-timer"][aria-label="Wrap up"]');
+      if (!visible(timer)) return null;
+      const text=clean(timer.textContent),remaining=duration(text);
+      if (remaining===null) return null;
+      // This is 8x8's countdown, not time spent in disposition. The separate
+      // interaction-time-label is the finished call's duration and is ignored.
+      return {kind:'disposition',status:'Wrap Up',remaining,liveTimer:text};
+    }
+    return null;
+  }
+  function pagePresence(page) {
+    if (page.kind==='break') {
+      wrapUpSession=null;
+      return {name:'Me',...page};
+    }
+    const now=Date.now();
+    if (!wrapUpSession) wrapUpSession={startedAt:now,initialRemaining:page.remaining};
+    if (!Number.isFinite(wrapUpSession.initialRemaining)) wrapUpSession.initialRemaining=page.remaining+(wrapUpSession.elapsed || 0);
+    const seconds=Math.max(0,wrapUpSession.elapsed || 0,Math.floor((now-wrapUpSession.startedAt)/1000),wrapUpSession.initialRemaining-page.remaining);
+    wrapUpSession.elapsed=seconds;
+    return {name:'Me',...page,seconds,timer:seconds+'s'};
+  }
+  const agentName = r => clean(r.querySelector('[data-test-id="agent-name-label"]')?.getAttribute('title') || r.getAttribute('aria-label'));
+  function read(docs, name) {
+    const errors = [];
+    const candidates = agentRows(docs).filter(r => agentName(r) === name);
+    let agent = null;
+    if (name === 'Me') {
+      agent = readMe(docs);
+      if (!agent) errors.push('Your status or timer is unreadable');
+    }
+    else if (candidates.length !== 1) errors.push(`Agent row ${candidates.length ? 'ambiguous' : 'missing'}: ${name || '(choose an agent)'}`);
+    else {
+      const r = candidates[0];
+      const status = clean(r.querySelector('[data-status-value]')?.getAttribute('data-status-value'));
+      const timer = clean(r.querySelector('[data-test-id="user-presence-timer"]')?.textContent);
+      const seconds = duration(timer);
+      if (!status || seconds === null) errors.push('Agent status or timer unreadable');
+      else agent = {name, status, timer, seconds};
+    }
+    const rows = docs.flatMap(d => [...d.querySelectorAll('[data-test-id="queue-item"]')].filter(visible));
+    const queues = QUEUES.map(name => {
+      const matches = rows.filter(r => clean(r.querySelector('[data-test-id="queue-name"]')?.getAttribute('title')) === name);
+      if (matches.length !== 1) { errors.push(`Queue row ${matches.length ? 'ambiguous' : 'missing'}: ${name}`); return {name, waiting:null}; }
+      const cells = [...matches[0].querySelectorAll('[role="gridcell"][title]')];
+      const cellsWaiting = cells.filter(c => /^\d+\s+Interactions? waiting$/i.test(clean(c.getAttribute('title'))));
+      const waiting = cellsWaiting.length === 1 && /^\d+$/.test(clean(cellsWaiting[0].textContent)) ? Number(clean(cellsWaiting[0].textContent)) : null;
+      const titleCount = cellsWaiting.length === 1 ? Number(cellsWaiting[0].getAttribute('title').match(/^\d+/)?.[0]) : null;
+      if (waiting === null || waiting !== titleCount || !Number.isSafeInteger(waiting)) {
+        errors.push(`Waiting count unreadable: ${name}`); return {name, waiting:null};
+      }
+      const waits=cells.filter(c=>/\sLongest waiting time$/i.test(clean(c.getAttribute('title'))));
+      let waitSeconds=waiting===0?0:null;
+      if (waiting>0 && waits.length===1) {
+        const labelled=duration(clean(waits[0].getAttribute('title')).replace(/\sLongest waiting time$/i,''));
+        const displayed=duration(clean(waits[0].textContent));
+        if (labelled!==null && displayed!==null && labelled===displayed) waitSeconds=labelled;
+      }
+      return {name, waiting,waitSeconds};
+    });
+    return {agent, queues, errors};
+  }
+  function readMe(docs) {
+    const page=readPersonalPage(docs);
+    if (page) return pagePresence(page);
+    const candidates = [];
+    for (const d of docs) {
+      for (const timer of d.querySelectorAll('[data-test-id="user-presence-timer"]')) {
+        if (!visible(timer) || timer.closest('[data-test-id="agent-item"]')) continue;
+        // The supplied header nests the timer one level below the status wrapper.
+        let wrapper = timer.parentElement;
+        for (let depth = 0; wrapper && depth < 4; depth++, wrapper = wrapper.parentElement) {
+          const states = [...wrapper.querySelectorAll('[data-status-value]')].filter(visible);
+          const timers = wrapper.querySelectorAll('[data-test-id="user-presence-timer"]');
+          if (states.length === 1 && timers.length === 1) {
+            const status = clean(states[0].getAttribute('data-status-value'));
+            const text = clean(timer.textContent), seconds = duration(text);
+            if (status && seconds !== null) candidates.push({name:'Me', status, timer:text, seconds});
+            break;
+          }
+        }
+      }
+    }
+    const me=candidates.length===1?candidates[0]:null;
+    if (me && dispositionStatus(me.status)) {
+      wrapUpSession={startedAt:Date.now()-me.seconds*1000,elapsed:me.seconds,initialRemaining:null};
+    } else if (me) wrapUpSession=null;
+    return me;
+  }
+  function readCounterPresence(docs) {
+    const page=readPersonalPage(docs);
+    if (page) return {status:page.status};
+    const states=docs.flatMap(d=>[...d.querySelectorAll('[data-test-id="user-status"][data-status-value]')])
+      .filter(node=>!node.closest('[data-test-id="agent-item"]') && visible(node));
+    if (states.length!==1) {
+      // An open status picker can add icons. The header's own timer identifies
+      // the actual presence in that case; no queue or group counts are read.
+      const me=readMe(docs);return me?{status:me.status}:null;
+    }
+    const status=clean(states[0].getAttribute('data-status-value'));
+    return status?{status}:null;
+  }
+  function workingOffline(status) {
+    return ['work offline','working offline'].includes(normal(status).replace(/[-_]/g,' '));
+  }
+  function groupRules(agents, queues, me = null, waitingAlertSeconds = 180, selfInG1 = false) {
+    const waiting = queues.length === QUEUES.length && queues.every(q => q.waiting !== null)
+      && queues.some(q=>q.waiting>0 && Number.isFinite(q.waitSeconds)
+        && (selfInG1?q.waitSeconds>waitingAlertSeconds:q.waitSeconds>=waitingAlertSeconds));
+    const unavailable=a=>['busy','on break','break','work offline','working offline','other work','wrap up','wrapup',
+      'post processing','postprocessing','disposition'].includes(normal(a.status).replace(/[-_]/g,' '));
+    const covering=selfInG1?agents.filter(a=>a.name!=='Me'):agents;
+    return {
+      lunch: agents.filter(a => normal(a.status) === 'on break').map(a => a.name),
+      critical: !!me && (selfInG1?workingOffline(me.status):normal(me.status)!=='available') && waiting
+        && (selfInG1 || covering.length>0)
+        && covering.every(a=>selfInG1?normal(a.status)!=='available':unavailable(a))
+    };
+  }
+  function dispositionStatus(status) {
+    const label = normal(status).replace(/[-_]/g, ' ').replace(/\s+/g, ' ');
+    return ['wrap up', 'wrapup', 'post processing', 'postprocessing', 'disposition'].includes(label);
+  }
+  function personalRule(me, lunchMinutes, dispositionSeconds = 20) {
+    if (!me || !me.status || !Number.isFinite(me.seconds)) return null;
+    const status = normal(me.status);
+    if (dispositionStatus(status)) {
+      return me.seconds > dispositionSeconds ? {kind:'disposition', title:'Alert: Complete Disposition',
+        body:`You have been in disposition for more than ${dispositionSeconds} seconds. Complete the fields and click Wrap up.`} : null;
+    }
+    if (status === 'on break' || status === 'break') {
+      return me.seconds > lunchMinutes*60 ? {kind:'lunchOverdue', title:'Alert: Lunch Break Finished',
+        body:`You have been "On Break" for longer than your ${lunchMinutes}-minute lunch break. Change your status to "Available".`} : null;
+    }
+    // Other Work and Working Offline are permitted. Only the queue-based
+    // coverage rule can request an availability change from Working Offline.
+    return null;
+  }
+  const host = doc.createElement('div');
+  host.id = 'its-call-assist-panel';
+  host.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;max-width:calc(100vw - 36px)';
+  const shadow = host.attachShadow({mode:'open'});
+  const style = doc.createElement('style');
+  style.textContent = `:host{font:13px/1.45 system-ui,sans-serif;color:#172235}*{box-sizing:border-box}.panel{width:390px;max-width:100%;max-height:85vh;overflow:auto;background:#fff;border:1px solid #b5c6dc;border-radius:12px;box-shadow:0 8px 35px #0004;padding:16px}h3{margin:0 0 10px;font-size:16px}label{display:block;margin:8px 0}select,input[type=text]{display:block;width:100%;padding:6px;border:1px solid #a4b2c7;border-radius:5px;background:white;color:#172235}button{cursor:pointer;padding:6px 9px;margin:4px 4px 0 0;border:1px solid #afbdd0;background:#eef3fa;color:#172235;border-radius:5px}button.primary{background:#245dc1;color:white}.small{font-size:11px;color:#526176}pre{font:12px/1.5 system-ui;white-space:pre-wrap;margin:10px 0}.alert{padding:9px;background:#fff0cb;border-radius:6px;margin-top:8px}.hidden{display:none!important}.agents{max-height:240px;overflow:auto;border:1px solid #d7e0ec;border-radius:6px;margin:8px 0}table{border-collapse:collapse;width:100%;font-size:12px}th,td{text-align:left;padding:6px}th{background:#eef3fa;position:sticky;top:0}td{border-top:1px solid #e4eaf2}.state{display:block;color:#526176;font-size:11px}input[type=checkbox]{cursor:pointer;width:16px;height:16px}.unavailable{font-weight:600}.top{display:flex;justify-content:space-between;align-items:center}.top button{margin:0;padding:2px 7px}`;
+  style.textContent += `
+    .menu-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #e4eaf2;position:sticky;top:0;z-index:2;background:#fff}
+    .menu-header h3{margin:0}
+    .menu-header button{margin:0;flex-shrink:0;padding:6px 10px}
+    .sound-category{min-width:0;margin:0 0 20px;padding:12px 14px 14px;border:1px solid #d7e0ec;border-radius:8px;background:#f8faff}
+    .sound-category legend{padding:0 6px;font-weight:600;font-size:12px}
+    .sound-description{margin-bottom:12px}
+    .sound-description p{margin:0 0 8px}
+    .sound-description p:last-child{margin-bottom:0}
+    .sound-description ul{margin:0 0 8px;padding-left:18px}
+    .sound-description li{margin-bottom:5px}
+    .sound-field{display:grid;gap:6px;margin:12px 0;font-weight:500}
+    .sound-settings select,.sound-settings input[type=number],.assistant-settings input[type=number]{width:100%;padding:8px;border:1px solid #a4b2c7;border-radius:5px;background:#fff;color:#172235;font:inherit}
+    .volume-control{display:flex;align-items:center;gap:12px;min-width:0}
+    .volume-control input{flex:1;min-width:0;width:100%;margin:0;accent-color:#245dc1;cursor:pointer}
+    .volume-value{flex:0 0 42px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+    .repeat-control{display:flex;align-items:center;gap:8px;margin:14px 0}
+    .repeat-control input{flex-shrink:0;margin:0;accent-color:#245dc1}
+    .sound-field.disabled{color:#8993a2}
+    .sound-settings input:disabled{background:#edf0f4;border-color:#d7dde6;color:#8993a2;cursor:not-allowed}
+    .sound-actions{display:flex;gap:8px;margin-top:20px;padding-top:4px}
+    .sound-actions button{margin:0}
+    .settings-card{margin:0 0 20px;padding:14px;border:1px solid #d7e0ec;border-radius:8px;background:#f8faff}
+    .settings-card h4{margin:0 0 6px;font-size:13px}
+    .settings-description{margin:0 0 14px;font-size:12px;color:#526176}
+    .setting-value{display:flex;align-items:center;gap:8px;margin-top:12px}
+    .assistant-settings .setting-value input{width:85px}
+    .section-heading{margin:14px 0 8px;font-size:13px;font-weight:600}
+    .agent-table{table-layout:fixed}
+    .agent-table th:nth-child(1){width:34%}
+    .agent-table th:nth-child(2){width:30%}
+    .agent-table th:nth-child(3){width:25%}
+    .agent-table th:nth-child(4){width:11%}
+    .agent-table th:last-child,.agent-table td:last-child{text-align:center}
+    .agent-table td{vertical-align:middle;padding:8px 6px}
+    .agent-name{font-weight:500;overflow-wrap:anywhere}
+    .agent-time{white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums}
+    .agent-status{display:inline-block;max-width:100%;padding:2px 5px;border-radius:4px;background:#edf1f6;color:#526176;font-size:11px;overflow-wrap:anywhere}
+    .agent-status[data-state="available"]{background:#e6f5ed;color:#17633a}
+    .agent-status[data-state="busy"]{background:#fdeceb;color:#9a2c27}
+    .agent-status[data-state="working offline"],.agent-status[data-state="work offline"]{background:#fff0dc;color:#a95005}
+    .agent-status[data-state="wrap up"],.agent-status[data-state="post processing"]{background:#f0eafb;color:#654293}
+    .agent-table input[type=checkbox]{margin:0;accent-color:#245dc1;vertical-align:middle}
+    .footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;padding-top:12px;border-top:1px solid #e4eaf2}
+    .footer-details{display:flex;flex-wrap:wrap;gap:10px 18px}
+    .footer-detail{font-size:10px;color:#526176;font-variant-numeric:tabular-nums}
+    .footer-detail time,.footer-value{display:block;font-size:12px;color:#172235;margin-top:2px}
+    .assistant-bottom{position:sticky;bottom:-16px;background:#fff;padding-bottom:2px;z-index:3}
+    .current-reminders{margin:14px 0 0;padding:0;background:none;display:grid;gap:9px}
+    .current-reminder{--notice-accent:#b85809;--notice-bg:#fff7e8;padding:12px 14px;border:1px solid #e6c489;border-left:4px solid var(--notice-accent);border-radius:9px;background:var(--notice-bg);box-shadow:0 3px 10px #1722350a;overflow-wrap:anywhere}
+    .current-reminder[data-severity="info"]{--notice-accent:#245dc1;--notice-bg:#edf4ff;border-color:#b8cee9;border-left-color:var(--notice-accent)}
+    .current-reminder[data-severity="preview"]{--notice-accent:#7650a5;--notice-bg:#f4f0fc;border-color:#d5c7ea;border-left-color:var(--notice-accent)}
+    .reminder-heading{display:flex;align-items:flex-start;gap:9px}
+    .reminder-mark{display:flex;align-items:center;justify-content:center;flex:0 0 21px;height:21px;border-radius:50%;background:var(--notice-accent);color:white;font-weight:700;font-size:12px}
+    .reminder-title{font-size:12px;line-height:1.5;color:#172235}
+    .reminder-reason{margin:7px 0 0;font-size:12px;color:#3f4c60;line-height:1.5}
+    .reminder-state{display:block;margin-top:7px;font-size:10px;color:var(--notice-accent);font-weight:600}
+    .controls{display:flex;flex-wrap:wrap;gap:6px}
+    .controls button{margin:0;padding:6px 8px;font-size:12px}
+    .agent-help{margin:8px 0 14px}
+    .panel{width:470px}
+    .title-block h3{margin:0}
+    .author{margin-top:3px}
+    .window-actions{display:flex;gap:5px;align-self:flex-start}
+    .top .window-actions button{width:27px;height:27px;padding:0;font-size:17px;line-height:1}
+    .monitor-grid{display:grid;grid-template-columns:1fr;gap:0}
+    .monitor-grid>section{min-width:0}
+    .monitoring-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid #d7e0ec;border-radius:8px;background:#f8faff}
+    .queue-count{display:flex;align-items:baseline;gap:9px}
+    .queue-total{font-size:28px;line-height:1;font-weight:650;color:#245dc1;font-variant-numeric:tabular-nums}
+    .monitoring-state{max-width:45%;font-size:10px;color:#526176;text-align:right}
+    .monitoring-state[data-state="live"]{color:#17633a}
+    .statistics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+    .stat{min-width:0;padding:11px 10px;border:1px solid #d7e0ec;border-radius:8px;background:#f8faff}
+    .stat-label{display:block;font-size:11px;color:#526176}
+    .stat-value{display:block;margin-top:5px;font-size:20px;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums}
+    .stat-total{color:#245dc1}
+    .statistics-note{font-size:10px;color:#526176;margin-top:10px}
+    .notification-feedback{margin:10px 0 0;color:#526176;font-size:11px}
+    .compact-view{width:100%;--progress-colour:#245dc1;--progress-soft:#eaf1fe}
+    .panel.compact{width:390px;padding:14px 16px}
+    .compact-view[data-kind="disposition"]{--progress-colour:#7650a5;--progress-soft:#f2edfb}
+    .compact-view[data-overdue="true"]{--progress-colour:#b85809;--progress-soft:#fff1dc}
+    .compact-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
+    .compact-title{font-weight:650;font-size:13px}
+    .compact-actions{display:flex;align-items:center;gap:8px}
+    .compact-actions button{margin:0;padding:3px 6px;font-size:10px}
+    .compact-countdown{color:var(--progress-colour);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .progress-track{height:9px;border-radius:99px;background:var(--progress-soft);overflow:hidden}
+    .progress-fill{height:100%;width:0%;border-radius:inherit;background:var(--progress-colour);position:relative;overflow:hidden;transition:width .65s linear}
+    .progress-fill::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#fff6,transparent);transform:translateX(-100%);animation:assist-shimmer 3s ease-in-out infinite}
+    .compact-view[data-overdue="true"] .progress-fill{animation:assist-pulse 1.8s ease-in-out infinite}
+    .compact-meta{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#526176;margin-top:8px;font-variant-numeric:tabular-nums}
+    @keyframes assist-shimmer{to{transform:translateX(100%)}}
+    @keyframes assist-pulse{50%{opacity:.65}}
+    @media(prefers-reduced-motion:reduce){.progress-fill{transition:none}.progress-fill,.progress-fill::after{animation:none!important}}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    @media(max-width:380px){.stat{padding:9px 7px}.stat-label{font-size:10px}.stat-value{font-size:17px}}
+  `;
+  shadow.append(style);
+  function el(tag, text, parent, cls) {
+    const n = doc.createElement(tag); if (text) n.textContent = text;
+    if (cls) n.className = cls; parent?.append(n); return n;
+  }
+  const panel = el('section', '', shadow, 'panel');
+  const unavailableBox = el('div', 'Unable to Assist: Open 8x8 agent queue information.', panel, 'unavailable hidden');
+  const compactView=el('div','',panel,'compact-view hidden');
+  const compactHeading=el('div','',compactView,'compact-heading');
+  const compactTitle=el('span','',compactHeading,'compact-title');
+  const compactActions=el('span','',compactHeading,'compact-actions');
+  const compactCountdown=el('span','',compactActions,'compact-countdown');
+  const compactMute=el('button','Mute',compactActions);
+  const progressTrack=el('div','',compactView,'progress-track');
+  progressTrack.setAttribute('role','progressbar');
+  progressTrack.setAttribute('aria-valuemin','0');
+  const progressFill=el('div','',progressTrack,'progress-fill');
+  const compactMeta=el('div','',compactView,'compact-meta');
+  const compactElapsed=el('span','',compactMeta,'compact-elapsed');
+  const compactAllowance=el('span','',compactMeta,'compact-allowance');
+  const normalView = el('div', '', panel, 'main-view');
+  const top = el('div', '', normalView, 'top');
+  const titleBlock=el('div','',top,'title-block');
+  el('h3', 'Service Desk 8x8 Assistant', titleBlock);
+  el('div', 'Author: Joshua Lavagna-Slater', titleBlock, 'small author');
+  const windowActions=el('div','',top,'window-actions');
+  const minimize=el('button','-',windowActions);
+  minimize.title='Minimise assistant';minimize.setAttribute('aria-label','Minimise assistant');
+  const remove=el('button','x',windowActions);
+  remove.title='Close assistant';remove.setAttribute('aria-label','Close assistant');
+  const content = el('div', '', normalView);
+  el('h4', 'Agents', content, 'section-heading');
+  const agentContainer = el('div', '', content, 'agents');
+  const table = el('table', '', agentContainer, 'agent-table');
+  const head = el('tr', '', el('thead', '', table));
+  el('th', 'Name', head); el('th', 'Status', head); el('th', 'Time', head); el('th', 'G1', head);
+  const agentList = el('tbody', '', table);
+  el('div', 'Group 1 (G1) refers to any agent covering phones. An agent which is not in Group 1 is considered Group 2 (G2).', content, 'small agent-help');
+  const monitorGrid=el('div','',content,'monitor-grid');
+  const monitoringSection=el('section','',monitorGrid);
+  el('h4', 'Monitoring', monitoringSection, 'section-heading');
+  const statusBox=el('div','',monitoringSection,'monitoring-summary');
+  const queueCount=el('div','',statusBox,'queue-count');
+  const queueTotal=el('span','—',queueCount,'queue-total');
+  el('span','Callers waiting',queueCount,'small');
+  const monitorState=el('span','Inspecting page…',statusBox,'monitoring-state');
+  const statisticsSection=el('section','',monitorGrid);
+  el('h4','Statistics',statisticsSection,'section-heading');
+  const statisticsBody=el('div','',statisticsSection,'statistics');
+  function stat(label,cls) {
+    const box=el('div','',statisticsBody,'stat');el('span',label,box,'stat-label');
+    return el('span','—',box,'stat-value'+(cls?' '+cls:''));
+  }
+  const callTotal=stat('Calls taken today','stat-total');
+  const callsHour=stat('Calls in the last hour');
+  const lastCall=stat('Last call detected');
+  const statisticsNote=el('div','Counter detects calls while this assistant is open. Hidden or closed periods may create inaccuracies.',statisticsSection,'statistics-note');
+  const soundPanel = el('section', '', panel, 'menu-view sound-settings hidden');
+  const settingsPanel = el('section', '', panel, 'menu-view assistant-settings hidden');
+  const soundHeader = el('div', '', soundPanel, 'menu-header');
+  el('h3', 'Sound Settings', soundHeader);
+  const soundBack = el('button', 'Back', soundHeader);
+  const settingsHeader = el('div', '', settingsPanel, 'menu-header');
+  el('h3', 'Assistant Settings', settingsHeader);
+  const settingsBack = el('button', 'Back', settingsHeader);
+  const bottom=el('div','',panel,'assistant-bottom');
+  const banner = el('div', '', bottom, 'alert current-reminders hidden');
+  banner.setAttribute('role','region');banner.setAttribute('aria-label','Current assistant reminders');
+  banner.setAttribute('aria-live','polite');
+  const footer=el('div','',bottom,'footer');
+  const footerDetails=el('div','',footer,'footer-details');
+  const updateSection=el('div','Last updated',footerDetails,'footer-detail last-updated');
+  const lastUpdated=el('time','—',updateSection);
+  const versionSection=el('div','Version',footerDetails,'footer-detail release-version');
+  el('span',VERSION,versionSection,'footer-value');
+  const controls = el('div', '', footer, 'controls');
+  const muteButton = el('button', 'Mute', controls);
+  const settingsButton = el('button', 'Settings', controls);
+  doc.body.append(host);
+  let destroyed = false, audio = null, muted=false, audioOutputReady=true;
+  let lastScan = Date.now(), unavailable = false, compactKind='';
+  const reminders=new Map(),reminderWidgets=new Map();
+  let activeView = QUEUES.length?'main':'settings';
+  let activeReminder = null;
+  const PREFERENCES_KEY = 'service-desk-8x8-preferences-v5';
+  let preferences = {};
+  try {
+    const value=JSON.parse(root.localStorage.getItem(PREFERENCES_KEY) || '{}');
+    if (value && typeof value === 'object' && !Array.isArray(value)) preferences=value;
+  } catch {}
+  const selected = new Set(Array.isArray(preferences.g1)
+    ? preferences.g1.filter(name=>typeof name==='string' && name.trim()) : []);
+  const settingNumber=(value,fallback,min,max)=>Number.isFinite(value)
+    ? Math.max(min,Math.min(max,Math.round(value))) : fallback;
+  const secondsPreference=(key,legacy,fallback,max)=>settingNumber(
+    Number.isFinite(preferences[key])?preferences[key]:Number.isFinite(preferences[legacy])?preferences[legacy]*60:undefined,
+    fallback,1,max);
+  let lunchMinutes=settingNumber(Number.isFinite(preferences.lunchMinutes)?preferences.lunchMinutes:
+    Number.isFinite(preferences.lunchSeconds)?preferences.lunchSeconds/60:undefined,30,1,120);
+  const dispositionValue=preferences.settingsVersion!==3 && preferences.dispositionSeconds===10?20:preferences.dispositionSeconds;
+  let dispositionSeconds=settingNumber(dispositionValue,20,1,120);
+  let waitingAlertSeconds=Number.isFinite(preferences.waitingAlertSeconds)
+    ? settingNumber(preferences.waitingAlertSeconds,180,1,3600)
+    : secondsPreference('coverSeconds','coverMinutes',180,3600);
+  muted=preferences.muted===true;
+  let outputDeviceId=typeof preferences.outputDeviceId==='string' && preferences.outputDeviceId!=='default'?preferences.outputDeviceId:'';
+  let desktopNotifications=typeof preferences.desktopNotifications==='boolean' ? preferences.desktopNotifications : true;
+  const soundsCard=el('div','',settingsPanel,'settings-card');
+  el('h4','Sound Settings',soundsCard);
+  el('p','Choose the sound, volume, duration and repeat option for each reminder.',soundsCard,'settings-description');
+  el('button','Open Sound Settings',soundsCard).onclick=()=>openView('sounds');
+  const queuesCard=el('div','',settingsPanel,'settings-card');
+  el('h4','Inbound Queue Names',queuesCard);
+  el('p','Enter the exact names of the three inbound queues to monitor. Do not touch unless you know what you are doing.',queuesCard,'settings-description');
+  const queueInputs=[0,1,2].map(index=>{
+    const label=el('label',`Queue ${index+1}`,queuesCard,'sound-field');
+    const input=el('input','',label);input.type='text';input.value=QUEUES[index] || '';
+    input.setAttribute('aria-label',`Inbound queue ${index+1}`);return input;
+  });
+  const queueError=el('p',QUEUES.length?'':'Enter three queue names to start monitoring.',queuesCard,'small');
+  for (const input of queueInputs) input.onchange=()=>{
+    const names=queueInputs.map(field=>clean(field.value));
+    if (!validQueueNames(names)) {queueError.textContent='Enter three different queue names.';return;}
+    QUEUES=names;root.__serviceDesk8x8Queues=[...names];
+    try {root.localStorage.setItem(QUEUE_CONFIG_KEY,JSON.stringify(names));} catch {}
+    queueError.textContent='';reset();safeScan();
+  };
+  const lunchPanel = el('div', '', settingsPanel, 'settings-card lunch-settings');
+  el('h4', 'Lunch Break Length', lunchPanel);
+  el('p', 'Length of my lunch break. Only relevant when you are in G1.', lunchPanel, 'settings-description');
+  const lunchLabel=el('label', '', lunchPanel);
+  lunchLabel.setAttribute('aria-label', 'Lunch break length in minutes');
+  const lunchRow=el('span', '', lunchLabel, 'volume-control');
+  const lunchSlider=el('input', '', lunchRow);
+  lunchSlider.type='range';lunchSlider.min='1';lunchSlider.max='120';lunchSlider.step='1';
+  lunchSlider.id='its-my-lunch-minutes';lunchSlider.setAttribute('aria-label','Lunch break length in minutes');
+  const lunchExactRow=el('label','',lunchPanel,'setting-value');
+  const lunchExact=el('input','',lunchExactRow);lunchExact.type='number';lunchExact.min='1';lunchExact.max='120';lunchExact.step='1';
+  lunchExact.id='its-my-lunch-exact-minutes';lunchExact.setAttribute('aria-label','Exact lunch break length in minutes');
+  el('span','minutes',lunchExactRow);
+  lunchSlider.value=lunchExact.value=String(lunchMinutes);
+  const savePreferences=()=>{
+    try {root.localStorage.setItem(PREFERENCES_KEY,JSON.stringify({settingsVersion:3,g1:[...selected],lunchMinutes,
+      dispositionSeconds,waitingAlertSeconds,desktopNotifications,muted,outputDeviceId}));} catch {}
+  };
+  // Write the converted values once so a later run never multiplies them again.
+  savePreferences();
+  const STATISTICS_KEY='service-desk-8x8-statistics-v1';
+  const STATISTICS_ZONE='Australia/Brisbane';
+  function dayKey(time) {
+    const parts=new Intl.DateTimeFormat('en-AU',{timeZone:STATISTICS_ZONE,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(time));
+    const part=name=>parts.find(p=>p.type===name).value;
+    return `${part('year')}-${part('month')}-${part('day')}`;
+  }
+  let statistics={day:dayKey(Date.now()),calls:[],hadGaps:false,lastPresence:null};
+  try {
+    const value=JSON.parse(root.localStorage.getItem(STATISTICS_KEY) || '{}');
+    if (value && typeof value==='object') {
+      if (value.day===statistics.day && Array.isArray(value.calls)) {
+        statistics.calls=value.calls.filter(time=>Number.isFinite(time) && time<=Date.now() && dayKey(time)===statistics.day);
+        statistics.hadGaps=value.hadGaps===true;
+      }
+      const last=value.lastPresence;
+      if (last && typeof last.status==='string' && Number.isFinite(last.seenAt)) {
+        statistics.lastPresence={status:normal(last.status),seenAt:last.seenAt};
+      }
+    }
+  } catch {}
+  let lastStatisticsSave=0;
+  function saveStatistics() {
+    try {root.localStorage.setItem(STATISTICS_KEY,JSON.stringify(statistics));lastStatisticsSave=Date.now();} catch {}
+  }
+  function renderStatistics() {
+    setText(callTotal,String(statistics.calls.length));
+    const now=Date.now();
+    setText(callsHour,String(statistics.calls.filter(time=>time>=now-3600000).length));
+    const latest=statistics.calls.at(-1);
+    setText(lastCall,latest===undefined?'—':new Date(latest).toLocaleTimeString('en-AU',
+      {timeZone:STATISTICS_ZONE,hour:'2-digit',minute:'2-digit'}));
+  }
+  function countCalls(docs) {
+    const now=Date.now(),today=dayKey(now);
+    let changed=false;
+    if (statistics.day!==today) {statistics.day=today;statistics.calls=[];statistics.hadGaps=false;changed=true;}
+    const presence=readCounterPresence(docs),old=statistics.lastPresence;
+    if (!presence) {
+      if (!statistics.hadGaps) {statistics.hadGaps=true;changed=true;}
+    } else {
+      const status=normal(presence.status),wasBusy=old?.status==='busy',busy=status==='busy';
+      // Preserve the last presence through hidden periods. An unknown sample is
+      // never treated as leaving Busy, preventing duplicate counts on recovery.
+      // Timer resets alone are not proof of another call. Do not infer calls
+      // from missing data or from a timer changing during post-processing.
+      const newCall=busy && !wasBusy;
+      if (newCall) {statistics.calls.push(now);changed=true;}
+      if (!old || status!==old.status) changed=true;
+      statistics.lastPresence={status,seenAt:now};
+    }
+    if (changed || now-lastStatisticsSave>=15000) saveStatistics();
+    renderStatistics();
+  }
+  const agentWidgets = new Map(), freshness = new Map(), previous = new Map();
+  const lunchLatched = new Set();
+  let rosterRoot=null,rosterVisible=false;
+  const notices = new Map(), observers = new Map(), interactionDocs = new Set();
+  let lastSample = null;
+  const setText = (n, text) => { if (n.textContent !== text) n.textContent = text; };
+  function refreshAgents(docs) {
+    const current = new Map();
+    const me = readMe(docs);
+    if (me) current.set('Me', me);
+    const rows=agentRows(docs);
+    if (rows.length) rosterRoot=rows[0].closest('[data-test-id="virtuoso-item-list"]') || rows[0].parentElement;
+    rosterVisible=rows.length>0 || !!(rosterRoot && docs.includes(rosterRoot.ownerDocument) && visible(rosterRoot));
+    const personal=me && (['on break','break'].includes(normal(me.status)) || dispositionStatus(me.status));
+    for (const row of rows) {
+      const name = agentName(row);
+      if (!name) continue;
+      const status = clean(row.querySelector('[data-status-value]')?.getAttribute('data-status-value'));
+      const timer = clean(row.querySelector('[data-test-id="user-presence-timer"]')?.textContent);
+      current.set(name, {name, status, timer, seconds:duration(timer)});
+    }
+    if (rosterVisible && !personal) {
+      let selectionChanged=false;
+      for (const name of [...selected]) if (name!=='Me' && !current.has(name)) {
+        selected.delete(name);selectionChanged=true;
+      }
+      for (const [name,widget] of agentWidgets) if (name!=='Me' && !current.has(name)) {
+        widget.row.remove();agentWidgets.delete(name);freshness.delete(name);freshness.delete('coverage:'+name);
+        previous.delete(name);lunchLatched.delete(name);
+      }
+      if (selectionChanged) savePreferences();
+    }
+    const names=new Set(['Me',...current.keys(),...((!rosterVisible || personal)?agentWidgets.keys():[])]);
+    for (const name of [...names].sort((a,b) => a === 'Me' ? -1 : b === 'Me' ? 1 : a.localeCompare(b))) {
+      let widget = agentWidgets.get(name);
+      if (!widget) {
+        const row = el('tr', '', agentList);
+        el('td', name, row, 'agent-name');
+        const statusCell=el('td', '', row);
+        const state=el('span', '', statusCell, 'agent-status');
+        const timer=el('td', '', row, 'agent-time');
+        const selectionCell = el('td', '', row);
+        const box = el('input', '', selectionCell);
+        box.type = 'checkbox'; box.checked = selected.has(name);
+        box.setAttribute('aria-label', 'G1: ' + name);
+        widget = {row, box, state, timer}; agentWidgets.set(name, widget);
+        box.onchange = () => {
+          if (box.checked) selected.add(name); else selected.delete(name);
+          savePreferences();reset();safeScan();
+        };
+      }
+      const a = current.get(name);
+      setText(widget.state, a?.status || 'Not currently loaded'); setText(widget.timer, a?.timer || '—');
+      widget.state.setAttribute('data-state',normal(a?.status));
+      agentList.append(widget.row);
+    }
+    return current;
+  }
+  function showUnavailable(value) {
+    unavailable = value;
+    syncViews();
+    unavailableBox.classList.toggle('hidden', !value);
+    if (value) {
+      stopSound('preview');
+      reset();
+    }
+  }
+  function syncViews() {
+    const compact=!!compactKind && !unavailable;
+    panel.classList.toggle('compact',compact);
+    compactView.classList.toggle('hidden',!compact);
+    normalView.classList.toggle('hidden',unavailable || compact || activeView!=='main');
+    soundPanel.classList.toggle('hidden',unavailable || compact || activeView!=='sounds');
+    settingsPanel.classList.toggle('hidden',unavailable || compact || activeView!=='settings');
+    bottom.classList.toggle('hidden',unavailable);
+    footer.classList.toggle('hidden',compact || activeView!=='main');
+  }
+  function renderCompact(me,kind) {
+    const allowance=kind==='break'?lunchMinutes*60:dispositionSeconds;
+    const elapsed=me.seconds,remaining=Math.max(0,allowance-elapsed),overdue=elapsed>allowance;
+    compactKind=kind;compactView.setAttribute('data-kind',kind);
+    compactView.setAttribute('data-overdue',String(overdue));
+    const label=kind==='break'?'Lunch break':'Complete disposition';
+    setText(compactTitle,label);
+    setText(compactCountdown,overdue?`${elapsed-allowance}s overdue`:`${remaining}s left`);
+    setText(compactElapsed,`${elapsed}s elapsed`);
+    setText(compactAllowance,`${allowance}s allowance`);
+    progressFill.style.width=`${Math.min(100,elapsed/allowance*100)}%`;
+    progressTrack.setAttribute('aria-label',label);
+    progressTrack.setAttribute('aria-valuemax',String(allowance));
+    progressTrack.setAttribute('aria-valuenow',String(Math.min(allowance,elapsed)));
+    progressTrack.setAttribute('aria-valuetext',`${elapsed} seconds elapsed, ${overdue?elapsed-allowance+' seconds overdue':remaining+' seconds left'}`);
+    syncViews();
+  }
+  function openView(view) {
+    if (activeView==='sounds' && view!=='sounds') stopSound('preview');
+    activeView=view;syncViews();panel.scrollTop=0;
+    if(view==='sounds')void refreshAudioDevices();
+  }
+  settingsButton.onclick=()=>openView('settings');
+  soundBack.onclick=()=>openView('settings');
+  settingsBack.onclick=()=>openView('main');
+  function prepareSound() {
+    if (muted || destroyed) return;
+    try {
+      const C = root.AudioContext || root.webkitAudioContext;
+      if (C && !audio) {
+        audio=new C();
+        if (outputDeviceId) {audioOutputReady=false;void setAssistantOutput(outputDeviceId);}
+      }
+      if (audio && audio.state !== 'running') audio.resume().catch(() => {});
+    } catch (e) {console.warn('Service Desk 8x8 Assistant sound:', e.message);}
+  }
+  function enableAlerts(event) {
+    if (!event?.isTrusted || destroyed) return;
+    prepareSound();
+  }
+  // All sounds are generated locally: no downloaded audio or network requests.
+  const PRESETS = {
+    'Gentle chime': {notes:[523,659,784], wave:'sine', pace:.32},
+    'Soft bell': {notes:[880,1320], wave:'sine', pace:.5},
+    'Ascending chime': {notes:[440,554,659,880], wave:'sine', pace:.25},
+    'Descending chime': {notes:[880,659,554,440], wave:'sine', pace:.25},
+    'Doorbell': {notes:[660,520], wave:'sine', pace:.6},
+    'Double ping': {notes:[1047,1047], wave:'sine', pace:.25},
+    'Triple beep': {notes:[880,660,880], wave:'triangle', pace:.27},
+    'Low pulse': {notes:[220,220,330], wave:'triangle', pace:.4},
+    'Radar': {notes:[1200,0,1200,0], wave:'sine', pace:.2},
+    'Digital ring': {notes:[740,988,740,988], wave:'square', pace:.15},
+    'Urgent pulse': {notes:[1000,0,1000,0,1000], wave:'square', pace:.18},
+    'Two-tone alarm': {notes:[880,660,880,660], wave:'square', pace:.3},
+    'Fast alarm': {notes:[1200,800,1200,800], wave:'square', pace:.16},
+    'High alert': {notes:[1500,1000,1500], wave:'triangle', pace:.2},
+    'Warning buzzer': {notes:[180,240,180,240], wave:'sawtooth', pace:.3},
+    'Rising siren': {notes:[400,600,800,1000,1200], wave:'triangle', pace:.18}
+  };
+  const definitions = {
+    lunch: {label:'Info: G1 On Break', description:()=>[
+      'Plays when someone you have ticked in G1 is "On Break". This includes someone already on break when monitoring starts.',
+      'Plays only when you are in G2. Silent while the Change Status To Available alert is active.'
+    ], preset:'Gentle chime', volume:45, seconds:2, repeat:false},
+    critical: {label:'Alert: Change Status To Available', description:()=>[
+      `If you are in G1: plays only when you are "Working Offline", no other signed-in G1 member is "Available", and a caller has waited longer than ${timeWords(waitingAlertSeconds,'second')}. This also applies when you are the only signed-in G1 member.`,
+      'Being in "Other Work" does not trigger this alert when you are in G1. Lunch and disposition have their own reminders below.',
+      `If you are in G2: plays when you are not "Available", a caller has waited for at least ${timeWords(waitingAlertSeconds,'second')}, and every signed-in G1 member is unavailable.`,
+      'Unavailable means "Busy", "On Break", "Working Offline", "Other Work", or finishing disposition. At least one signed-in agent must be ticked in G1.',
+      'With Repeat ticked, it keeps playing while the conditions above are true. It stops when you become "Available", a G1 member becomes "Available", or no caller is waiting long enough. In G1, leaving "Working Offline" also stops it.'
+    ], preset:'Two-tone alarm', volume:100, seconds:10, repeat:true},
+    disposition: {label:'Alert: Complete Disposition', description:()=>[
+      `Plays only when you have ticked "Me" in G1 and you spend more than ${timeWords(dispositionSeconds,'second')} in disposition.`,
+      'Disposition is the step after a call where you complete the call details and click "Wrap up". The sound stops when you leave this step.'
+    ], preset:'Urgent pulse', volume:80, seconds:10, repeat:true},
+    lunchOverdue: {label:'Alert: Lunch Break Finished', description:()=>[
+      `Plays only when you have ticked "Me" in G1 and your "On Break" time is longer than your lunch length in Assistant Settings (currently ${timeWords(lunchMinutes,'minute')}).`,
+      'Reminds you to return to "Available". Stops when you leave "On Break".'
+    ], preset:'Digital ring', volume:85, seconds:10, repeat:true}
+  };
+  function timeWords(value,unit) {return `${value} ${unit}${value===1?'':'s'}`;}
+  const SOUND_KEY = 'service-desk-8x8-sounds-v4';
+  let saved = {};
+  try {
+    const value=JSON.parse(root.localStorage.getItem(SOUND_KEY) || '{}');
+    if (value && typeof value === 'object' && !Array.isArray(value)) saved=value;
+  } catch {}
+  const soundSettings = {};
+  for (const [kind,d] of Object.entries(definitions)) {
+    const v = saved[kind] || {};
+    soundSettings[kind] = {preset:PRESETS[v.preset] ? v.preset : d.preset,
+      volume:Number.isFinite(v.volume) ? Math.max(0,Math.min(100,v.volume)) : d.volume,
+      seconds:Number.isFinite(v.seconds) ? Math.max(1,Math.min(120,v.seconds)) : d.seconds,
+      repeat:typeof v.repeat === 'boolean' ? v.repeat : d.repeat,
+      desktopNotification:typeof v.desktopNotification==='boolean'?v.desktopNotification:true};
+  }
+  const sounds = new Map();
+  function syncReminderBox() {
+    const ordered=[];
+    for (const [kind,widget] of reminderWidgets) if (!reminders.has(kind)) {
+      widget.card.remove();reminderWidgets.delete(kind);
+    }
+    for (const kind of ['critical','disposition','lunchOverdue','lunch','preview']) {
+      const reminder=reminders.get(kind);
+      if (!reminder) continue;
+      let widget=reminderWidgets.get(kind);
+      if (!widget) {
+        const card=el('article','',banner,'current-reminder');
+        card.setAttribute('data-kind',kind);
+        const severity=kind==='preview'?'preview':kind==='lunch'?'info':'alert';
+        card.setAttribute('data-severity',severity);
+        const heading=el('div','',card,'reminder-heading');
+        const mark=el('span',severity==='alert'?'!':severity==='preview'?'♫':'i',heading,'reminder-mark');
+        mark.setAttribute('aria-hidden','true');
+        widget={card,title:el('strong','',heading,'reminder-title'),body:el('p','',card,'reminder-reason'),
+          state:el('span','',card,'reminder-state')};
+        reminderWidgets.set(kind,widget);
+      }
+      setText(widget.title,reminder.title);setText(widget.body,reminder.body);
+      const cfg=soundSettings[reminder.soundKind || kind];
+      const state=muted?'Sound muted':!cfg.volume?'Sound volume is 0%':sounds.has(kind)?'Sound playing':
+        !audioOutputReady?'Connecting sound output':audio?.state!=='running'?'Click the page to enable sound':'Sound finished';
+      setText(widget.state,state);ordered.push(widget.card);
+    }
+    // Keep unchanged live-region nodes in place during normal polling.
+    if (ordered.some((card,index)=>banner.children[index]!==card))for(const card of ordered)banner.append(card);
+    banner.classList.toggle('hidden',!reminders.size);
+  }
+  function stopSound(kind) {
+    const job = sounds.get(kind);
+    if (job) {
+      root.clearInterval(job.interval); root.clearTimeout(job.timeout);
+      for (const osc of job.nodes) {try {osc.stop();} catch {}}
+      sounds.delete(kind);
+    }
+    if (kind==='preview')reminders.delete('preview');
+    syncReminderBox();
+  }
+  function beep(kind, preview = false) {
+    if (muted || destroyed || !audioOutputReady || audio?.state !== 'running') return;
+    const key = preview ? 'preview' : kind;
+    stopSound(key);
+    const cfg = {...soundSettings[kind]}, preset = PRESETS[cfg.preset];
+    const job = {nodes:new Set(), interval:null, timeout:null}; sounds.set(key,job);
+    if (preview)reminders.set('preview',{soundKind:kind,title:`Preview: ${definitions[kind].label}`,
+      body:`Testing your selected "${cfg.preset}" sound for this reminder.`});
+    syncReminderBox();
+    const start = Date.now();
+    const total = preview ? Math.min(3,cfg.seconds) : cfg.seconds;
+    const endless = cfg.repeat && !preview;
+    const cycle = () => {
+      if (sounds.get(key) !== job) return;
+      const remaining = endless ? Infinity : total - (Date.now()-start)/1000;
+      if (remaining <= 0) {stopSound(key);return;}
+      preset.notes.forEach((hz,i) => {
+        const offset = i*preset.pace;
+        if (!hz || offset >= remaining) return;
+        const osc = audio.createOscillator(), gain = audio.createGain();
+        const t = audio.currentTime+offset, len = Math.min(preset.pace*.8,remaining-offset);
+        osc.type=preset.wave;osc.frequency.value=hz;
+        gain.gain.setValueAtTime(0,t);
+        gain.gain.linearRampToValueAtTime(.3*cfg.volume/100,t+Math.min(.015,len/3));
+        gain.gain.linearRampToValueAtTime(0,t+len);
+        osc.connect(gain);gain.connect(audio.destination);job.nodes.add(osc);
+        osc.start(t);osc.stop(t+len+.01);
+        osc.onended=()=>{job.nodes.delete(osc);osc.disconnect();gain.disconnect();};
+      });
+    };
+    cycle();
+    job.interval=root.setInterval(cycle,Math.max(250,preset.notes.length*preset.pace*1000));
+    if (!endless) job.timeout=root.setTimeout(()=>stopSound(key),total*1000);
+  }
+  const saveSounds = () => {try {root.localStorage.setItem(SOUND_KEY,JSON.stringify(soundSettings));} catch {}};
+  saveSounds();
+  const devicesCard=el('div','',soundPanel,'settings-card audio-devices');
+  const soundDescriptions=new Map();
+  const previewButtons=[];
+  function refreshSoundDescriptions() {
+    for (const [kind,parent] of soundDescriptions) {
+      parent.textContent='';
+      for (const part of definitions[kind].description()) {
+        if (Array.isArray(part)) {
+          const list=el('ul','',parent);for (const text of part) el('li',text,list);
+        } else el('p',part,parent);
+      }
+    }
+  }
+  for (const [kind,d] of Object.entries(definitions)) {
+    const section=el('fieldset','',soundPanel,'sound-category');el('legend',d.label,section);
+    soundDescriptions.set(kind,el('div','',section,'small sound-description'));
+    const choice=el('select','',el('label','Sound type',section,'sound-field'));
+    for (const name of Object.keys(PRESETS)) {const option=el('option',name,choice);option.value=name;}
+    choice.value=soundSettings[kind].preset;
+    const volumeLabel=el('label','Volume',section,'sound-field');
+    const volumeRow=el('span','',volumeLabel,'volume-control');
+    const volume=el('input','',volumeRow);
+    volume.type='range';volume.min=0;volume.max=100;volume.value=soundSettings[kind].volume;
+    const value=el('span',volume.value+'%',volumeRow,'volume-value');
+    const durationLabel=el('label','Duration (seconds, 1–120)',section,'sound-field');
+    const seconds=el('input','',durationLabel);
+    seconds.type='number';seconds.min=1;seconds.max=120;seconds.value=soundSettings[kind].seconds;
+    const repeatLabel=el('label','',section,'repeat-control'), repeat=el('input','',repeatLabel);
+    repeat.type='checkbox';repeat.checked=soundSettings[kind].repeat;
+    repeatLabel.append(doc.createTextNode('Repeat until condition clears'));
+    const notificationLabel=el('label','',section,'repeat-control');
+    const notification=el('input','',notificationLabel);
+    notification.type='checkbox';notification.checked=soundSettings[kind].desktopNotification;
+    notification.id=`its-sound-${kind}-desktop-notification`;
+    notificationLabel.append(doc.createTextNode('Send desktop notification'));
+    notification.onchange=()=>{
+      soundSettings[kind].desktopNotification=notification.checked;saveSounds();
+      if (!notification.checked) {notices.get(kind)?.close();notices.delete(kind);}
+      else if (reminders.has(kind)) {
+        const reminder=reminders.get(kind);sendDesktopNotification(kind,reminder.title,reminder.body);
+      }
+    };
+    const syncDuration=()=>{
+      seconds.disabled=repeat.checked;
+      durationLabel.classList.toggle('disabled',repeat.checked);
+    };
+    syncDuration();
+    const update=()=>{
+      soundSettings[kind]={preset:choice.value,volume:Number(volume.value),seconds:Math.max(1,Math.min(120,Number(seconds.value)||1)),
+        repeat:repeat.checked,desktopNotification:notification.checked};
+      value.textContent=volume.value+'%';syncDuration();saveSounds();
+      const active=sounds.has(kind);stopSound(kind);stopSound('preview');
+      if (active) beep(kind);
+    };
+    choice.onchange=update;volume.oninput=update;seconds.onchange=update;repeat.onchange=update;
+    const preview=el('button','Preview',section);preview.disabled=muted;previewButtons.push(preview);
+    preview.onclick=()=>{prepareSound();beep(kind,true);};
+  }
+  refreshSoundDescriptions();
+  const soundActions=el('div','',soundPanel,'sound-actions');
+  el('button','Stop preview',soundActions).onclick=()=>stopSound('preview');
+  function applyTimingSettings() {
+    savePreferences();refreshSoundDescriptions();
+    safeScan();
+  }
+  function timingSetting(title,description,id,value,min,max,unit,assign) {
+    const card=el('div','',settingsPanel,'settings-card');
+    el('h4',title,card);el('p',description,card,'settings-description');
+    const label=el('label','',card,'setting-value');
+    const input=el('input','',label);input.type='number';input.min=String(min);input.max=String(max);input.step='1';
+    input.id=id;input.value=String(value);input.setAttribute('aria-label',title+' in '+unit);
+    el('span',unit,label);
+    input.onchange=()=>{
+      const number=settingNumber(Number(input.value),value,min,max);
+      input.value=String(number);assign(number);applyTimingSettings();
+    };
+    return input;
+  }
+  timingSetting('Disposition Reminder Delay',
+    'Time allowed to finish the call details and click "Wrap up" before the reminder plays. Only relevant when you are in G1.',
+    'its-disposition-seconds',dispositionSeconds,1,120,'seconds',number=>{dispositionSeconds=number;});
+  timingSetting('Caller Waiting Alert Delay',
+    'How long a caller must be waiting before the "Change Status to Available" sound plays. Only used when you are in G2, are not available, and every signed-in G1 member is busy.',
+    'its-waiting-alert-seconds',waitingAlertSeconds,1,3600,'seconds',number=>{waitingAlertSeconds=number;});
+  el('h4','Audio Devices',devicesCard);
+  el('p','Output changes apply only to assistant sounds. Your 8x8 calls keep their own device settings.',devicesCard,'settings-description');
+  const outputChoice=el('select','',el('label','Output Device',devicesCard,'sound-field'));
+  outputChoice.setAttribute('aria-label','Assistant output device');
+  const defaultOutput=el('option','System default (Default)',outputChoice);defaultOutput.value='';
+  if(outputDeviceId) {el('option','Saved output device',outputChoice).value=outputDeviceId;outputChoice.value=outputDeviceId;}
+  const AudioClass=root.AudioContext || root.webkitAudioContext;
+  const canRouteOutput=typeof AudioClass?.prototype?.setSinkId==='function';
+  const mediaDevices=root.navigator.mediaDevices;
+  outputChoice.disabled=!canRouteOutput;
+  const refreshDevicesButton=el('button','Refresh devices',devicesCard);
+  refreshDevicesButton.disabled=!canRouteOutput || typeof mediaDevices?.enumerateDevices!=='function';
+  const chooseOutputButton=canRouteOutput && typeof mediaDevices?.selectAudioOutput==='function'
+    ? el('button','Choose output device',devicesCard):null;
+  const deviceFeedback=el('p',canRouteOutput?'Only output devices allowed by your browser appear here.':
+    'This browser can only use the system default output for assistant sounds.',devicesCard,'small');
+  deviceFeedback.setAttribute('role','status');
+  let outputChanges=Promise.resolve();
+  function setAssistantOutput(id,note='') {
+    if(destroyed)return Promise.resolve(false);
+    id=id==='default'?'':id;
+    audioOutputReady=false;outputChoice.disabled=true;
+    syncMute();
+    if(chooseOutputButton)chooseOutputButton.disabled=true;
+    const change=outputChanges.then(async()=>{
+      if(destroyed)return false;
+      const resumeLunch=sounds.has('lunch');
+      for(const key of [...sounds.keys()])stopSound(key);
+      try {
+        if(!audio && AudioClass)audio=new AudioClass();
+        if(typeof audio?.setSinkId!=='function')throw Error('Output selection unavailable');
+        await audio.setSinkId(id);
+        if(destroyed)return false;
+        outputDeviceId=id;savePreferences();outputChoice.value=id;
+        setText(deviceFeedback,note || (id?'Assistant sounds now use the selected output device.':'Assistant sounds now use the system default output.'));
+        return true;
+      } catch {
+        if(destroyed)return false;
+        outputDeviceId=typeof audio?.sinkId==='string'?audio.sinkId:'';
+        savePreferences();outputChoice.value=outputDeviceId;
+        setText(deviceFeedback,'Could not use that output device. The assistant has kept its previous output.');
+        return false;
+      } finally {
+        if(!destroyed) {
+          audioOutputReady=true;outputChoice.disabled=!canRouteOutput;
+          syncMute();
+          if(chooseOutputButton)chooseOutputButton.disabled=false;
+          if(!muted && activeReminder)beep(activeReminder.kind);
+          else if(!muted && lunchLatched.size && (resumeLunch || soundSettings.lunch.repeat))beep('lunch');
+        }
+      }
+    });
+    outputChanges=change.catch(()=>false);
+    return change;
+  }
+  async function refreshAudioDevices() {
+    if(destroyed || !canRouteOutput || typeof mediaDevices?.enumerateDevices!=='function')return;
+    try {
+      const devices=await mediaDevices.enumerateDevices();await outputChanges;
+      if(destroyed)return;
+      const available=devices.filter(d=>d.kind==='audiooutput' && d.deviceId && d.deviceId!=='default');
+      const defaultLabel=kind=>{
+        const label=devices.find(d=>d.kind===kind && d.deviceId==='default')?.label;
+        return (label?label.replace(/^default\s*[-–—]\s*/i,''):'System default')+' (Default)';
+      };
+      outputChoice.textContent='';
+      el('option',defaultLabel('audiooutput'),outputChoice).value='';
+      for(const [index,device] of available.entries())el('option',device.label || `Output device ${index+1}`,outputChoice).value=device.deviceId;
+      if(outputDeviceId && !available.some(d=>d.deviceId===outputDeviceId)) {
+        await setAssistantOutput('','Selected output is unavailable. Assistant sounds now use the system default.');
+      }
+      outputChoice.value=outputDeviceId;
+      if(!available.length && !outputDeviceId)setText(deviceFeedback,'Using the system default. Other outputs may need browser permission.');
+    } catch {
+      if(!destroyed)setText(deviceFeedback,'Could not list audio devices. The assistant has kept its current output.');
+    }
+  }
+  outputChoice.onchange=()=>setAssistantOutput(outputChoice.value);
+  refreshDevicesButton.onclick=()=>refreshAudioDevices();
+  if(chooseOutputButton)chooseOutputButton.onclick=async()=>{
+    try {
+      const device=await mediaDevices.selectAudioOutput(outputDeviceId?{deviceId:outputDeviceId}:{});
+      if(destroyed)return;
+      if(device?.kind!=='audiooutput' || typeof device.deviceId!=='string')throw Error('No output selected');
+      await setAssistantOutput(device.deviceId);await refreshAudioDevices();
+    } catch {if(!destroyed)setText(deviceFeedback,'No new output was selected. The assistant has kept its current output.');}
+  };
+  const audioDeviceChanged=()=>{void refreshAudioDevices();};
+  mediaDevices?.addEventListener?.('devicechange',audioDeviceChanged);
+  const desktopCard=el('div','',settingsPanel,'settings-card');
+  el('h4','Desktop Notifications',desktopCard);
+  el('p','Allow desktop notifications for the sounds ticked in Sound Settings. Sounds and messages in the assistant still work when this is off.',desktopCard,'settings-description');
+  const notificationInstructions=el('div','',desktopCard,'small notification-instructions');
+  el('p','Allow notifications manually in Microsoft Edge:',notificationInstructions);
+  const notificationSteps=el('ol','',notificationInstructions);
+  el('li','Settings → Privacy, search and services → Site permissions → All permissions → Notifications.',notificationSteps);
+  el('li','Under Allowed to send notifications, select Add site.',notificationSteps);
+  el('li','Enter https://vcc-au2.8x8.com and select Add.',notificationSteps);
+  const desktopLabel=el('label','',desktopCard,'repeat-control');
+  const desktopToggle=el('input','',desktopLabel);desktopToggle.type='checkbox';desktopToggle.checked=desktopNotifications;
+  desktopToggle.id='its-desktop-notifications';desktopLabel.append(doc.createTextNode('Show desktop notifications'));
+  const notificationTest=el('button','Test desktop notification',desktopCard);
+  const notificationFeedback=el('p','Use the test button to check whether a popup appears.',desktopCard,'notification-feedback');
+  notificationFeedback.setAttribute('role','status');notificationFeedback.setAttribute('aria-live','polite');
+  let notificationTesting=false;
+  function syncNotificationTest() {
+    notificationTest.disabled=destroyed || !desktopNotifications || notificationTesting;
+  }
+  notificationTest.onclick=async()=>{
+    if (destroyed || !desktopNotifications || notificationTesting) return;
+    if (!('Notification' in root)) {
+      setText(notificationFeedback,'Desktop notifications are not supported in this browser.');return;
+    }
+    notificationTesting=true;syncNotificationTest();
+    try {
+      const permission=root.Notification.permission;
+      if (destroyed || !desktopNotifications) return;
+      if (permission!=='granted') {
+        setText(notificationFeedback,'Notifications are not allowed yet. Follow the Edge settings steps above, then try again.');return;
+      }
+      notices.get('test')?.close();
+      const notice=new root.Notification('8x8 Assistant: Test Notification',
+        {body:'This is a test of your desktop notifications.',tag:'its-call-assist-test',silent:muted});
+      notices.set('test',notice);notice.onclick=()=>{root.focus();notice.close();};
+      setText(notificationFeedback,'Test notification sent. If no popup appeared, check your browser and computer notification settings.');
+    } catch {
+      setText(notificationFeedback,'The notification could not be sent. Check your browser’s notification settings and try again.');
+    } finally {notificationTesting=false;syncNotificationTest();}
+  };
+  syncNotificationTest();
+  desktopToggle.onchange=event=>{
+    desktopNotifications=desktopToggle.checked;savePreferences();
+    if (!desktopNotifications) {for (const notice of notices.values()) notice.close();notices.clear();}
+    else enableAlerts(event);
+    syncNotificationTest();
+  };
+  function sendDesktopNotification(kind,title,body) {
+    if (!destroyed && desktopNotifications && soundSettings[kind].desktopNotification
+      && 'Notification' in root && root.Notification.permission === 'granted') {
+      try {
+        notices.get(kind)?.close();
+        const n = new root.Notification(title, {body, tag:`its-call-assist-${kind}`, requireInteraction:true,silent:muted});
+        notices.set(kind,n); n.onclick = () => {root.focus(); n.close();};
+      } catch(e) { console.warn('Service Desk 8x8 Assistant notification:', e.message); }
+    }
+  }
+  function notify(kind, title, body) {
+    if (destroyed) return;
+    reminders.set(kind,{title,body});
+    try { beep(kind); } catch {}
+    syncReminderBox();sendDesktopNotification(kind,title,body);
+  }
+  function clearAlert(kind) {
+    stopSound(kind);
+    notices.get(kind)?.close(); notices.delete(kind);
+    reminders.delete(kind);syncReminderBox();
+  }
+  function reset() {
+    lunchLatched.clear(); freshness.clear(); previous.clear();
+    activeReminder=null;
+    for (const k of ['lunch','critical','disposition','lunchOverdue']) clearAlert(k);
+    syncReminderBox();
+  }
+  function syncReminder(reminder) {
+    if (activeReminder && activeReminder.kind !== reminder?.kind) {
+      clearAlert(activeReminder.kind);activeReminder=null;
+    }
+    if (!reminder) return;
+    if (!activeReminder) {
+      activeReminder=reminder;notify(reminder.kind,reminder.title,reminder.body);
+    } else {
+      activeReminder=reminder;
+      reminders.set(reminder.kind,reminder);syncReminderBox();
+      if (!sounds.has(reminder.kind) && soundSettings[reminder.kind].repeat) beep(reminder.kind);
+    }
+  }
+  function updateLunch(input) {
+    lunchMinutes=settingNumber(Number(input.value),30,1,120);
+    lunchSlider.value=lunchExact.value=String(lunchMinutes);
+    applyTimingSettings();
+  }
+  lunchSlider.oninput=()=>updateLunch(lunchSlider);
+  lunchExact.onchange=()=>updateLunch(lunchExact);
+  function scan(docs) {
+    if (destroyed) return;
+    const now = Date.now(), gap = now - lastScan; lastScan = now;
+    for (const [d,o] of observers) if (!docs.includes(d)) {o.disconnect();observers.delete(d);}
+    for (const d of docs) if (!observers.has(d) && d.body) {
+      const o = new root.MutationObserver(safeScan);
+      o.observe(d.body, {subtree:true,childList:true,characterData:true,attributes:true,
+        attributeFilter:['data-status-value','aria-label','title','hidden','style','class']});
+      observers.set(d,o);
+    }
+    for (const d of [...interactionDocs]) if (!docs.includes(d)) {
+      d.removeEventListener('pointerdown', enableAlerts, true); d.removeEventListener('keydown', enableAlerts, true); interactionDocs.delete(d);
+    }
+    for (const d of docs) if (!interactionDocs.has(d)) {
+      d.addEventListener('pointerdown', enableAlerts, true); d.addEventListener('keydown', enableAlerts, true); interactionDocs.add(d);
+    }
+    const current = refreshAgents(docs);
+    const selfInG1=selected.has('Me');
+    const me=current.get('Me');
+    const personalKind=me && (['on break','break'].includes(normal(me.status))?'break':dispositionStatus(me.status)?'disposition':'');
+    if (personalKind) {
+      lastSample={me,agents:[],queues:[],selected:[...selected],mode:selfInG1?'covering':'assisting',
+        lunchMinutes,dispositionSeconds,waitingAlertSeconds,desktopNotifications,muted,unavailable:false,view:personalKind};
+      showUnavailable(false);renderCompact(me,personalKind);
+      setText(lastUpdated,new Date().toLocaleTimeString('en-AU',{hour12:false}));
+      clearAlert('lunch');lunchLatched.clear();
+      if (gap>30000) freshness.clear();
+      const signature=me.status+'|'+(me.liveTimer || me.timer);
+      let f=freshness.get('personal') || freshness.get('Me');
+      if (!f) f={signature,status:me.status,changedAt:now,observed:false};
+      else if (f.signature!==signature) f={signature,status:me.status,changedAt:now,observed:true};
+      freshness.set('personal',f);
+      // A native wrap-up timer can finish while mandatory fields still keep
+      // the Wrap up page open. Keep its personal reminder until that page ends.
+      const fresh=((f.observed && now-f.changedAt<30000) || (personalKind==='disposition' && me.remaining===0))
+        && root.navigator.onLine!==false;
+      syncReminder(selfInG1 && fresh?personalRule(me,lunchMinutes,dispositionSeconds):null);
+      return;
+    }
+    compactKind='';freshness.delete('personal');
+    const sample = read(docs, selected.values().next().value || [...current.keys()].find(name => name !== 'Me') || 'Me');
+    const samples = [...selected].map(name => read(docs, name));
+    const agents = samples.map(s => s.agent).filter(Boolean);
+    const missing = !current.has('Me') || (!rosterVisible && agentWidgets.size>1) || sample.errors.length > 0 || samples.some(s => s.errors.length);
+    lastSample = {me:current.get('Me') || null, agents, queues:sample.queues, selected:[...selected],
+      mode:selfInG1?'covering':'assisting',lunchMinutes,dispositionSeconds,waitingAlertSeconds,
+      desktopNotifications,muted,unavailable:!!missing,view:'main'};
+    if (missing) {
+      showUnavailable(true); freshness.clear(); return;
+    }
+    showUnavailable(false);
+    if (gap > 30000) freshness.clear();
+    let fresh = true;
+    for (const a of selfInG1 ? [current.get('Me')] : agents) {
+      const signature = `${a.status}|${a.timer}`;
+      let f = freshness.get(a.name);
+      if (!f) f = {signature, changedAt:now, observed:false};
+      else if (f.signature !== signature) f = {signature, changedAt:now, observed:true};
+      freshness.set(a.name, f);
+      if (!f.observed || now - f.changedAt >= 30000) fresh = false;
+    }
+    const offline = root.navigator.onLine === false;
+    const heading = !selected.size ? 'Select at least one G1 agent' : offline ? 'Waiting for connection' : !fresh ? 'Waiting for live updates'
+      : sample.queues.some(q=>q.waiting>0 && q.waitSeconds===null)?'Waiting for caller time':'Live';
+    setText(monitorState,heading);monitorState.setAttribute('data-state',heading==='Live'?'live':'waiting');
+    setText(queueTotal,String(sample.queues.reduce((total,q)=>total+q.waiting,0)));
+    setText(lastUpdated,new Date().toLocaleTimeString('en-AU',{hour12:false}));
+    if (!fresh || offline) {
+      clearAlert('lunch');syncReminder(null);return;
+    }
+    for (const a of agents) {
+      const old = previous.get(a.name);
+      if (old && (normal(old.status) !== normal(a.status) || a.seconds < old.seconds)) {
+        lunchLatched.delete(a.name);
+        if (a.name==='Me') syncReminder(null);
+      }
+      previous.set(a.name, a);
+    }
+    if (selfInG1) {
+      clearAlert('lunch');lunchLatched.clear();
+      if (!workingOffline(me.status)) {syncReminder(null);return;}
+    }
+    // Only selected, signed-in G1 members determine whether phone cover is needed.
+    const covering=selfInG1?agents.filter(a=>a.name!=='Me'):agents;
+    let coverageFresh=selfInG1 || covering.length>0;
+    for (const a of [me,...covering]) {
+      const key = 'coverage:'+a.name, signature = a.status+'|'+a.timer;
+      let f=freshness.get(key);
+      if (!f) f={signature,changedAt:now,observed:false};
+      else if (f.signature!==signature) f={signature,changedAt:now,observed:true};
+      freshness.set(key,f);
+      if (!f.observed || now-f.changedAt>=30000) coverageFresh=false;
+    }
+    let waitingFresh=false;
+    for (const q of sample.queues) {
+      const key='queue:'+q.name,signature=q.waiting+'|'+q.waitSeconds;
+      let f=freshness.get(key);
+      if (!f) f={signature,changedAt:now,observed:false};
+      else if(f.signature!==signature)f={signature,changedAt:now,observed:true};
+      freshness.set(key,f);
+      if(q.waiting>0 && Number.isFinite(q.waitSeconds) && (selfInG1?q.waitSeconds>waitingAlertSeconds:q.waitSeconds>=waitingAlertSeconds)
+        && f.observed && now-f.changedAt<30000)waitingFresh=true;
+    }
+    const decision = groupRules(agents, sample.queues, me,waitingAlertSeconds,selfInG1);
+    decision.critical = decision.critical && coverageFresh && waitingFresh;
+    if (decision.critical) {
+      clearAlert('lunch');
+      const reason=selfInG1
+        ? `You are "${me.status}" in G1. ${covering.length?'No other signed-in G1 member is "Available".':'You are the only signed-in G1 member.'} A caller has waited longer than ${timeWords(waitingAlertSeconds,'second')}.`
+        : `You are "${me.status}" in G2. No signed-in G1 member is "Available", and a caller has waited at least ${timeWords(waitingAlertSeconds,'second')}.`;
+      syncReminder({kind:'critical',title:'Alert: Change Status To Available',
+        body:`${reason} Change your status to "Available" to take the call.`});
+    } else syncReminder(null);
+    if (selfInG1) return;
+    const newBreaks = decision.lunch.filter(name => !lunchLatched.has(name));
+    for (const name of [...lunchLatched]) if (!decision.lunch.includes(name)) lunchLatched.delete(name);
+    if (!decision.lunch.length) clearAlert('lunch');
+    if (newBreaks.length && !decision.critical) {
+      notify('lunch','Info: G1 On Break',`${newBreaks.join(', ')} (G1) ${newBreaks.length===1?'is':'are'} "On Break".`);
+      newBreaks.forEach(name => lunchLatched.add(name));
+    }
+  }
+  function safeScan() {
+    if (destroyed) return;
+    try {
+      const docs=documents();
+      countCalls(docs);
+      if (!QUEUES.length && !readPersonalPage(docs)) {compactKind='';showUnavailable(false);openView('settings');return;}
+      scan(docs);
+    } catch(e) {
+      showUnavailable(true);
+      console.warn('Service Desk 8x8 Assistant:',e.message);
+    }
+  }
+  function syncMute() {
+    for(const button of [muteButton,compactMute]) {
+      setText(button,muted?'Unmute':'Mute');button.setAttribute('aria-pressed',String(muted));
+      button.title=muted?'Unmute assistant sounds':'Mute assistant sounds';
+    }
+    for(const preview of previewButtons)preview.disabled=muted || !audioOutputReady;
+    syncReminderBox();
+  }
+  function toggleMute() {
+    muted=!muted;savePreferences();syncMute();
+    if(muted) {for(const key of [...sounds.keys()])stopSound(key);safeScan();}
+    else {
+      prepareSound();safeScan();
+      const replay=()=>{
+        if(destroyed || muted)return;
+        if(activeReminder && !sounds.has(activeReminder.kind))beep(activeReminder.kind);
+        else if(!activeReminder && lunchLatched.size && soundSettings.lunch.repeat && !sounds.has('lunch'))beep('lunch');
+      };
+      if(audio?.state!=='running')audio?.resume?.().then(replay).catch(()=>{});else replay();
+    }
+  }
+  muteButton.onclick=compactMute.onclick=toggleMute;
+  syncMute();
+  minimize.onclick = () => {
+    content.classList.toggle('hidden');
+    const collapsed=content.classList.contains('hidden');
+    minimize.textContent=collapsed?'+':'-';
+    minimize.title=collapsed?'Restore assistant':'Minimise assistant';
+    minimize.setAttribute('aria-label',minimize.title);
+  };
+  function destroy() {
+    saveStatistics();root.removeEventListener?.('pagehide',saveStatistics);
+    destroyed=true;root.clearInterval(interval);
+    mediaDevices?.removeEventListener?.('devicechange',audioDeviceChanged);
+    for (const key of [...sounds.keys()]) stopSound(key);
+    for (const o of observers.values()) o.disconnect();
+    for (const n of notices.values()) n.close();
+    for (const d of interactionDocs) {d.removeEventListener('pointerdown', enableAlerts, true);d.removeEventListener('keydown', enableAlerts, true);}
+    audio?.close().catch(()=>{});host.remove();delete root.__itsCallAssist;
+  }
+  remove.onclick = destroy;
+  const interval = root.setInterval(safeScan,1000);
+  root.__itsCallAssist = {destroy, inspect:() => lastSample};
+  root.__itsCallAssist.version=VERSION;
+  root.__itsCallAssist.wrapUpSession=()=>wrapUpSession?{...wrapUpSession}:null;
+  root.__itsCallAssist.statistics=()=>({day:statistics.day,total:statistics.calls.length,calls:[...statistics.calls],hadGaps:statistics.hadGaps});
+  root.addEventListener?.('pagehide',saveStatistics);
+  prepareSound();safeScan();void refreshAudioDevices();
+})();

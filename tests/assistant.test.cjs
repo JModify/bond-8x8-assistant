@@ -233,9 +233,12 @@ check('Increasing lunch allowance cancels an overdue reminder; settings persist'
   const saved=JSON.parse(e.storage.get('service-desk-8x8-preferences-v5'));
   assert.equal(saved.lunchMinutes,20);assert.deepEqual(saved.g1,['Me']);
 });
-check('Other unavailable self states use the existing Available alarm',()=>{
-  const e=environment();e.setMe('Work Offline',2);assert.equal(e.debug().activeReminder.kind,'critical');
-  e.setMe('Busy',0);assert.equal(e.debug().activeReminder,null);assert(!e.debug().playing.includes('critical'));
+check('G1 Other Work and Working Offline stay silent without an aged waiting caller',()=>{
+  const e=environment();
+  for (const status of ['Other Work','Working Offline','Work Offline']) {
+    e.setMe(status,1);e.setMe(status,2);assert.equal(e.debug().activeReminder,null);
+    assert.equal(e.notifications.length,0);assert(!e.debug().playing.includes('critical'));
+  }
 });
 check('New sound settings have separate defaults and disabled repeat durations',()=>{
   const e=environment();const cards=e.ui().querySelectorAll('fieldset');assert.equal(cards.length,4);
@@ -322,9 +325,10 @@ check('Disposition delay and descriptions update immediately',()=>{
 check('Desktop notifications can be disabled without silencing alerts',()=>{
   const e=environment({g1:['Me'],lunchSeconds:1800,desktopNotifications:false});e.setMe('Wrap Up',11);
   assert.equal(e.notifications.length,0);assert(e.debug().playing.includes('disposition'));
-  const toggle=e.ui().querySelector('#its-desktop-notifications');toggle.checked=true;toggle.onchange();e.setMe('Work Offline',1);
+  const toggle=e.ui().querySelector('#its-desktop-notifications');toggle.checked=true;toggle.onchange();
+  e.setMe('Available',1);e.setMe('Wrap Up',11);
   assert.equal(e.notifications.length,1);toggle.checked=false;toggle.onchange();assert(e.notifications[0].closed);
-  assert(e.debug().playing.includes('critical'));
+  assert(e.debug().playing.includes('disposition'));
 });
 check('Hidden data conceals all menu contents, then restores the open menu',()=>{
   const e=environment();e.button('Settings').onclick();e.queues[0].row.hidden=true;e.scan();
@@ -335,11 +339,13 @@ check('Hidden data conceals all menu contents, then restores the open menu',()=>
   e.queues[0].row.hidden=false;e.scan();assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'));
 });
 
-check('Release reports version 1.0.3 and bottom controls are only Mute / Settings',()=>{
-  const e=environment();assert.equal(e.window.__itsCallAssist.version,'1.0.3');
+check('Release reports version 1.0.4 in the footer and bottom controls are only Mute / Settings',()=>{
+  const e=environment();assert.equal(e.window.__itsCallAssist.version,'1.0.4');
   assert.deepEqual(e.ui().querySelector('.controls').querySelectorAll('button').map(b=>b.textContent),['Mute','Settings']);
   assert.deepEqual(e.ui().querySelector('.window-actions').querySelectorAll('button').map(b=>b.textContent),['-','x']);
-  assert(e.ui().querySelector('.version').textContent.includes('1.0.3'));
+  assert.equal(e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,'1.0.4');
+  assert(e.ui().querySelector('.release-version').closest('.footer'));
+  assert(!e.ui().querySelector('.title-block').textContent.includes('1.0.4'));
 });
 check('Minimise and restore use the top button; close removes the assistant',()=>{
   const e=environment();e.button('-').onclick();assert(e.ui().querySelector('.monitor-grid').parentElement.classList.contains('hidden'));
@@ -519,7 +525,7 @@ check('New agents appear immediately and Me stays first with the same row stylin
   const e=environment();e.login('AAA Agent');e.scan();
   const rows=e.ui().querySelector('tbody').querySelectorAll('tr');assert.equal(rows[0].querySelector('td').textContent,'Me');
   assert(e.checkbox('AAA Agent'));assert.equal(rows[0].className,rows[1].className);
-  assert.equal(e.ui().querySelector('.version').textContent,'Author: Joshua Lavagna-Slater | Version 1.0.3');
+  assert.equal(e.ui().querySelector('.author').textContent,'Author: Joshua Lavagna-Slater');
 });
 check('Version 1.0.2 settings migrate to minute lunches and one caller waiting delay',()=>{
   const e=environment({g1:['Me'],lunchSeconds:2700,coverSeconds:360,callSeconds:240,dispositionSeconds:10},{},{rawPreferences:true});
@@ -596,15 +602,141 @@ check('Outbound waits and unselected G2 agents cannot control the coverage alert
   assert.equal(e.debug().activeReminder.kind,'critical');assert.equal(e.window.__itsCallAssist.inspect().queues.length,3);
   assert.equal(e.ui().querySelector('.queue-total').textContent,'1');
 });
-check('Coverage queue alarms are suppressed when Me is in G1',()=>{
+check('G1 users on a call do not receive a phone-cover alert',()=>{
   const e=environment({g1:['Me','Alex Agent'],waitingAlertSeconds:1});e.other('Alex Agent','Busy',1);e.waiting(3,300);e.setMe('Busy',1);
   e.other('Alex Agent','Busy',2);e.waiting(3,301);e.setMe('Busy',2);assert.equal(e.notifications.length,0);assert.equal(e.debug().activeReminder,null);
+});
+check('G1 Working Offline requires a caller strictly beyond the delay and no other G1 member Available',()=>{
+  const e=environment({g1:['Me','Alex Agent'],waitingAlertSeconds:60});
+  coveragePulse(e,59,1);coveragePulse(e,60,2);assert.equal(e.debug().activeReminder,null);
+  coveragePulse(e,61,3);assert.equal(e.debug().activeReminder.kind,'critical');assert(e.debug().playing.includes('critical'));
+  const reason=e.ui().querySelector('.reminder-reason').textContent;
+  assert(reason.includes('"Work Offline" in G1'));assert(reason.includes('No other signed-in G1 member is "Available"'));
+  assert(reason.includes('longer than 60 seconds'));assert.equal(e.notifications.length,1);
+  e.other('Alex Agent','Available',0);e.waiting(1,62);e.setMe('Work Offline',4);
+  assert.equal(e.debug().activeReminder,null);assert(!e.debug().playing.includes('critical'));
+  coveragePulse(e,63,5);assert.equal(e.debug().activeReminder.kind,'critical');
+  e.waiting(1,60);e.setMe('Work Offline',6);assert.equal(e.debug().activeReminder,null);
+});
+check('G1 Other Work is permitted even with an overdue caller and all other phone agents Busy',()=>{
+  const e=environment({g1:['Me','Alex Agent'],waitingAlertSeconds:5});
+  for(const status of ['Other Work','Available','Busy'])for(const tick of [1,2]) {
+    e.other('Alex Agent','Busy',tick);e.waiting(2,900+tick);e.setMe(status,tick);
+    assert.equal(e.debug().activeReminder,null);assert.equal(e.notifications.length,0);
+  }
+});
+check('The only signed-in G1 member gets a Working Offline queue reminder, but unselected Available agents do not cover G1',()=>{
+  const e=environment({g1:['Me'],waitingAlertSeconds:5});
+  e.waiting(1,6);e.setMe('Working Offline',1);e.waiting(1,7);e.setMe('Working Offline',2);
+  assert.equal(e.debug().activeReminder.kind,'critical');assert(e.ui().querySelector('.reminder-reason').textContent.includes('only signed-in G1 member'));
+  e.setMe('Other Work',3);assert.equal(e.debug().activeReminder,null);
+  e.waiting(0);e.setMe('Working Offline',4);assert.equal(e.debug().activeReminder,null);
+});
+check('G1 queue cover accepts other non-Available G1 states and removes signed-out members from the decision',()=>{
+  for(const status of ['On Break','Working Offline','Other Work','Wrap Up']) {
+    const e=environment({g1:['Me','Alex Agent'],waitingAlertSeconds:5});
+    for(const tick of [1,2]) {e.other('Alex Agent',status,tick);e.waiting(1,6+tick);e.setMe('Working Offline',tick);}
+    assert.equal(e.debug().activeReminder.kind,'critical');
+    e.logout('Alex Agent');e.waiting(1,9);e.setMe('Working Offline',3);
+    assert.equal(e.debug().activeReminder.kind,'critical');assert(!e.checkbox('Alex Agent'));
+  }
+});
+check('G1 caller alerts stop when native queue times become unreadable or stale',()=>{
+  const e=environment({g1:['Me','Alex Agent'],waitingAlertSeconds:5});coveragePulse(e,6,1);coveragePulse(e,7,2);
+  assert.equal(e.debug().activeReminder.kind,'critical');
+  e.queues[3].wait.textContent='unreadable';e.setMe('Working Offline',3);assert.equal(e.debug().activeReminder,null);
+  coveragePulse(e,9,4);coveragePulse(e,10,5);assert.equal(e.debug().activeReminder.kind,'critical');
+  e.advance(31000);assert.equal(e.debug().activeReminder,null);
+});
+check('Each sound has its own notification checkbox, defaults on, and preserves existing audio preferences',()=>{
+  const e=environment({}, {critical:{preset:'Soft bell',volume:32,seconds:4,repeat:false}});
+  for(const kind of ['lunch','critical','disposition','lunchOverdue']) {
+    const toggle=e.ui().querySelector(`#its-sound-${kind}-desktop-notification`);
+    assert(toggle.checked);assert.equal(toggle.parentElement.textContent,'Send desktop notification');
+  }
+  const cfg=JSON.parse(e.storage.get('service-desk-8x8-sounds-v4')).critical;
+  assert.deepEqual(cfg,{preset:'Soft bell',volume:32,seconds:4,repeat:false,desktopNotification:true});
+});
+check('Per-sound notification opt-outs suppress popups while every type keeps its tone and visible reason',()=>{
+  const cases=[
+    ['lunch',{g1:['Alex Agent']},e=>{e.setMe('Available',1);e.other('Alex Agent','On Break',1);e.setMe('Available',2);}],
+    ['critical',{g1:['Me'],waitingAlertSeconds:5},e=>{e.waiting(1,6);e.setMe('Working Offline',1);e.waiting(1,7);e.setMe('Working Offline',2);}],
+    ['disposition',{g1:['Me']},e=>e.setMe('Wrap Up',11)],
+    ['lunchOverdue',{g1:['Me'],lunchMinutes:1},e=>e.setMe('On Break',61)]
+  ];
+  for(const [kind,prefs,trigger] of cases) {
+    const e=environment(prefs,{[kind]:{desktopNotification:false}});trigger(e);
+    assert.equal(e.notifications.length,0);assert(e.debug().playing.includes(kind));
+    const card=e.ui().querySelector('.current-reminders').querySelector(`[data-kind="${kind}"]`);
+    assert(card);assert(card.querySelector('.reminder-reason').textContent.length>20);
+    assert.equal(card.querySelector('.reminder-state').textContent,'Sound playing');
+    assert(!e.ui().querySelector('.current-reminders').classList.contains('hidden'));
+  }
+});
+check('Changing one notification checkbox closes only its popup and keeps audio, other preferences and persistence intact',()=>{
+  const e=environment();e.setMe('Wrap Up',11);const notice=e.notifications.at(-1);
+  const toggle=e.ui().querySelector('#its-sound-disposition-desktop-notification');toggle.checked=false;toggle.onchange();
+  assert(notice.closed);assert(e.debug().playing.includes('disposition'));
+  const card=toggle.closest('fieldset'),volume=card.querySelector('[type="range"]');volume.value='24';volume.oninput();
+  const saved=JSON.parse(e.storage.get('service-desk-8x8-sounds-v4'));
+  assert.equal(saved.disposition.desktopNotification,false);assert.equal(saved.disposition.volume,24);assert.equal(saved.critical.desktopNotification,true);
+  toggle.checked=true;toggle.onchange();assert.equal(e.notifications.length,2);assert(e.debug().playing.includes('disposition'));
+  toggle.checked=false;toggle.onchange();e.rerun();assert(!e.ui().querySelector('#its-sound-disposition-desktop-notification').checked);
+});
+check('The global notification toggle remains the master control for all per-sound choices',()=>{
+  const e=environment({g1:['Me'],desktopNotifications:false});e.setMe('Wrap Up',11);
+  const toggle=e.ui().querySelector('#its-sound-disposition-desktop-notification');toggle.checked=true;toggle.onchange();
+  assert.equal(e.notifications.length,0);assert(e.debug().playing.includes('disposition'));
+  assert(e.ui().querySelector('.reminder-reason').textContent.includes('Wrap up'));
+});
+check('Active reminders sit above footer details and survive minimising or opening menus',()=>{
+  const e=environment({g1:['Alex Agent'],waitingAlertSeconds:5});coveragePulse(e,6,1);coveragePulse(e,7,2);
+  const banner=e.ui().querySelector('.current-reminders'),bottom=banner.parentElement;
+  assert(bottom.classList.contains('assistant-bottom'));assert(bottom.children.indexOf(banner)<bottom.children.indexOf(e.ui().querySelector('.footer')));
+  assert(banner.textContent.includes('"Work Offline" in G2'));assert(banner.textContent.includes('at least 5 seconds'));
+  e.button('-').onclick();assert(!bottom.classList.contains('hidden'));assert(!banner.classList.contains('hidden'));
+  e.button('Settings').onclick();assert(!banner.classList.contains('hidden'));
+  e.setMe('Available',0);assert(banner.classList.contains('hidden'));assert.equal(banner.querySelectorAll('.current-reminder').length,0);
+});
+check('Lunch and disposition alerts show their reasons beside compact progress and remain clear when muted',()=>{
+  const e=environment({g1:['Me'],lunchMinutes:1});e.showBreak(60);e.breakTime(61);
+  const banner=e.ui().querySelector('.current-reminders');assert(!banner.classList.contains('hidden'));
+  assert(!banner.parentElement.classList.contains('hidden'));assert(e.ui().querySelector('.footer').classList.contains('hidden'));
+  assert(banner.textContent.includes('longer than your 1-minute lunch break'));
+  e.ui().querySelector('.compact-actions').querySelector('button').onclick();assert(banner.textContent.includes('Sound muted'));
+  e.restoreMain();assert(banner.classList.contains('hidden'));e.showWrapUp(240);e.wrapTime(229);
+  assert(banner.textContent.includes('more than 10 seconds'));assert(banner.textContent.includes('Complete the fields and click Wrap up'));
+});
+check('Sound previews have a separate reason card without a popup or hiding the active alert',()=>{
+  const e=environment();e.setMe('Wrap Up',11);const count=e.notifications.length;
+  e.ui().querySelector('fieldset').querySelectorAll('button').find(b=>b.textContent==='Preview').onclick();
+  const banner=e.ui().querySelector('.current-reminders');assert.equal(banner.querySelectorAll('.current-reminder').length,2);
+  const preview=banner.querySelector('[data-kind="preview"]');assert(preview.textContent.includes('Testing your selected "Gentle chime"'));
+  assert.equal(e.notifications.length,count);e.button('Stop preview').onclick();
+  assert.equal(banner.querySelectorAll('.current-reminder').length,1);assert(e.debug().playing.includes('disposition'));
+});
+check('Finite information cards accurately show when the sound has ended and clear when the break ends',()=>{
+  const e=environment({g1:['Alex Agent']});e.other('Alex Agent','On Break',1);e.setMe('Available',1);
+  e.other('Alex Agent','On Break',2);e.setMe('Available',2);
+  const banner=e.ui().querySelector('.current-reminders');assert(banner.textContent.includes('Alex Agent (G1) is "On Break"'));
+  for(const {fn,ms} of [...e.jobs.values()])if(ms===2000)fn();
+  assert(banner.textContent.includes('Sound finished'));assert(!e.debug().playing.includes('lunch'));
+  e.other('Alex Agent','Available',0);e.setMe('Available',3);assert(banner.classList.contains('hidden'));
+});
+check('Settings omit the internal sound introduction, duplicate lunch value and bounds, and use the requested descriptions',()=>{
+  const e=environment();assert(!e.ui().querySelector('.sound-intro'));assert(!e.ui().querySelector('.lunch-value'));assert(!e.ui().querySelector('.lunch-limits'));
+  const queues=e.ui().querySelector('#its-waiting-alert-seconds').closest('.settings-card');
+  assert.equal(queues.querySelector('.settings-description').textContent,
+    'How long a caller must be waiting before the "Change Status to Available" sound plays. Only used when you are in G2, are not available, and every signed-in G1 member is busy.');
+  const text=e.ui().querySelector('.assistant-settings').textContent;
+  assert(text.includes('Do not touch unless you know what you are doing.'));assert(!text.includes('These names are stored only in this browser'));
+  assert(!text.includes('Do not include an outbound queue'));
 });
 check('Mute stops all tones and previews while updates, counters and notifications continue',()=>{
   const e=environment();e.setMe('Wrap Up',11);assert(e.debug().playing.includes('disposition'));e.button('Mute').onclick();
   assert(e.debug().muted);assert.equal(e.debug().playing.length,0);
   assert.equal(e.debug().activeReminder.kind,'disposition');assert(e.ui().querySelectorAll('button').filter(b=>b.textContent==='Preview').every(b=>b.disabled));
-  e.setMe('Work Offline',1);assert.equal(e.debug().activeReminder.kind,'critical');assert(e.notifications.at(-1).options.silent);
+  e.setMe('Available',1);e.setMe('Wrap Up',11);assert.equal(e.debug().activeReminder.kind,'disposition');assert(e.notifications.at(-1).options.silent);
   const stamp=e.ui().querySelector('.last-updated').textContent;e.setMe('Busy',0);e.waiting(4);e.other('Alex Agent','Busy',400);e.setMe('Busy',4);
   assert.equal(e.window.__itsCallAssist.statistics().total,1);assert.equal(e.ui().querySelector('.queue-total').textContent,'4');
   assert.notEqual(e.ui().querySelector('.last-updated').textContent,stamp);assert.equal(e.window.__itsCallAssist.inspect().me.timer,'4s');
@@ -662,10 +794,11 @@ asyncCheck('Muted notification tests still work quietly and disabled, unsupporte
   const failed=environment();failed.window.Notification=class{static permission='granted';constructor(){throw Error('Blocked');}};
   await failed.button('Test desktop notification').onclick();assert(failed.ui().querySelector('.notification-feedback').textContent.includes('could not be sent'));
 });
-asyncCheck('Audio dropdowns name system defaults, input stays disabled, and selecting output affects only assistant audio',async()=>{
+asyncCheck('Output controls are in Sound Settings, input is removed, and routing affects only assistant audio',async()=>{
   const e=environment();await e.button('Refresh devices').onclick();
   const input=e.ui().querySelector('[aria-label="Assistant input device"]'),output=e.ui().querySelector('[aria-label="Assistant output device"]');
-  assert(input.disabled);assert.equal(input.querySelector('option').textContent,'Desk Microphone (Default)');
+  assert.equal(input,null);assert(!e.ui().textContent.includes('Input Device'));
+  assert(output.closest('.sound-settings'));assert(!output.closest('.assistant-settings'));
   assert.equal(output.querySelector('option').textContent,'Desk Speakers (Default)');
   const phoneAudio=new e.window.AudioContext();output.value='headset';await output.onchange();
   assert.equal(e.debug().audioOutput,'headset');assert.equal(phoneAudio.sinkId,'');assert.equal(phoneAudio.state,'running');

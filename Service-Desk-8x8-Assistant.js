@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — v1.0.3
+/* Service Desk 8x8 Assistant — v1.0.4
  * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
@@ -11,7 +11,7 @@
  * Background browser throttling, page freezing, logout, closure and refresh
  * can delay/stop monitoring. Rerun after a refresh. Not a guaranteed alarm service.
  * In G2, assistance uses the break, waiting and coverage rules.
- * In G1, Me gets availability, disposition and lunch reminders.
+ * In G1, Me gets queue-based Working Offline, disposition and lunch reminders.
  * Timings are configurable in Assistant Settings. Only one personal alarm runs.
  * G1 selections, assistant settings and sounds persist when storage is permitted.
  * Break and disposition pages use compact personal timers without queue information.
@@ -29,7 +29,7 @@
   const resumedWrapUp = root.__itsCallAssist?.wrapUpSession?.();
   root.__itsCallAssist?.destroy();
   const doc = root.document;
-  const VERSION = '1.0.3';
+  const VERSION = '1.0.4';
   let wrapUpSession = resumedWrapUp || null;
   const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
   const normal = s => clean(s).toLowerCase();
@@ -195,14 +195,21 @@
     const status=clean(states[0].getAttribute('data-status-value'));
     return status?{status}:null;
   }
-  function groupRules(agents, queues, me = null, waitingAlertSeconds = 180) {
+  function workingOffline(status) {
+    return ['work offline','working offline'].includes(normal(status).replace(/[-_]/g,' '));
+  }
+  function groupRules(agents, queues, me = null, waitingAlertSeconds = 180, selfInG1 = false) {
     const waiting = queues.length === QUEUES.length && queues.every(q => q.waiting !== null)
-      && queues.some(q=>q.waiting>0 && Number.isFinite(q.waitSeconds) && q.waitSeconds>=waitingAlertSeconds);
-    const unavailable=a=>['busy','on break','break','work offline','working offline','wrap up','wrapup',
+      && queues.some(q=>q.waiting>0 && Number.isFinite(q.waitSeconds)
+        && (selfInG1?q.waitSeconds>waitingAlertSeconds:q.waitSeconds>=waitingAlertSeconds));
+    const unavailable=a=>['busy','on break','break','work offline','working offline','other work','wrap up','wrapup',
       'post processing','postprocessing','disposition'].includes(normal(a.status).replace(/[-_]/g,' '));
+    const covering=selfInG1?agents.filter(a=>a.name!=='Me'):agents;
     return {
       lunch: agents.filter(a => normal(a.status) === 'on break').map(a => a.name),
-      critical: !!me && normal(me.status)!=='available' && waiting && agents.length>0 && agents.every(unavailable)
+      critical: !!me && (selfInG1?workingOffline(me.status):normal(me.status)!=='available') && waiting
+        && (selfInG1 || covering.length>0)
+        && covering.every(a=>selfInG1?normal(a.status)!=='available':unavailable(a))
     };
   }
   function dispositionStatus(status) {
@@ -218,11 +225,11 @@
     }
     if (status === 'on break' || status === 'break') {
       return me.seconds > lunchMinutes*60 ? {kind:'lunchOverdue', title:'Alert: Lunch Break Finished',
-        body:`Your ${lunchMinutes}-minute lunch allowance has passed. Change your status to Available.`} : null;
+        body:`You have been "On Break" for longer than your ${lunchMinutes}-minute lunch break. Change your status to "Available".`} : null;
     }
-    if (status === 'available' || status === 'busy') return null;
-    return {kind:'critical', title:'Alert: Change Status To Available',
-      body:`You are covering phones in G1 and your status is ${me.status}. Change your status to Available.`};
+    // Other Work and Working Offline are permitted. Only the queue-based
+    // coverage rule can request an availability change from Working Offline.
+    return null;
   }
   const host = doc.createElement('div');
   host.id = 'its-call-assist-panel';
@@ -234,7 +241,6 @@
     .menu-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #e4eaf2;position:sticky;top:0;z-index:2;background:#fff}
     .menu-header h3{margin:0}
     .menu-header button{margin:0;flex-shrink:0;padding:6px 10px}
-    .sound-intro{margin-bottom:20px}
     .sound-category{min-width:0;margin:0 0 20px;padding:12px 14px 14px;border:1px solid #d7e0ec;border-radius:8px;background:#f8faff}
     .sound-category legend{padding:0 6px;font-weight:600;font-size:12px}
     .sound-description{margin-bottom:12px}
@@ -258,8 +264,6 @@
     .settings-description{margin:0 0 14px;font-size:12px;color:#526176}
     .setting-value{display:flex;align-items:center;gap:8px;margin-top:12px}
     .assistant-settings .setting-value input{width:85px}
-    .lunch-value{flex:0 0 70px}
-    .lunch-limits{display:flex;justify-content:space-between;margin-top:5px}
     .section-heading{margin:14px 0 8px;font-size:13px;font-weight:600}
     .agent-table{table-layout:fixed}
     .agent-table th:nth-child(1){width:34%}
@@ -277,14 +281,25 @@
     .agent-status[data-state="wrap up"],.agent-status[data-state="post processing"]{background:#f0eafb;color:#654293}
     .agent-table input[type=checkbox]{margin:0;accent-color:#245dc1;vertical-align:middle}
     .footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;padding-top:12px;border-top:1px solid #e4eaf2}
-    .last-updated{font-size:10px;color:#526176;font-variant-numeric:tabular-nums}
-    .last-updated time{display:block;font-size:12px;color:#172235;margin-top:2px}
+    .footer-details{display:flex;flex-wrap:wrap;gap:10px 18px}
+    .footer-detail{font-size:10px;color:#526176;font-variant-numeric:tabular-nums}
+    .footer-detail time,.footer-value{display:block;font-size:12px;color:#172235;margin-top:2px}
+    .assistant-bottom{position:sticky;bottom:-16px;background:#fff;padding-bottom:2px;z-index:3}
+    .current-reminders{margin:14px 0 0;padding:0;background:none;display:grid;gap:9px}
+    .current-reminder{--notice-accent:#b85809;--notice-bg:#fff7e8;padding:12px 14px;border:1px solid #e6c489;border-left:4px solid var(--notice-accent);border-radius:9px;background:var(--notice-bg);box-shadow:0 3px 10px #1722350a;overflow-wrap:anywhere}
+    .current-reminder[data-severity="info"]{--notice-accent:#245dc1;--notice-bg:#edf4ff;border-color:#b8cee9;border-left-color:var(--notice-accent)}
+    .current-reminder[data-severity="preview"]{--notice-accent:#7650a5;--notice-bg:#f4f0fc;border-color:#d5c7ea;border-left-color:var(--notice-accent)}
+    .reminder-heading{display:flex;align-items:flex-start;gap:9px}
+    .reminder-mark{display:flex;align-items:center;justify-content:center;flex:0 0 21px;height:21px;border-radius:50%;background:var(--notice-accent);color:white;font-weight:700;font-size:12px}
+    .reminder-title{font-size:12px;line-height:1.5;color:#172235}
+    .reminder-reason{margin:7px 0 0;font-size:12px;color:#3f4c60;line-height:1.5}
+    .reminder-state{display:block;margin-top:7px;font-size:10px;color:var(--notice-accent);font-weight:600}
     .controls{display:flex;flex-wrap:wrap;gap:6px}
     .controls button{margin:0;padding:6px 8px;font-size:12px}
     .agent-help{margin:8px 0 14px}
     .panel{width:470px}
     .title-block h3{margin:0}
-    .version{margin-top:3px}
+    .author{margin-top:3px}
     .window-actions{display:flex;gap:5px;align-self:flex-start}
     .top .window-actions button{width:27px;height:27px;padding:0;font-size:17px;line-height:1}
     .monitor-grid{display:grid;grid-template-columns:1fr;gap:0}
@@ -302,7 +317,7 @@
     .statistics-note{font-size:10px;color:#526176;margin-top:10px}
     .notification-feedback{margin:10px 0 0;color:#526176;font-size:11px}
     .compact-view{width:100%;--progress-colour:#245dc1;--progress-soft:#eaf1fe}
-    .panel.compact{width:390px;padding:14px 16px;overflow:hidden}
+    .panel.compact{width:390px;padding:14px 16px}
     .compact-view[data-kind="disposition"]{--progress-colour:#7650a5;--progress-soft:#f2edfb}
     .compact-view[data-overdue="true"]{--progress-colour:#b85809;--progress-soft:#fff1dc}
     .compact-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
@@ -345,7 +360,7 @@
   const top = el('div', '', normalView, 'top');
   const titleBlock=el('div','',top,'title-block');
   el('h3', 'Service Desk 8x8 Assistant', titleBlock);
-  el('div', `Author: Joshua Lavagna-Slater | Version ${VERSION}`, titleBlock, 'small version');
+  el('div', 'Author: Joshua Lavagna-Slater', titleBlock, 'small author');
   const windowActions=el('div','',top,'window-actions');
   const minimize=el('button','-',windowActions);
   minimize.title='Minimise assistant';minimize.setAttribute('aria-label','Minimise assistant');
@@ -378,15 +393,6 @@
   const callsHour=stat('Calls in the last hour');
   const lastCall=stat('Last call detected');
   const statisticsNote=el('div','Counter detects calls while this assistant is open. Hidden or closed periods may create inaccuracies.',statisticsSection,'statistics-note');
-  const banner = el('div', '', content, 'alert hidden');
-  const message = el('div', '', banner);
-  const dismiss = el('button', 'Dismiss', banner);
-  const footer=el('div','',normalView,'footer');
-  const updateSection=el('div','Last updated',footer,'last-updated');
-  const lastUpdated=el('time','—',updateSection);
-  const controls = el('div', '', footer, 'controls');
-  const muteButton = el('button', 'Mute', controls);
-  const settingsButton = el('button', 'Settings', controls);
   const soundPanel = el('section', '', panel, 'menu-view sound-settings hidden');
   const settingsPanel = el('section', '', panel, 'menu-view assistant-settings hidden');
   const soundHeader = el('div', '', soundPanel, 'menu-header');
@@ -395,9 +401,23 @@
   const settingsHeader = el('div', '', settingsPanel, 'menu-header');
   el('h3', 'Assistant Settings', settingsHeader);
   const settingsBack = el('button', 'Back', settingsHeader);
+  const bottom=el('div','',panel,'assistant-bottom');
+  const banner = el('div', '', bottom, 'alert current-reminders hidden');
+  banner.setAttribute('role','region');banner.setAttribute('aria-label','Current assistant reminders');
+  banner.setAttribute('aria-live','polite');
+  const footer=el('div','',bottom,'footer');
+  const footerDetails=el('div','',footer,'footer-details');
+  const updateSection=el('div','Last updated',footerDetails,'footer-detail last-updated');
+  const lastUpdated=el('time','—',updateSection);
+  const versionSection=el('div','Version',footerDetails,'footer-detail release-version');
+  el('span',VERSION,versionSection,'footer-value');
+  const controls = el('div', '', footer, 'controls');
+  const muteButton = el('button', 'Mute', controls);
+  const settingsButton = el('button', 'Settings', controls);
   doc.body.append(host);
   let destroyed = false, audio = null, muted=false, audioOutputReady=true;
-  let bannerKind = '', lastScan = Date.now(), unavailable = false, compactKind='';
+  let lastScan = Date.now(), unavailable = false, compactKind='';
+  const reminders=new Map(),reminderWidgets=new Map();
   let activeView = QUEUES.length?'main':'settings';
   let activeReminder = null;
   const PREFERENCES_KEY = 'service-desk-8x8-preferences-v5';
@@ -429,7 +449,7 @@
   el('button','Open Sound Settings',soundsCard).onclick=()=>openView('sounds');
   const queuesCard=el('div','',settingsPanel,'settings-card');
   el('h4','Inbound Queue Names',queuesCard);
-  el('p','Enter the exact names of the three inbound queues to monitor. These names are stored only in this browser. Do not include an outbound queue.',queuesCard,'settings-description');
+  el('p','Enter the exact names of the three inbound queues to monitor. Do not touch unless you know what you are doing.',queuesCard,'settings-description');
   const queueInputs=[0,1,2].map(index=>{
     const label=el('label',`Queue ${index+1}`,queuesCard,'sound-field');
     const input=el('input','',label);input.type='text';input.value=QUEUES[index] || '';
@@ -452,15 +472,11 @@
   const lunchSlider=el('input', '', lunchRow);
   lunchSlider.type='range';lunchSlider.min='1';lunchSlider.max='120';lunchSlider.step='1';
   lunchSlider.id='its-my-lunch-minutes';lunchSlider.setAttribute('aria-label','Lunch break length in minutes');
-  const lunchValue=el('span', '', lunchRow, 'volume-value lunch-value');
-  const lunchLimits=el('div', '', lunchPanel, 'small lunch-limits');
-  el('span', '1 minute', lunchLimits);el('span', '120 minutes', lunchLimits);
   const lunchExactRow=el('label','',lunchPanel,'setting-value');
   const lunchExact=el('input','',lunchExactRow);lunchExact.type='number';lunchExact.min='1';lunchExact.max='120';lunchExact.step='1';
   lunchExact.id='its-my-lunch-exact-minutes';lunchExact.setAttribute('aria-label','Exact lunch break length in minutes');
   el('span','minutes',lunchExactRow);
   lunchSlider.value=lunchExact.value=String(lunchMinutes);
-  lunchValue.textContent=`${lunchMinutes} min`;
   const savePreferences=()=>{
     try {root.localStorage.setItem(PREFERENCES_KEY,JSON.stringify({settingsVersion:3,g1:[...selected],lunchMinutes,
       dispositionSeconds,waitingAlertSeconds,desktopNotifications,muted,outputDeviceId}));} catch {}
@@ -595,6 +611,8 @@
     normalView.classList.toggle('hidden',unavailable || compact || activeView!=='main');
     soundPanel.classList.toggle('hidden',unavailable || compact || activeView!=='sounds');
     settingsPanel.classList.toggle('hidden',unavailable || compact || activeView!=='settings');
+    bottom.classList.toggle('hidden',unavailable);
+    footer.classList.toggle('hidden',compact || activeView!=='main');
   }
   function renderCompact(me,kind) {
     const allowance=kind==='break'?lunchMinutes*60:dispositionSeconds;
@@ -616,7 +634,7 @@
   function openView(view) {
     if (activeView==='sounds' && view!=='sounds') stopSound('preview');
     activeView=view;syncViews();panel.scrollTop=0;
-    if(view==='settings')void refreshAudioDevices();
+    if(view==='sounds')void refreshAudioDevices();
   }
   settingsButton.onclick=()=>openView('settings');
   soundBack.onclick=()=>openView('settings');
@@ -661,10 +679,11 @@
       'Plays only when you are in G2. Silent while the Change Status To Available alert is active.'
     ], preset:'Gentle chime', volume:45, seconds:2, repeat:false},
     critical: {label:'Alert: Change Status To Available', description:()=>[
-      'If you are in G1: plays when your status is neither "Available" nor "Busy", unless you are on lunch or in disposition. Lunch and disposition have their own reminders below.',
+      `If you are in G1: plays only when you are "Working Offline", no other signed-in G1 member is "Available", and a caller has waited longer than ${timeWords(waitingAlertSeconds,'second')}. This also applies when you are the only signed-in G1 member.`,
+      'Being in "Other Work" does not trigger this alert when you are in G1. Lunch and disposition have their own reminders below.',
       `If you are in G2: plays when you are not "Available", a caller has waited for at least ${timeWords(waitingAlertSeconds,'second')}, and every signed-in G1 member is unavailable.`,
-      'Unavailable means "Busy", "On Break", "Working Offline", or finishing disposition. At least one signed-in agent must be ticked in G1.',
-      'Stops when you become "Available", a G1 member becomes "Available", or no caller has waited long enough. With Repeat ticked, it continues until one of these happens.'
+      'Unavailable means "Busy", "On Break", "Working Offline", "Other Work", or finishing disposition. At least one signed-in agent must be ticked in G1.',
+      'With Repeat ticked, it keeps playing while the conditions above are true. It stops when you become "Available", a G1 member becomes "Available", or no caller is waiting long enough. In G1, leaving "Working Offline" also stops it.'
     ], preset:'Two-tone alarm', volume:100, seconds:10, repeat:true},
     disposition: {label:'Alert: Complete Disposition', description:()=>[
       `Plays only when you have ticked "Me" in G1 and you spend more than ${timeWords(dispositionSeconds,'second')} in disposition.`,
@@ -688,14 +707,50 @@
     soundSettings[kind] = {preset:PRESETS[v.preset] ? v.preset : d.preset,
       volume:Number.isFinite(v.volume) ? Math.max(0,Math.min(100,v.volume)) : d.volume,
       seconds:Number.isFinite(v.seconds) ? Math.max(1,Math.min(120,v.seconds)) : d.seconds,
-      repeat:typeof v.repeat === 'boolean' ? v.repeat : d.repeat};
+      repeat:typeof v.repeat === 'boolean' ? v.repeat : d.repeat,
+      desktopNotification:typeof v.desktopNotification==='boolean'?v.desktopNotification:true};
   }
   const sounds = new Map();
+  function syncReminderBox() {
+    const ordered=[];
+    for (const [kind,widget] of reminderWidgets) if (!reminders.has(kind)) {
+      widget.card.remove();reminderWidgets.delete(kind);
+    }
+    for (const kind of ['critical','disposition','lunchOverdue','lunch','preview']) {
+      const reminder=reminders.get(kind);
+      if (!reminder) continue;
+      let widget=reminderWidgets.get(kind);
+      if (!widget) {
+        const card=el('article','',banner,'current-reminder');
+        card.setAttribute('data-kind',kind);
+        const severity=kind==='preview'?'preview':kind==='lunch'?'info':'alert';
+        card.setAttribute('data-severity',severity);
+        const heading=el('div','',card,'reminder-heading');
+        const mark=el('span',severity==='alert'?'!':severity==='preview'?'♫':'i',heading,'reminder-mark');
+        mark.setAttribute('aria-hidden','true');
+        widget={card,title:el('strong','',heading,'reminder-title'),body:el('p','',card,'reminder-reason'),
+          state:el('span','',card,'reminder-state')};
+        reminderWidgets.set(kind,widget);
+      }
+      setText(widget.title,reminder.title);setText(widget.body,reminder.body);
+      const cfg=soundSettings[reminder.soundKind || kind];
+      const state=muted?'Sound muted':!cfg.volume?'Sound volume is 0%':sounds.has(kind)?'Sound playing':
+        !audioOutputReady?'Connecting sound output':audio?.state!=='running'?'Click the page to enable sound':'Sound finished';
+      setText(widget.state,state);ordered.push(widget.card);
+    }
+    // Keep unchanged live-region nodes in place during normal polling.
+    if (ordered.some((card,index)=>banner.children[index]!==card))for(const card of ordered)banner.append(card);
+    banner.classList.toggle('hidden',!reminders.size);
+  }
   function stopSound(kind) {
-    const job = sounds.get(kind); if (!job) return;
-    root.clearInterval(job.interval); root.clearTimeout(job.timeout);
-    for (const osc of job.nodes) {try {osc.stop();} catch {}}
-    sounds.delete(kind);
+    const job = sounds.get(kind);
+    if (job) {
+      root.clearInterval(job.interval); root.clearTimeout(job.timeout);
+      for (const osc of job.nodes) {try {osc.stop();} catch {}}
+      sounds.delete(kind);
+    }
+    if (kind==='preview')reminders.delete('preview');
+    syncReminderBox();
   }
   function beep(kind, preview = false) {
     if (muted || destroyed || !audioOutputReady || audio?.state !== 'running') return;
@@ -703,6 +758,9 @@
     stopSound(key);
     const cfg = {...soundSettings[kind]}, preset = PRESETS[cfg.preset];
     const job = {nodes:new Set(), interval:null, timeout:null}; sounds.set(key,job);
+    if (preview)reminders.set('preview',{soundKind:kind,title:`Preview: ${definitions[kind].label}`,
+      body:`Testing your selected "${cfg.preset}" sound for this reminder.`});
+    syncReminderBox();
     const start = Date.now();
     const total = preview ? Math.min(3,cfg.seconds) : cfg.seconds;
     const endless = cfg.repeat && !preview;
@@ -729,7 +787,8 @@
     if (!endless) job.timeout=root.setTimeout(()=>stopSound(key),total*1000);
   }
   const saveSounds = () => {try {root.localStorage.setItem(SOUND_KEY,JSON.stringify(soundSettings));} catch {}};
-  el('div','G1 means the people covering phones. Anyone not ticked in G1 is in G2. The explanations below use your current Assistant Settings. With Repeat ticked, a sound keeps playing until the situation described below ends. Otherwise, it plays for the chosen duration. Volume depends on your computer’s volume.',soundPanel,'small sound-intro');
+  saveSounds();
+  const devicesCard=el('div','',soundPanel,'settings-card audio-devices');
   const soundDescriptions=new Map();
   const previewButtons=[];
   function refreshSoundDescriptions() {
@@ -759,13 +818,26 @@
     const repeatLabel=el('label','',section,'repeat-control'), repeat=el('input','',repeatLabel);
     repeat.type='checkbox';repeat.checked=soundSettings[kind].repeat;
     repeatLabel.append(doc.createTextNode('Repeat until condition clears'));
+    const notificationLabel=el('label','',section,'repeat-control');
+    const notification=el('input','',notificationLabel);
+    notification.type='checkbox';notification.checked=soundSettings[kind].desktopNotification;
+    notification.id=`its-sound-${kind}-desktop-notification`;
+    notificationLabel.append(doc.createTextNode('Send desktop notification'));
+    notification.onchange=()=>{
+      soundSettings[kind].desktopNotification=notification.checked;saveSounds();
+      if (!notification.checked) {notices.get(kind)?.close();notices.delete(kind);}
+      else if (reminders.has(kind)) {
+        const reminder=reminders.get(kind);sendDesktopNotification(kind,reminder.title,reminder.body);
+      }
+    };
     const syncDuration=()=>{
       seconds.disabled=repeat.checked;
       durationLabel.classList.toggle('disabled',repeat.checked);
     };
     syncDuration();
     const update=()=>{
-      soundSettings[kind]={preset:choice.value,volume:Number(volume.value),seconds:Math.max(1,Math.min(120,Number(seconds.value)||1)),repeat:repeat.checked};
+      soundSettings[kind]={preset:choice.value,volume:Number(volume.value),seconds:Math.max(1,Math.min(120,Number(seconds.value)||1)),
+        repeat:repeat.checked,desktopNotification:notification.checked};
       value.textContent=volume.value+'%';syncDuration();saveSounds();
       const active=sounds.has(kind);stopSound(kind);stopSound('preview');
       if (active) beep(kind);
@@ -798,15 +870,10 @@
     'Time allowed to finish the call details and click "Wrap up" before the reminder plays. Only relevant when you are in G1.',
     'its-disposition-seconds',dispositionSeconds,1,120,'seconds',number=>{dispositionSeconds=number;});
   timingSetting('Caller Waiting Alert Delay',
-    'How long a caller must wait before the repeating Available alert plays. Only used when you are in G2, are not Available, and every signed-in G1 member is unavailable.',
+    'How long a caller must be waiting before the "Change Status to Available" sound plays. Only used when you are in G2, are not available, and every signed-in G1 member is busy.',
     'its-waiting-alert-seconds',waitingAlertSeconds,1,3600,'seconds',number=>{waitingAlertSeconds=number;});
-  const devicesCard=el('div','',settingsPanel,'settings-card');
   el('h4','Audio Devices',devicesCard);
   el('p','Output changes apply only to assistant sounds. Your 8x8 calls keep their own device settings.',devicesCard,'settings-description');
-  const inputChoice=el('select','',el('label','Input Device',devicesCard,'sound-field'));
-  inputChoice.setAttribute('aria-label','Assistant input device');inputChoice.disabled=true;
-  const inputDefault=el('option','System default (Default)',inputChoice);inputDefault.value='';
-  el('p','The assistant does not use a microphone, so input selection is not needed.',devicesCard,'small');
   const outputChoice=el('select','',el('label','Output Device',devicesCard,'sound-field'));
   outputChoice.setAttribute('aria-label','Assistant output device');
   const defaultOutput=el('option','System default (Default)',outputChoice);defaultOutput.value='';
@@ -870,7 +937,6 @@
         const label=devices.find(d=>d.kind===kind && d.deviceId==='default')?.label;
         return (label?label.replace(/^default\s*[-–—]\s*/i,''):'System default')+' (Default)';
       };
-      inputDefault.textContent=defaultLabel('audioinput');
       outputChoice.textContent='';
       el('option',defaultLabel('audiooutput'),outputChoice).value='';
       for(const [index,device] of available.entries())el('option',device.label || `Output device ${index+1}`,outputChoice).value=device.deviceId;
@@ -897,7 +963,7 @@
   mediaDevices?.addEventListener?.('devicechange',audioDeviceChanged);
   const desktopCard=el('div','',settingsPanel,'settings-card');
   el('h4','Desktop Notifications',desktopCard);
-  el('p','Show desktop notifications for alerts. Sounds and messages in the assistant still work when this is off.',desktopCard,'settings-description');
+  el('p','Allow desktop notifications for the sounds ticked in Sound Settings. Sounds and messages in the assistant still work when this is off.',desktopCard,'settings-description');
   const notificationInstructions=el('div','',desktopCard,'small notification-instructions');
   el('p','Allow notifications manually in Microsoft Edge:',notificationInstructions);
   const notificationSteps=el('ol','',notificationInstructions);
@@ -942,11 +1008,9 @@
     else enableAlerts(event);
     syncNotificationTest();
   };
-  function notify(kind, title, body) {
-    if (destroyed) return;
-    bannerKind = kind; message.textContent = `${title}\n${body}`; banner.classList.remove('hidden');
-    try { beep(kind); } catch {}
-    if (desktopNotifications && 'Notification' in root && root.Notification.permission === 'granted') {
+  function sendDesktopNotification(kind,title,body) {
+    if (!destroyed && desktopNotifications && soundSettings[kind].desktopNotification
+      && 'Notification' in root && root.Notification.permission === 'granted') {
       try {
         notices.get(kind)?.close();
         const n = new root.Notification(title, {body, tag:`its-call-assist-${kind}`, requireInteraction:true,silent:muted});
@@ -954,16 +1018,22 @@
       } catch(e) { console.warn('Service Desk 8x8 Assistant notification:', e.message); }
     }
   }
+  function notify(kind, title, body) {
+    if (destroyed) return;
+    reminders.set(kind,{title,body});
+    try { beep(kind); } catch {}
+    syncReminderBox();sendDesktopNotification(kind,title,body);
+  }
   function clearAlert(kind) {
     stopSound(kind);
     notices.get(kind)?.close(); notices.delete(kind);
-    if (bannerKind === kind) {banner.classList.add('hidden');bannerKind='';}
+    reminders.delete(kind);syncReminderBox();
   }
   function reset() {
     lunchLatched.clear(); freshness.clear(); previous.clear();
     activeReminder=null;
     for (const k of ['lunch','critical','disposition','lunchOverdue']) clearAlert(k);
-    banner.classList.add('hidden');
+    syncReminderBox();
   }
   function syncReminder(reminder) {
     if (activeReminder && activeReminder.kind !== reminder?.kind) {
@@ -974,14 +1044,14 @@
       activeReminder=reminder;notify(reminder.kind,reminder.title,reminder.body);
     } else {
       activeReminder=reminder;
-      if (bannerKind===reminder.kind) setText(message,`${reminder.title}\n${reminder.body}`);
+      reminders.set(reminder.kind,reminder);syncReminderBox();
       if (!sounds.has(reminder.kind) && soundSettings[reminder.kind].repeat) beep(reminder.kind);
     }
   }
   function updateLunch(input) {
     lunchMinutes=settingNumber(Number(input.value),30,1,120);
     lunchSlider.value=lunchExact.value=String(lunchMinutes);
-    lunchValue.textContent=`${lunchMinutes} min`;applyTimingSettings();
+    applyTimingSettings();
   }
   lunchSlider.oninput=()=>updateLunch(lunchSlider);
   lunchExact.onchange=()=>updateLunch(lunchExact);
@@ -1065,12 +1135,12 @@
     }
     if (selfInG1) {
       clearAlert('lunch');lunchLatched.clear();
-      syncReminder(personalRule(current.get('Me'),lunchMinutes,dispositionSeconds));
-      return;
+      if (!workingOffline(me.status)) {syncReminder(null);return;}
     }
     // Only selected, signed-in G1 members determine whether phone cover is needed.
-    let coverageFresh=agents.length>0;
-    for (const a of [me,...agents]) {
+    const covering=selfInG1?agents.filter(a=>a.name!=='Me'):agents;
+    let coverageFresh=selfInG1 || covering.length>0;
+    for (const a of [me,...covering]) {
       const key = 'coverage:'+a.name, signature = a.status+'|'+a.timer;
       let f=freshness.get(key);
       if (!f) f={signature,changedAt:now,observed:false};
@@ -1085,21 +1155,25 @@
       if (!f) f={signature,changedAt:now,observed:false};
       else if(f.signature!==signature)f={signature,changedAt:now,observed:true};
       freshness.set(key,f);
-      if(q.waiting>0 && Number.isFinite(q.waitSeconds) && q.waitSeconds>=waitingAlertSeconds
+      if(q.waiting>0 && Number.isFinite(q.waitSeconds) && (selfInG1?q.waitSeconds>waitingAlertSeconds:q.waitSeconds>=waitingAlertSeconds)
         && f.observed && now-f.changedAt<30000)waitingFresh=true;
     }
-    const decision = groupRules(agents, sample.queues, me,waitingAlertSeconds);
+    const decision = groupRules(agents, sample.queues, me,waitingAlertSeconds,selfInG1);
     decision.critical = decision.critical && coverageFresh && waitingFresh;
     if (decision.critical) {
       clearAlert('lunch');
-      syncReminder({kind:'critical',title:'Alert: Change Status To Available',body:
-        `A caller has waited at least ${timeWords(waitingAlertSeconds,'second')} and every signed-in G1 member is unavailable. Change your status to Available.`});
+      const reason=selfInG1
+        ? `You are "${me.status}" in G1. ${covering.length?'No other signed-in G1 member is "Available".':'You are the only signed-in G1 member.'} A caller has waited longer than ${timeWords(waitingAlertSeconds,'second')}.`
+        : `You are "${me.status}" in G2. No signed-in G1 member is "Available", and a caller has waited at least ${timeWords(waitingAlertSeconds,'second')}.`;
+      syncReminder({kind:'critical',title:'Alert: Change Status To Available',
+        body:`${reason} Change your status to "Available" to take the call.`});
     } else syncReminder(null);
+    if (selfInG1) return;
     const newBreaks = decision.lunch.filter(name => !lunchLatched.has(name));
     for (const name of [...lunchLatched]) if (!decision.lunch.includes(name)) lunchLatched.delete(name);
     if (!decision.lunch.length) clearAlert('lunch');
     if (newBreaks.length && !decision.critical) {
-      notify('lunch','Info: G1 On Break',`${newBreaks.join(', ')}: On Break.`);
+      notify('lunch','Info: G1 On Break',`${newBreaks.join(', ')} (G1) ${newBreaks.length===1?'is':'are'} "On Break".`);
       newBreaks.forEach(name => lunchLatched.add(name));
     }
   }
@@ -1121,6 +1195,7 @@
       button.title=muted?'Unmute assistant sounds':'Mute assistant sounds';
     }
     for(const preview of previewButtons)preview.disabled=muted || !audioOutputReady;
+    syncReminderBox();
   }
   function toggleMute() {
     muted=!muted;savePreferences();syncMute();
@@ -1137,10 +1212,6 @@
   }
   muteButton.onclick=compactMute.onclick=toggleMute;
   syncMute();
-  dismiss.onclick = () => {
-    if (activeReminder?.kind===bannerKind) banner.classList.add('hidden');
-    else if (bannerKind) clearAlert(bannerKind);
-  };
   minimize.onclick = () => {
     content.classList.toggle('hidden');
     const collapsed=content.classList.contains('hidden');

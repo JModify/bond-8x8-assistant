@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.4 — 2026-10-12
+
+- Allow G1 users to use Other Work and Working Offline without an immediate availability alarm. The G1 phone-cover alert now requires Me to be Working Offline, no other signed-in G1 member Available, and a caller waiting strictly longer than Caller Waiting Alert Delay. It also works when Me is the only signed-in G1 member. Retain the G2 queue rule and separate lunch/disposition reminders.
+- Move Audio Devices into Sound Settings and remove Input Device. Preserve saved assistant-only output routing.
+- Add a saved Send desktop notification checkbox to each of the four sounds. Preserve previous audio choices and notification behaviour by default; respect the master notification setting and browser permission. Turning a sound's notifications off closes its existing popup while its sound and reminder continue.
+- Add distinct Info, Alert and preview cards above the footer, with a plain-English reason and sound state. Keep active reminders visible in submenus, while minimised and beside the compact break/disposition bar. Previews do not send notifications; finite sounds show when they have finished.
+- Remove the introductory Sound Settings paragraph. Keep author attribution under the main title and move Version beside Last updated in the footer.
+- Simplify Inbound Queue Names help, use the requested Caller Waiting Alert Delay description, and remove printed lunch slider bounds and its duplicate current-value label.
+- Keep lunch in whole minutes and reminder delays in seconds. Retain prior release snapshots unchanged and expand simulated behavioural tests to 86 scenarios.
+
 ## 1.0.3 — 2026-10-12
 
 - Remove signed-out agents from the table and clear their G1 selections. Add returning and newly signed-in agents as fresh rows. Preserve selections while the whole roster is hidden by break/disposition pages.
