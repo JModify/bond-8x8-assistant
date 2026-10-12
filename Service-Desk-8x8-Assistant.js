@@ -1,7 +1,8 @@
-/* Service Desk 8x8 Assistant — v1.0.2
+/* Service Desk 8x8 Assistant — v1.0.3
+ * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
- * Monitoring starts automatically. Select the G1 agents; Pause/Resume is optional.
+ * Monitoring starts automatically. Select the G1 agents; Mute silences assistant sounds.
  * Tick Me in G1 for your own availability, disposition and lunch reminders.
  * Browser audio may require a click in the page; normal interactions enable it.
  * No downloads, external requests, credentials, or second login are used.
@@ -15,7 +16,7 @@
  * G1 selections, assistant settings and sounds persist when storage is permitted.
  * Break and disposition pages use compact personal timers without queue information.
  * Other missing queue/group information hides the controls until it returns.
- * Pause freezes the display and alert checks. Only the Busy-start counter keeps running.
+ * Muting keeps monitoring, timers, notifications and statistics running.
  * Statistics record observed Busy starts, not 8x8's complete historical call totals.
  */
 (() => {
@@ -28,7 +29,7 @@
   const resumedWrapUp = root.__itsCallAssist?.wrapUpSession?.();
   root.__itsCallAssist?.destroy();
   const doc = root.document;
-  const VERSION = '1.0.2';
+  const VERSION = '1.0.3';
   let wrapUpSession = resumedWrapUp || null;
   const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
   const normal = s => clean(s).toLowerCase();
@@ -143,7 +144,14 @@
       if (waiting === null || waiting !== titleCount || !Number.isSafeInteger(waiting)) {
         errors.push(`Waiting count unreadable: ${name}`); return {name, waiting:null};
       }
-      return {name, waiting};
+      const waits=cells.filter(c=>/\sLongest waiting time$/i.test(clean(c.getAttribute('title'))));
+      let waitSeconds=waiting===0?0:null;
+      if (waiting>0 && waits.length===1) {
+        const labelled=duration(clean(waits[0].getAttribute('title')).replace(/\sLongest waiting time$/i,''));
+        const displayed=duration(clean(waits[0].textContent));
+        if (labelled!==null && displayed!==null && labelled===displayed) waitSeconds=labelled;
+      }
+      return {name, waiting,waitSeconds};
     });
     return {agent, queues, errors};
   }
@@ -187,21 +195,21 @@
     const status=clean(states[0].getAttribute('data-status-value'));
     return status?{status}:null;
   }
-  function groupRules(agents, queues, others = agents, me = null, timing = {callSeconds:120,coverSeconds:180}) {
-    const waiting = queues.length === QUEUES.length && queues.every(q => q.waiting !== null) && queues.some(q => q.waiting > 0);
+  function groupRules(agents, queues, me = null, waitingAlertSeconds = 180) {
+    const waiting = queues.length === QUEUES.length && queues.every(q => q.waiting !== null)
+      && queues.some(q=>q.waiting>0 && Number.isFinite(q.waitSeconds) && q.waitSeconds>=waitingAlertSeconds);
+    const unavailable=a=>['busy','on break','break','work offline','working offline','wrap up','wrapup',
+      'post processing','postprocessing','disposition'].includes(normal(a.status).replace(/[-_]/g,' '));
     return {
-      call: waiting ? agents.filter(a => normal(a.status) === 'busy' && a.seconds > timing.callSeconds).map(a => a.name) : [],
       lunch: agents.filter(a => normal(a.status) === 'on break').map(a => a.name),
-      critical: !!me && normal(me.status) !== 'available' && (
-        (others.length > 0 && others.every(a => !['available','busy'].includes(normal(a.status)))) ||
-        (agents.length > 0 && waiting && agents.every(a => normal(a.status) === 'busy' && a.seconds >= timing.coverSeconds)))
+      critical: !!me && normal(me.status)!=='available' && waiting && agents.length>0 && agents.every(unavailable)
     };
   }
   function dispositionStatus(status) {
     const label = normal(status).replace(/[-_]/g, ' ').replace(/\s+/g, ' ');
     return ['wrap up', 'wrapup', 'post processing', 'postprocessing', 'disposition'].includes(label);
   }
-  function personalRule(me, lunchSeconds, dispositionSeconds = 10) {
+  function personalRule(me, lunchMinutes, dispositionSeconds = 20) {
     if (!me || !me.status || !Number.isFinite(me.seconds)) return null;
     const status = normal(me.status);
     if (dispositionStatus(status)) {
@@ -209,8 +217,8 @@
         body:`You have been in disposition for more than ${dispositionSeconds} seconds. Complete the fields and click Wrap up.`} : null;
     }
     if (status === 'on break' || status === 'break') {
-      return me.seconds > lunchSeconds ? {kind:'lunchOverdue', title:'Alert: Lunch Break Finished',
-        body:`Your ${lunchSeconds}-second lunch allowance has passed. Change your status to Available.`} : null;
+      return me.seconds > lunchMinutes*60 ? {kind:'lunchOverdue', title:'Alert: Lunch Break Finished',
+        body:`Your ${lunchMinutes}-minute lunch allowance has passed. Change your status to Available.`} : null;
     }
     if (status === 'available' || status === 'busy') return null;
     return {kind:'critical', title:'Alert: Change Status To Available',
@@ -267,7 +275,6 @@
     .agent-status[data-state="busy"]{background:#fdeceb;color:#9a2c27}
     .agent-status[data-state="working offline"],.agent-status[data-state="work offline"]{background:#fff0dc;color:#a95005}
     .agent-status[data-state="wrap up"],.agent-status[data-state="post processing"]{background:#f0eafb;color:#654293}
-    .me-row{background:#f6f9fe}
     .agent-table input[type=checkbox]{margin:0;accent-color:#245dc1;vertical-align:middle}
     .footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;padding-top:12px;border-top:1px solid #e4eaf2}
     .last-updated{font-size:10px;color:#526176;font-variant-numeric:tabular-nums}
@@ -300,13 +307,14 @@
     .compact-view[data-overdue="true"]{--progress-colour:#b85809;--progress-soft:#fff1dc}
     .compact-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
     .compact-title{font-weight:650;font-size:13px}
+    .compact-actions{display:flex;align-items:center;gap:8px}
+    .compact-actions button{margin:0;padding:3px 6px;font-size:10px}
     .compact-countdown{color:var(--progress-colour);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
     .progress-track{height:9px;border-radius:99px;background:var(--progress-soft);overflow:hidden}
     .progress-fill{height:100%;width:0%;border-radius:inherit;background:var(--progress-colour);position:relative;overflow:hidden;transition:width .65s linear}
     .progress-fill::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#fff6,transparent);transform:translateX(-100%);animation:assist-shimmer 3s ease-in-out infinite}
     .compact-view[data-overdue="true"] .progress-fill{animation:assist-pulse 1.8s ease-in-out infinite}
     .compact-meta{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#526176;margin-top:8px;font-variant-numeric:tabular-nums}
-    .panel.paused .progress-fill,.panel.paused .progress-fill::after{animation-play-state:paused;transition:none}
     @keyframes assist-shimmer{to{transform:translateX(100%)}}
     @keyframes assist-pulse{50%{opacity:.65}}
     @media(prefers-reduced-motion:reduce){.progress-fill{transition:none}.progress-fill,.progress-fill::after{animation:none!important}}
@@ -323,7 +331,9 @@
   const compactView=el('div','',panel,'compact-view hidden');
   const compactHeading=el('div','',compactView,'compact-heading');
   const compactTitle=el('span','',compactHeading,'compact-title');
-  const compactCountdown=el('span','',compactHeading,'compact-countdown');
+  const compactActions=el('span','',compactHeading,'compact-actions');
+  const compactCountdown=el('span','',compactActions,'compact-countdown');
+  const compactMute=el('button','Mute',compactActions);
   const progressTrack=el('div','',compactView,'progress-track');
   progressTrack.setAttribute('role','progressbar');
   progressTrack.setAttribute('aria-valuemin','0');
@@ -335,7 +345,7 @@
   const top = el('div', '', normalView, 'top');
   const titleBlock=el('div','',top,'title-block');
   el('h3', 'Service Desk 8x8 Assistant', titleBlock);
-  el('div', `Version ${VERSION}`, titleBlock, 'small version');
+  el('div', `Author: Joshua Lavagna-Slater | Version ${VERSION}`, titleBlock, 'small version');
   const windowActions=el('div','',top,'window-actions');
   const minimize=el('button','-',windowActions);
   minimize.title='Minimise assistant';minimize.setAttribute('aria-label','Minimise assistant');
@@ -375,7 +385,7 @@
   const updateSection=el('div','Last updated',footer,'last-updated');
   const lastUpdated=el('time','—',updateSection);
   const controls = el('div', '', footer, 'controls');
-  const pause = el('button', 'Pause', controls);
+  const muteButton = el('button', 'Mute', controls);
   const settingsButton = el('button', 'Settings', controls);
   const soundPanel = el('section', '', panel, 'menu-view sound-settings hidden');
   const settingsPanel = el('section', '', panel, 'menu-view assistant-settings hidden');
@@ -386,7 +396,7 @@
   el('h3', 'Assistant Settings', settingsHeader);
   const settingsBack = el('button', 'Back', settingsHeader);
   doc.body.append(host);
-  let running = true, destroyed = false, audio = null, notificationRequested = false;
+  let destroyed = false, audio = null, muted=false, audioOutputReady=true;
   let bannerKind = '', lastScan = Date.now(), unavailable = false, compactKind='';
   let activeView = QUEUES.length?'main':'settings';
   let activeReminder = null;
@@ -403,10 +413,15 @@
   const secondsPreference=(key,legacy,fallback,max)=>settingNumber(
     Number.isFinite(preferences[key])?preferences[key]:Number.isFinite(preferences[legacy])?preferences[legacy]*60:undefined,
     fallback,1,max);
-  let lunchSeconds=secondsPreference('lunchSeconds','lunchMinutes',1800,7200);
-  let dispositionSeconds=settingNumber(preferences.dispositionSeconds,10,1,120);
-  let callSeconds=secondsPreference('callSeconds','callMinutes',120,1800);
-  let coverSeconds=secondsPreference('coverSeconds','coverMinutes',180,3600);
+  let lunchMinutes=settingNumber(Number.isFinite(preferences.lunchMinutes)?preferences.lunchMinutes:
+    Number.isFinite(preferences.lunchSeconds)?preferences.lunchSeconds/60:undefined,30,1,120);
+  const dispositionValue=preferences.settingsVersion!==3 && preferences.dispositionSeconds===10?20:preferences.dispositionSeconds;
+  let dispositionSeconds=settingNumber(dispositionValue,20,1,120);
+  let waitingAlertSeconds=Number.isFinite(preferences.waitingAlertSeconds)
+    ? settingNumber(preferences.waitingAlertSeconds,180,1,3600)
+    : secondsPreference('coverSeconds','coverMinutes',180,3600);
+  muted=preferences.muted===true;
+  let outputDeviceId=typeof preferences.outputDeviceId==='string' && preferences.outputDeviceId!=='default'?preferences.outputDeviceId:'';
   let desktopNotifications=typeof preferences.desktopNotifications==='boolean' ? preferences.desktopNotifications : true;
   const soundsCard=el('div','',settingsPanel,'settings-card');
   el('h4','Sound Settings',soundsCard);
@@ -432,23 +447,23 @@
   el('h4', 'Lunch Break Length', lunchPanel);
   el('p', 'Length of my lunch break. Only relevant when you are in G1.', lunchPanel, 'settings-description');
   const lunchLabel=el('label', '', lunchPanel);
-  lunchLabel.setAttribute('aria-label', 'Lunch break length in seconds');
+  lunchLabel.setAttribute('aria-label', 'Lunch break length in minutes');
   const lunchRow=el('span', '', lunchLabel, 'volume-control');
   const lunchSlider=el('input', '', lunchRow);
-  lunchSlider.type='range';lunchSlider.min='1';lunchSlider.max='7200';lunchSlider.step='1';
-  lunchSlider.id='its-my-lunch-seconds';lunchSlider.setAttribute('aria-label','Lunch break length in seconds');
+  lunchSlider.type='range';lunchSlider.min='1';lunchSlider.max='120';lunchSlider.step='1';
+  lunchSlider.id='its-my-lunch-minutes';lunchSlider.setAttribute('aria-label','Lunch break length in minutes');
   const lunchValue=el('span', '', lunchRow, 'volume-value lunch-value');
   const lunchLimits=el('div', '', lunchPanel, 'small lunch-limits');
-  el('span', '1 second', lunchLimits);el('span', '7200 seconds', lunchLimits);
+  el('span', '1 minute', lunchLimits);el('span', '120 minutes', lunchLimits);
   const lunchExactRow=el('label','',lunchPanel,'setting-value');
-  const lunchExact=el('input','',lunchExactRow);lunchExact.type='number';lunchExact.min='1';lunchExact.max='7200';lunchExact.step='1';
-  lunchExact.id='its-my-lunch-exact-seconds';lunchExact.setAttribute('aria-label','Exact lunch break length in seconds');
-  el('span','seconds',lunchExactRow);
-  lunchSlider.value=lunchExact.value=String(lunchSeconds);
-  lunchValue.textContent=`${lunchSeconds} s`;
+  const lunchExact=el('input','',lunchExactRow);lunchExact.type='number';lunchExact.min='1';lunchExact.max='120';lunchExact.step='1';
+  lunchExact.id='its-my-lunch-exact-minutes';lunchExact.setAttribute('aria-label','Exact lunch break length in minutes');
+  el('span','minutes',lunchExactRow);
+  lunchSlider.value=lunchExact.value=String(lunchMinutes);
+  lunchValue.textContent=`${lunchMinutes} min`;
   const savePreferences=()=>{
-    try {root.localStorage.setItem(PREFERENCES_KEY,JSON.stringify({g1:[...selected],lunchSeconds,
-      dispositionSeconds,callSeconds,coverSeconds,desktopNotifications}));} catch {}
+    try {root.localStorage.setItem(PREFERENCES_KEY,JSON.stringify({settingsVersion:3,g1:[...selected],lunchMinutes,
+      dispositionSeconds,waitingAlertSeconds,desktopNotifications,muted,outputDeviceId}));} catch {}
   };
   // Write the converted values once so a later run never multiplies them again.
   savePreferences();
@@ -479,7 +494,6 @@
   }
   function renderStatistics() {
     setText(callTotal,String(statistics.calls.length));
-    if (!running) return;
     const now=Date.now();
     setText(callsHour,String(statistics.calls.filter(time=>time>=now-3600000).length));
     const latest=statistics.calls.at(-1);
@@ -507,29 +521,43 @@
     if (changed || now-lastStatisticsSave>=15000) saveStatistics();
     renderStatistics();
   }
-  const knownAgents = new Map(), agentWidgets = new Map(), freshness = new Map(), previous = new Map();
-  const callLatched = new Set(), lunchLatched = new Set();
+  const agentWidgets = new Map(), freshness = new Map(), previous = new Map();
+  const lunchLatched = new Set();
+  let rosterRoot=null,rosterVisible=false;
   const notices = new Map(), observers = new Map(), interactionDocs = new Set();
   let lastSample = null;
   const setText = (n, text) => { if (n.textContent !== text) n.textContent = text; };
   function refreshAgents(docs) {
     const current = new Map();
     const me = readMe(docs);
-    knownAgents.set('Me', true);
     if (me) current.set('Me', me);
-    for (const row of agentRows(docs)) {
+    const rows=agentRows(docs);
+    if (rows.length) rosterRoot=rows[0].closest('[data-test-id="virtuoso-item-list"]') || rows[0].parentElement;
+    rosterVisible=rows.length>0 || !!(rosterRoot && docs.includes(rosterRoot.ownerDocument) && visible(rosterRoot));
+    const personal=me && (['on break','break'].includes(normal(me.status)) || dispositionStatus(me.status));
+    for (const row of rows) {
       const name = agentName(row);
       if (!name) continue;
       const status = clean(row.querySelector('[data-status-value]')?.getAttribute('data-status-value'));
       const timer = clean(row.querySelector('[data-test-id="user-presence-timer"]')?.textContent);
       current.set(name, {name, status, timer, seconds:duration(timer)});
-      knownAgents.set(name, true);
     }
-    for (const name of [...knownAgents.keys()].sort((a,b) => a === 'Me' ? -1 : b === 'Me' ? 1 : a.localeCompare(b))) {
+    if (rosterVisible && !personal) {
+      let selectionChanged=false;
+      for (const name of [...selected]) if (name!=='Me' && !current.has(name)) {
+        selected.delete(name);selectionChanged=true;
+      }
+      for (const [name,widget] of agentWidgets) if (name!=='Me' && !current.has(name)) {
+        widget.row.remove();agentWidgets.delete(name);freshness.delete(name);freshness.delete('coverage:'+name);
+        previous.delete(name);lunchLatched.delete(name);
+      }
+      if (selectionChanged) savePreferences();
+    }
+    const names=new Set(['Me',...current.keys(),...((!rosterVisible || personal)?agentWidgets.keys():[])]);
+    for (const name of [...names].sort((a,b) => a === 'Me' ? -1 : b === 'Me' ? 1 : a.localeCompare(b))) {
       let widget = agentWidgets.get(name);
       if (!widget) {
         const row = el('tr', '', agentList);
-        if (name==='Me') row.classList.add('me-row');
         el('td', name, row, 'agent-name');
         const statusCell=el('td', '', row);
         const state=el('span', '', statusCell, 'agent-status');
@@ -569,7 +597,7 @@
     settingsPanel.classList.toggle('hidden',unavailable || compact || activeView!=='settings');
   }
   function renderCompact(me,kind) {
-    const allowance=kind==='break'?lunchSeconds:dispositionSeconds;
+    const allowance=kind==='break'?lunchMinutes*60:dispositionSeconds;
     const elapsed=me.seconds,remaining=Math.max(0,allowance-elapsed),overdue=elapsed>allowance;
     compactKind=kind;compactView.setAttribute('data-kind',kind);
     compactView.setAttribute('data-overdue',String(overdue));
@@ -588,26 +616,25 @@
   function openView(view) {
     if (activeView==='sounds' && view!=='sounds') stopSound('preview');
     activeView=view;syncViews();panel.scrollTop=0;
+    if(view==='settings')void refreshAudioDevices();
   }
   settingsButton.onclick=()=>openView('settings');
   soundBack.onclick=()=>openView('settings');
   settingsBack.onclick=()=>openView('main');
   function prepareSound() {
-    if (!running || destroyed) return;
+    if (muted || destroyed) return;
     try {
       const C = root.AudioContext || root.webkitAudioContext;
-      if (C) audio ||= new C();
+      if (C && !audio) {
+        audio=new C();
+        if (outputDeviceId) {audioOutputReady=false;void setAssistantOutput(outputDeviceId);}
+      }
       if (audio && audio.state !== 'running') audio.resume().catch(() => {});
     } catch (e) {console.warn('Service Desk 8x8 Assistant sound:', e.message);}
   }
   function enableAlerts(event) {
-    if (!event?.isTrusted || destroyed || !running) return;
+    if (!event?.isTrusted || destroyed) return;
     prepareSound();
-    if (event.composedPath?.().includes(notificationTest)) return;
-    if (desktopNotifications && 'Notification' in root && root.Notification.permission === 'default' && !notificationRequested) {
-      notificationRequested = true;
-      root.Notification.requestPermission().catch(e => console.warn('Service Desk 8x8 Assistant notifications:', e.message));
-    }
   }
   // All sounds are generated locally: no downloaded audio or network requests.
   const PRESETS = {
@@ -633,25 +660,18 @@
       'Plays when someone you have ticked in G1 is "On Break". This includes someone already on break when monitoring starts.',
       'Plays only when you are in G2. Silent while the Change Status To Available alert is active.'
     ], preset:'Gentle chime', volume:45, seconds:2, repeat:false},
-    call: {label:'Info: Caller Waiting', description:()=>[
-      `Plays when a caller is waiting and at least one G1 member has been "Busy" for more than ${timeWords(callSeconds,'second')}.`,
-      'Plays only when you are in G2. Silent while the Change Status To Available alert is active.'
-    ], preset:'Triple beep', volume:65, seconds:3, repeat:false},
     critical: {label:'Alert: Change Status To Available', description:()=>[
       'If you are in G1: plays when your status is neither "Available" nor "Busy", unless you are on lunch or in disposition. Lunch and disposition have their own reminders below.',
-      'If you are in G2: plays when you are not "Available" and either of these situations applies:',
-      [
-        'No other agent currently shown in 8x8’s Groups list is "Available" or "Busy".',
-        `A caller is waiting and every G1 member has been "Busy" for at least ${timeWords(coverSeconds,'second')}.`
-      ],
-      'Stops when you become "Available" or the situation above ends.'
+      `If you are in G2: plays when you are not "Available", a caller has waited for at least ${timeWords(waitingAlertSeconds,'second')}, and every signed-in G1 member is unavailable.`,
+      'Unavailable means "Busy", "On Break", "Working Offline", or finishing disposition. At least one signed-in agent must be ticked in G1.',
+      'Stops when you become "Available", a G1 member becomes "Available", or no caller has waited long enough. With Repeat ticked, it continues until one of these happens.'
     ], preset:'Two-tone alarm', volume:100, seconds:10, repeat:true},
     disposition: {label:'Alert: Complete Disposition', description:()=>[
       `Plays only when you have ticked "Me" in G1 and you spend more than ${timeWords(dispositionSeconds,'second')} in disposition.`,
       'Disposition is the step after a call where you complete the call details and click "Wrap up". The sound stops when you leave this step.'
     ], preset:'Urgent pulse', volume:80, seconds:10, repeat:true},
     lunchOverdue: {label:'Alert: Lunch Break Finished', description:()=>[
-      `Plays only when you have ticked "Me" in G1 and your "On Break" time is longer than your lunch length in Assistant Settings (currently ${timeWords(lunchSeconds,'second')}).`,
+      `Plays only when you have ticked "Me" in G1 and your "On Break" time is longer than your lunch length in Assistant Settings (currently ${timeWords(lunchMinutes,'minute')}).`,
       'Reminds you to return to "Available". Stops when you leave "On Break".'
     ], preset:'Digital ring', volume:85, seconds:10, repeat:true}
   };
@@ -678,7 +698,7 @@
     sounds.delete(kind);
   }
   function beep(kind, preview = false) {
-    if (!running || destroyed || audio?.state !== 'running') return;
+    if (muted || destroyed || !audioOutputReady || audio?.state !== 'running') return;
     const key = preview ? 'preview' : kind;
     stopSound(key);
     const cfg = {...soundSettings[kind]}, preset = PRESETS[cfg.preset];
@@ -751,7 +771,7 @@
       if (active) beep(kind);
     };
     choice.onchange=update;volume.oninput=update;seconds.onchange=update;repeat.onchange=update;
-    const preview=el('button','Preview',section);previewButtons.push(preview);
+    const preview=el('button','Preview',section);preview.disabled=muted;previewButtons.push(preview);
     preview.onclick=()=>{prepareSound();beep(kind,true);};
   }
   refreshSoundDescriptions();
@@ -777,15 +797,113 @@
   timingSetting('Disposition Reminder Delay',
     'Time allowed to finish the call details and click "Wrap up" before the reminder plays. Only relevant when you are in G1.',
     'its-disposition-seconds',dispositionSeconds,1,120,'seconds',number=>{dispositionSeconds=number;});
-  timingSetting('Caller Waiting Delay',
-    'Busy time needed before the Caller Waiting sound can play. Only used when you are in G2 and a caller is waiting in a queue.',
-    'its-call-seconds',callSeconds,1,1800,'seconds',number=>{callSeconds=number;});
-  timingSetting('Extra Phone Cover Delay',
-    'Busy time needed for every G1 member before the urgent Available alert can play. Only used when you are in G2, are not Available, and a caller is waiting.',
-    'its-cover-seconds',coverSeconds,1,3600,'seconds',number=>{coverSeconds=number;});
+  timingSetting('Caller Waiting Alert Delay',
+    'How long a caller must wait before the repeating Available alert plays. Only used when you are in G2, are not Available, and every signed-in G1 member is unavailable.',
+    'its-waiting-alert-seconds',waitingAlertSeconds,1,3600,'seconds',number=>{waitingAlertSeconds=number;});
+  const devicesCard=el('div','',settingsPanel,'settings-card');
+  el('h4','Audio Devices',devicesCard);
+  el('p','Output changes apply only to assistant sounds. Your 8x8 calls keep their own device settings.',devicesCard,'settings-description');
+  const inputChoice=el('select','',el('label','Input Device',devicesCard,'sound-field'));
+  inputChoice.setAttribute('aria-label','Assistant input device');inputChoice.disabled=true;
+  const inputDefault=el('option','System default (Default)',inputChoice);inputDefault.value='';
+  el('p','The assistant does not use a microphone, so input selection is not needed.',devicesCard,'small');
+  const outputChoice=el('select','',el('label','Output Device',devicesCard,'sound-field'));
+  outputChoice.setAttribute('aria-label','Assistant output device');
+  const defaultOutput=el('option','System default (Default)',outputChoice);defaultOutput.value='';
+  if(outputDeviceId) {el('option','Saved output device',outputChoice).value=outputDeviceId;outputChoice.value=outputDeviceId;}
+  const AudioClass=root.AudioContext || root.webkitAudioContext;
+  const canRouteOutput=typeof AudioClass?.prototype?.setSinkId==='function';
+  const mediaDevices=root.navigator.mediaDevices;
+  outputChoice.disabled=!canRouteOutput;
+  const refreshDevicesButton=el('button','Refresh devices',devicesCard);
+  refreshDevicesButton.disabled=!canRouteOutput || typeof mediaDevices?.enumerateDevices!=='function';
+  const chooseOutputButton=canRouteOutput && typeof mediaDevices?.selectAudioOutput==='function'
+    ? el('button','Choose output device',devicesCard):null;
+  const deviceFeedback=el('p',canRouteOutput?'Only output devices allowed by your browser appear here.':
+    'This browser can only use the system default output for assistant sounds.',devicesCard,'small');
+  deviceFeedback.setAttribute('role','status');
+  let outputChanges=Promise.resolve();
+  function setAssistantOutput(id,note='') {
+    if(destroyed)return Promise.resolve(false);
+    id=id==='default'?'':id;
+    audioOutputReady=false;outputChoice.disabled=true;
+    syncMute();
+    if(chooseOutputButton)chooseOutputButton.disabled=true;
+    const change=outputChanges.then(async()=>{
+      if(destroyed)return false;
+      const resumeLunch=sounds.has('lunch');
+      for(const key of [...sounds.keys()])stopSound(key);
+      try {
+        if(!audio && AudioClass)audio=new AudioClass();
+        if(typeof audio?.setSinkId!=='function')throw Error('Output selection unavailable');
+        await audio.setSinkId(id);
+        if(destroyed)return false;
+        outputDeviceId=id;savePreferences();outputChoice.value=id;
+        setText(deviceFeedback,note || (id?'Assistant sounds now use the selected output device.':'Assistant sounds now use the system default output.'));
+        return true;
+      } catch {
+        if(destroyed)return false;
+        outputDeviceId=typeof audio?.sinkId==='string'?audio.sinkId:'';
+        savePreferences();outputChoice.value=outputDeviceId;
+        setText(deviceFeedback,'Could not use that output device. The assistant has kept its previous output.');
+        return false;
+      } finally {
+        if(!destroyed) {
+          audioOutputReady=true;outputChoice.disabled=!canRouteOutput;
+          syncMute();
+          if(chooseOutputButton)chooseOutputButton.disabled=false;
+          if(!muted && activeReminder)beep(activeReminder.kind);
+          else if(!muted && lunchLatched.size && (resumeLunch || soundSettings.lunch.repeat))beep('lunch');
+        }
+      }
+    });
+    outputChanges=change.catch(()=>false);
+    return change;
+  }
+  async function refreshAudioDevices() {
+    if(destroyed || !canRouteOutput || typeof mediaDevices?.enumerateDevices!=='function')return;
+    try {
+      const devices=await mediaDevices.enumerateDevices();await outputChanges;
+      if(destroyed)return;
+      const available=devices.filter(d=>d.kind==='audiooutput' && d.deviceId && d.deviceId!=='default');
+      const defaultLabel=kind=>{
+        const label=devices.find(d=>d.kind===kind && d.deviceId==='default')?.label;
+        return (label?label.replace(/^default\s*[-–—]\s*/i,''):'System default')+' (Default)';
+      };
+      inputDefault.textContent=defaultLabel('audioinput');
+      outputChoice.textContent='';
+      el('option',defaultLabel('audiooutput'),outputChoice).value='';
+      for(const [index,device] of available.entries())el('option',device.label || `Output device ${index+1}`,outputChoice).value=device.deviceId;
+      if(outputDeviceId && !available.some(d=>d.deviceId===outputDeviceId)) {
+        await setAssistantOutput('','Selected output is unavailable. Assistant sounds now use the system default.');
+      }
+      outputChoice.value=outputDeviceId;
+      if(!available.length && !outputDeviceId)setText(deviceFeedback,'Using the system default. Other outputs may need browser permission.');
+    } catch {
+      if(!destroyed)setText(deviceFeedback,'Could not list audio devices. The assistant has kept its current output.');
+    }
+  }
+  outputChoice.onchange=()=>setAssistantOutput(outputChoice.value);
+  refreshDevicesButton.onclick=()=>refreshAudioDevices();
+  if(chooseOutputButton)chooseOutputButton.onclick=async()=>{
+    try {
+      const device=await mediaDevices.selectAudioOutput(outputDeviceId?{deviceId:outputDeviceId}:{});
+      if(destroyed)return;
+      if(device?.kind!=='audiooutput' || typeof device.deviceId!=='string')throw Error('No output selected');
+      await setAssistantOutput(device.deviceId);await refreshAudioDevices();
+    } catch {if(!destroyed)setText(deviceFeedback,'No new output was selected. The assistant has kept its current output.');}
+  };
+  const audioDeviceChanged=()=>{void refreshAudioDevices();};
+  mediaDevices?.addEventListener?.('devicechange',audioDeviceChanged);
   const desktopCard=el('div','',settingsPanel,'settings-card');
   el('h4','Desktop Notifications',desktopCard);
   el('p','Show desktop notifications for alerts. Sounds and messages in the assistant still work when this is off.',desktopCard,'settings-description');
+  const notificationInstructions=el('div','',desktopCard,'small notification-instructions');
+  el('p','Allow notifications manually in Microsoft Edge:',notificationInstructions);
+  const notificationSteps=el('ol','',notificationInstructions);
+  el('li','Settings → Privacy, search and services → Site permissions → All permissions → Notifications.',notificationSteps);
+  el('li','Under Allowed to send notifications, select Add site.',notificationSteps);
+  el('li','Enter https://vcc-au2.8x8.com and select Add.',notificationSteps);
   const desktopLabel=el('label','',desktopCard,'repeat-control');
   const desktopToggle=el('input','',desktopLabel);desktopToggle.type='checkbox';desktopToggle.checked=desktopNotifications;
   desktopToggle.id='its-desktop-notifications';desktopLabel.append(doc.createTextNode('Show desktop notifications'));
@@ -794,27 +912,23 @@
   notificationFeedback.setAttribute('role','status');notificationFeedback.setAttribute('aria-live','polite');
   let notificationTesting=false;
   function syncNotificationTest() {
-    notificationTest.disabled=!running || !desktopNotifications || notificationTesting;
+    notificationTest.disabled=destroyed || !desktopNotifications || notificationTesting;
   }
   notificationTest.onclick=async()=>{
-    if (destroyed || !running || !desktopNotifications || notificationTesting) return;
+    if (destroyed || !desktopNotifications || notificationTesting) return;
     if (!('Notification' in root)) {
       setText(notificationFeedback,'Desktop notifications are not supported in this browser.');return;
     }
     notificationTesting=true;syncNotificationTest();
     try {
-      let permission=root.Notification.permission;
-      if (permission==='default') {
-        setText(notificationFeedback,'Allow notifications in the browser prompt to continue.');
-        notificationRequested=true;permission=await root.Notification.requestPermission();
-      }
-      if (destroyed || !running || !desktopNotifications) return;
+      const permission=root.Notification.permission;
+      if (destroyed || !desktopNotifications) return;
       if (permission!=='granted') {
-        setText(notificationFeedback,'Notifications are blocked. Allow notifications for this 8x8 site in your browser’s site settings.');return;
+        setText(notificationFeedback,'Notifications are not allowed yet. Follow the Edge settings steps above, then try again.');return;
       }
       notices.get('test')?.close();
       const notice=new root.Notification('8x8 Assistant: Test Notification',
-        {body:'This is a test of your desktop notifications.',tag:'its-call-assist-test'});
+        {body:'This is a test of your desktop notifications.',tag:'its-call-assist-test',silent:muted});
       notices.set('test',notice);notice.onclick=()=>{root.focus();notice.close();};
       setText(notificationFeedback,'Test notification sent. If no popup appeared, check your browser and computer notification settings.');
     } catch {
@@ -829,13 +943,13 @@
     syncNotificationTest();
   };
   function notify(kind, title, body) {
-    if (!running || destroyed) return;
+    if (destroyed) return;
     bannerKind = kind; message.textContent = `${title}\n${body}`; banner.classList.remove('hidden');
     try { beep(kind); } catch {}
     if (desktopNotifications && 'Notification' in root && root.Notification.permission === 'granted') {
       try {
         notices.get(kind)?.close();
-        const n = new root.Notification(title, {body, tag:`its-call-assist-${kind}`, requireInteraction:true});
+        const n = new root.Notification(title, {body, tag:`its-call-assist-${kind}`, requireInteraction:true,silent:muted});
         notices.set(kind,n); n.onclick = () => {root.focus(); n.close();};
       } catch(e) { console.warn('Service Desk 8x8 Assistant notification:', e.message); }
     }
@@ -846,9 +960,9 @@
     if (bannerKind === kind) {banner.classList.add('hidden');bannerKind='';}
   }
   function reset() {
-    callLatched.clear(); lunchLatched.clear(); freshness.clear(); previous.clear();
+    lunchLatched.clear(); freshness.clear(); previous.clear();
     activeReminder=null;
-    for (const k of ['call','lunch','critical','disposition','lunchOverdue']) clearAlert(k);
+    for (const k of ['lunch','critical','disposition','lunchOverdue']) clearAlert(k);
     banner.classList.add('hidden');
   }
   function syncReminder(reminder) {
@@ -865,14 +979,14 @@
     }
   }
   function updateLunch(input) {
-    lunchSeconds=settingNumber(Number(input.value),1800,1,7200);
-    lunchSlider.value=lunchExact.value=String(lunchSeconds);
-    lunchValue.textContent=`${lunchSeconds} s`;applyTimingSettings();
+    lunchMinutes=settingNumber(Number(input.value),30,1,120);
+    lunchSlider.value=lunchExact.value=String(lunchMinutes);
+    lunchValue.textContent=`${lunchMinutes} min`;applyTimingSettings();
   }
   lunchSlider.oninput=()=>updateLunch(lunchSlider);
   lunchExact.onchange=()=>updateLunch(lunchExact);
   function scan(docs) {
-    if (destroyed || !running) return;
+    if (destroyed) return;
     const now = Date.now(), gap = now - lastScan; lastScan = now;
     for (const [d,o] of observers) if (!docs.includes(d)) {o.disconnect();observers.delete(d);}
     for (const d of docs) if (!observers.has(d) && d.body) {
@@ -893,10 +1007,10 @@
     const personalKind=me && (['on break','break'].includes(normal(me.status))?'break':dispositionStatus(me.status)?'disposition':'');
     if (personalKind) {
       lastSample={me,agents:[],queues:[],selected:[...selected],mode:selfInG1?'covering':'assisting',
-        lunchSeconds,dispositionSeconds,callSeconds,coverSeconds,desktopNotifications,unavailable:false,view:personalKind};
+        lunchMinutes,dispositionSeconds,waitingAlertSeconds,desktopNotifications,muted,unavailable:false,view:personalKind};
       showUnavailable(false);renderCompact(me,personalKind);
       setText(lastUpdated,new Date().toLocaleTimeString('en-AU',{hour12:false}));
-      clearAlert('call');clearAlert('lunch');callLatched.clear();lunchLatched.clear();
+      clearAlert('lunch');lunchLatched.clear();
       if (gap>30000) freshness.clear();
       const signature=me.status+'|'+(me.liveTimer || me.timer);
       let f=freshness.get('personal') || freshness.get('Me');
@@ -907,17 +1021,17 @@
       // the Wrap up page open. Keep its personal reminder until that page ends.
       const fresh=((f.observed && now-f.changedAt<30000) || (personalKind==='disposition' && me.remaining===0))
         && root.navigator.onLine!==false;
-      syncReminder(selfInG1 && fresh?personalRule(me,lunchSeconds,dispositionSeconds):null);
+      syncReminder(selfInG1 && fresh?personalRule(me,lunchMinutes,dispositionSeconds):null);
       return;
     }
     compactKind='';freshness.delete('personal');
-    const sample = read(docs, selected.values().next().value || [...current.keys()].find(name => name !== 'Me') || '');
+    const sample = read(docs, selected.values().next().value || [...current.keys()].find(name => name !== 'Me') || 'Me');
     const samples = [...selected].map(name => read(docs, name));
     const agents = samples.map(s => s.agent).filter(Boolean);
-    const missing = !current.has('Me') || !agentRows(docs).length || sample.errors.length > 0 || samples.some(s => s.errors.length);
+    const missing = !current.has('Me') || (!rosterVisible && agentWidgets.size>1) || sample.errors.length > 0 || samples.some(s => s.errors.length);
     lastSample = {me:current.get('Me') || null, agents, queues:sample.queues, selected:[...selected],
-      mode:selfInG1?'covering':'assisting',lunchSeconds,dispositionSeconds,callSeconds,coverSeconds,
-      desktopNotifications,unavailable:!!missing,view:'main'};
+      mode:selfInG1?'covering':'assisting',lunchMinutes,dispositionSeconds,waitingAlertSeconds,
+      desktopNotifications,muted,unavailable:!!missing,view:'main'};
     if (missing) {
       showUnavailable(true); freshness.clear(); return;
     }
@@ -933,31 +1047,30 @@
       if (!f.observed || now - f.changedAt >= 30000) fresh = false;
     }
     const offline = root.navigator.onLine === false;
-    const heading = !selected.size ? 'Select at least one G1 agent' : offline ? 'Waiting for connection' : !fresh ? 'Waiting for live updates' : 'Live';
+    const heading = !selected.size ? 'Select at least one G1 agent' : offline ? 'Waiting for connection' : !fresh ? 'Waiting for live updates'
+      : sample.queues.some(q=>q.waiting>0 && q.waitSeconds===null)?'Waiting for caller time':'Live';
     setText(monitorState,heading);monitorState.setAttribute('data-state',heading==='Live'?'live':'waiting');
     setText(queueTotal,String(sample.queues.reduce((total,q)=>total+q.waiting,0)));
     setText(lastUpdated,new Date().toLocaleTimeString('en-AU',{hour12:false}));
-    if (!running || !fresh || offline) {
-      clearAlert('call');clearAlert('lunch');syncReminder(null);return;
+    if (!fresh || offline) {
+      clearAlert('lunch');syncReminder(null);return;
     }
     for (const a of agents) {
       const old = previous.get(a.name);
       if (old && (normal(old.status) !== normal(a.status) || a.seconds < old.seconds)) {
-        callLatched.delete(a.name); lunchLatched.delete(a.name);
+        lunchLatched.delete(a.name);
         if (a.name==='Me') syncReminder(null);
       }
       previous.set(a.name, a);
     }
     if (selfInG1) {
-      clearAlert('call');clearAlert('lunch');callLatched.clear();lunchLatched.clear();
-      syncReminder(personalRule(current.get('Me'),lunchSeconds,dispositionSeconds));
+      clearAlert('lunch');lunchLatched.clear();
+      syncReminder(personalRule(current.get('Me'),lunchMinutes,dispositionSeconds));
       return;
     }
-    const others = [...current.values()].filter(a => a.name !== 'Me');
-    const usableOthers = others.length > 0 && others.every(a => a.status && a.seconds !== null);
-    // Confirm timer updates for Me and all loaded agents before making coverage claims.
-    let coverageFresh = usableOthers;
-    for (const a of [me,...others]) {
+    // Only selected, signed-in G1 members determine whether phone cover is needed.
+    let coverageFresh=agents.length>0;
+    for (const a of [me,...agents]) {
       const key = 'coverage:'+a.name, signature = a.status+'|'+a.timer;
       let f=freshness.get(key);
       if (!f) f={signature,changedAt:now,observed:false};
@@ -965,31 +1078,29 @@
       freshness.set(key,f);
       if (!f.observed || now-f.changedAt>=30000) coverageFresh=false;
     }
-    const decision = groupRules(agents, sample.queues, others, me,{callSeconds,coverSeconds});
-    decision.critical = decision.critical && coverageFresh;
+    let waitingFresh=false;
+    for (const q of sample.queues) {
+      const key='queue:'+q.name,signature=q.waiting+'|'+q.waitSeconds;
+      let f=freshness.get(key);
+      if (!f) f={signature,changedAt:now,observed:false};
+      else if(f.signature!==signature)f={signature,changedAt:now,observed:true};
+      freshness.set(key,f);
+      if(q.waiting>0 && Number.isFinite(q.waitSeconds) && q.waitSeconds>=waitingAlertSeconds
+        && f.observed && now-f.changedAt<30000)waitingFresh=true;
+    }
+    const decision = groupRules(agents, sample.queues, me,waitingAlertSeconds);
+    decision.critical = decision.critical && coverageFresh && waitingFresh;
     if (decision.critical) {
-      clearAlert('call');
       clearAlert('lunch');
       syncReminder({kind:'critical',title:'Alert: Change Status To Available',body:
-        others.every(a => !['available','busy'].includes(normal(a.status)))
-        ? 'No other loaded agent is Available or Busy. Change your status to Available.'
-        : `Everyone in G1 is Busy for at least ${timeWords(coverSeconds,'second')} and a caller is waiting. Change your status to Available.`});
+        `A caller has waited at least ${timeWords(waitingAlertSeconds,'second')} and every signed-in G1 member is unavailable. Change your status to Available.`});
     } else syncReminder(null);
-    const newCalls = decision.call.filter(name => !callLatched.has(name));
     const newBreaks = decision.lunch.filter(name => !lunchLatched.has(name));
-    for (const name of [...callLatched]) if (!decision.call.includes(name)) callLatched.delete(name);
     for (const name of [...lunchLatched]) if (!decision.lunch.includes(name)) lunchLatched.delete(name);
-    if (!decision.call.length) clearAlert('call');
     if (!decision.lunch.length) clearAlert('lunch');
     if (newBreaks.length && !decision.critical) {
       notify('lunch','Info: G1 On Break',`${newBreaks.join(', ')}: On Break.`);
       newBreaks.forEach(name => lunchLatched.add(name));
-    }
-    if (newCalls.length && !decision.critical) {
-      const details = agents.filter(a => newCalls.includes(a.name)).map(a => `${a.name}: ${a.timer}`).join('; ');
-      const waiting = sample.queues.reduce((total,q)=>total+q.waiting,0);
-      notify('call','Caller waiting — jump on the phones',`Busy — ${details}. ${waiting} caller${waiting===1?'':'s'} waiting.`);
-      newCalls.forEach(name => callLatched.add(name));
     }
   }
   function safeScan() {
@@ -997,29 +1108,35 @@
     try {
       const docs=documents();
       countCalls(docs);
-      if (running) {
-        if (!QUEUES.length && !readPersonalPage(docs)) {compactKind='';showUnavailable(false);openView('settings');return;}
-        scan(docs);
-      }
+      if (!QUEUES.length && !readPersonalPage(docs)) {compactKind='';showUnavailable(false);openView('settings');return;}
+      scan(docs);
     } catch(e) {
-      if (running) showUnavailable(true);
+      showUnavailable(true);
       console.warn('Service Desk 8x8 Assistant:',e.message);
     }
   }
-  pause.onclick = () => {
-    running = !running;
-    panel.classList.toggle('paused',!running);
-    setText(pause, running ? 'Pause' : 'Resume');
-    for (const preview of previewButtons) preview.disabled=!running;
-    syncNotificationTest();
-    if (running) {freshness.clear();prepareSound();safeScan();}
-    else {
-      reset();stopSound('preview');saveStatistics();
-      audio?.suspend?.().catch(()=>{});
-      setText(monitorState,'Paused');monitorState.setAttribute('data-state','paused');
-      notices.get('test')?.close();notices.delete('test');
+  function syncMute() {
+    for(const button of [muteButton,compactMute]) {
+      setText(button,muted?'Unmute':'Mute');button.setAttribute('aria-pressed',String(muted));
+      button.title=muted?'Unmute assistant sounds':'Mute assistant sounds';
     }
-  };
+    for(const preview of previewButtons)preview.disabled=muted || !audioOutputReady;
+  }
+  function toggleMute() {
+    muted=!muted;savePreferences();syncMute();
+    if(muted) {for(const key of [...sounds.keys()])stopSound(key);safeScan();}
+    else {
+      prepareSound();safeScan();
+      const replay=()=>{
+        if(destroyed || muted)return;
+        if(activeReminder && !sounds.has(activeReminder.kind))beep(activeReminder.kind);
+        else if(!activeReminder && lunchLatched.size && soundSettings.lunch.repeat && !sounds.has('lunch'))beep('lunch');
+      };
+      if(audio?.state!=='running')audio?.resume?.().then(replay).catch(()=>{});else replay();
+    }
+  }
+  muteButton.onclick=compactMute.onclick=toggleMute;
+  syncMute();
   dismiss.onclick = () => {
     if (activeReminder?.kind===bannerKind) banner.classList.add('hidden');
     else if (bannerKind) clearAlert(bannerKind);
@@ -1033,7 +1150,8 @@
   };
   function destroy() {
     saveStatistics();root.removeEventListener?.('pagehide',saveStatistics);
-    destroyed=true;running=false;root.clearInterval(interval);
+    destroyed=true;root.clearInterval(interval);
+    mediaDevices?.removeEventListener?.('devicechange',audioDeviceChanged);
     for (const key of [...sounds.keys()]) stopSound(key);
     for (const o of observers.values()) o.disconnect();
     for (const n of notices.values()) n.close();
@@ -1047,5 +1165,5 @@
   root.__itsCallAssist.wrapUpSession=()=>wrapUpSession?{...wrapUpSession}:null;
   root.__itsCallAssist.statistics=()=>({day:statistics.day,total:statistics.calls.length,calls:[...statistics.calls],hadGaps:statistics.hadGaps});
   root.addEventListener?.('pagehide',saveStatistics);
-  prepareSound();safeScan();
+  prepareSound();safeScan();void refreshAudioDevices();
 })();

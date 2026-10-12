@@ -2,7 +2,9 @@
 
 Assistant for the Bond IT Service Desk 8x8 customer call center interface.
 
-Current version: **1.0.2**. The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
+Author: **Joshua Lavagna-Slater** | Current version: **1.0.3**.
+
+The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
 ## Running the assistant
 
@@ -21,26 +23,31 @@ The snippet starts monitoring immediately. The page can remain in the background
 
 When you are in G2, the assistant monitors G1 break status and waiting callers, and tells you when extra cover is needed. When you are in G1, it reminds you to remain Available or Busy, to finish disposition within the configured delay, and to return from lunch before the selected allowance expires.
 
+Agents who disappear from a visible Groups list are removed from the assistant's table and their G1 selections are cleared. Logging in adds a fresh row, initially in G2. Temporarily hiding the entire list, including the break and disposition pages, does not erase G1 selections. Me always appears first with the same row styling as other agents.
+
+There is one phone-cover alert, with a repeating two-tone alarm by default. It plays when you are in G2, are not Available, a caller has waited at least the configured delay, and every signed-in G1 member is unavailable: Busy, On Break, Working Offline or completing disposition. At least one signed-in agent must be ticked in G1. Becoming Available, an available G1 member, or no caller waiting long enough clears the alert. The earlier informational Caller Waiting sound is removed.
+
+The delay uses each inbound queue's **Longest waiting time**, not an agent's time on Busy. Missing or stale waiting times do not produce guessed call ages. G1 break information and the existing personal G1 reminders remain separate from the phone-cover alert.
+
 Waiting-call monitoring uses the three inbound queues configured locally. Outbound queues are excluded.
 
 Monitoring shows one combined **Callers waiting** total. Statistics appear as three cards in a horizontal row. **Last updated** at the bottom records the latest assistant update. Working Offline appears in orange.
 
 The script only reads page information and alerts you. It does not change your status, select disposition fields, or answer calls.
 
-## Seconds and compact reminders
+## Timing settings and compact reminders
 
-All timing settings use seconds. Existing minute-based preferences are converted once without changing the saved durations, G1 selections or sounds.
+Lunch Break Length is recorded in whole minutes. Reminder delays and sound durations use seconds.
 
-| Setting | Default seconds | Allowed seconds |
+| Setting | Default | Allowed range |
 | --- | ---: | ---: |
-| Lunch Break Length | 1800 | 1–7200 |
-| Disposition Reminder Delay | 10 | 1–120 |
-| Caller Waiting Delay | 120 | 1–1800 |
-| Extra Phone Cover Delay | 180 | 1–3600 |
+| Lunch Break Length | 30 minutes | 1–120 minutes |
+| Disposition Reminder Delay | 20 seconds | 1–120 seconds |
+| Caller Waiting Alert Delay | 180 seconds | 1–3600 seconds |
 
-Lunch length has a slider and an exact seconds field. Sound durations already use seconds.
+Lunch length has a slider and an exact minutes field. Existing second-based lunch settings convert to the nearest whole minute, within the supported range. The former Extra Phone Cover Delay becomes Caller Waiting Alert Delay with its saved duration retained. The old 10-second disposition default upgrades once to 20 seconds; other saved delays are preserved, and newly chosen values remain unchanged on later runs.
 
-While you are on break or completing disposition, the assistant shows only a compact progress bar with elapsed time, time left and the allowance. Its colours match the main panel; a gentle shimmer becomes an orange pulse when overdue. Reduced-motion preferences are respected. The main menu returns when you leave that state. Personal reminder sounds still require **Me** to be ticked in G1.
+While you are on break or completing disposition, the assistant shows a compact progress bar with elapsed time, time left, the allowance and a small Mute/Unmute button. Its colours match the main panel; a gentle shimmer becomes an orange pulse when overdue. Reduced-motion preferences are respected. The main menu returns when you leave that state. Personal reminder sounds still require **Me** to be ticked in G1.
 
 The break reader uses 8x8's `on-break-timer`, including `MM:SS` and `H:MM:SS` values, so reminders work while all queue and agent rows are hidden.
 
@@ -48,9 +55,23 @@ The disposition reader requires the actual **Wrap up** state and its `progress-t
 
 ## Testing desktop notifications
 
-In **Settings → Desktop Notifications**, turn on desktop notifications and click **Test desktop notification**. This temporary diagnostic button requests browser permission if needed and sends one popup without playing a sound or starting an alert. It reports blocked permissions, unsupported browsers and failed requests. A successful send cannot guarantee that the operating system displayed the popup; check browser and computer notification settings if it did not appear.
+Allow the site manually in Microsoft Edge:
 
-Notification tests are disabled while paused or when desktop notifications are switched off.
+1. Open **Settings → Privacy, search and services → Site permissions → All permissions → Notifications**.
+2. Under **Allowed to send notifications**, select **Add site**.
+3. Enter **https://vcc-au2.8x8.com**, then select **Add**.
+
+In **Settings → Desktop Notifications** in the assistant, turn on notifications and click **Test desktop notification**. This temporary diagnostic button sends one popup without an alert tone. It does not request permission automatically. It reports missing permission, unsupported browsers and failed requests. A successful send cannot guarantee that the operating system displayed the popup; check browser and computer notification settings if it did not appear.
+
+Notification tests remain usable while muted, and are disabled when desktop notifications are switched off.
+
+## Audio devices
+
+**Settings → Audio Devices → Output Device** routes only the assistant's generated sounds. It does not change 8x8's call audio or system-wide devices. The default entry is labelled **(Default)**; browser-exposed device names appear after Refresh devices. Choose output device can request an output selection where that browser API is available.
+
+Output selection uses the assistant's own [AudioContext.setSinkId](https://developer.chrome.com/blog/audiocontext-setsinkid/). Availability and visible devices depend on browser support and permission. The assistant never opens a microphone to discover speakers. Unsupported browsers keep system-default output. A removed selected device falls back to the system default, and a failed switch keeps the previous output. Desktop notification audio remains controlled by the browser and operating system.
+
+**Input Device** displays a disabled default entry because this assistant does not use a microphone. It does not configure or replace the microphone used by 8x8 calls.
 
 ## Statistics
 
@@ -64,13 +85,13 @@ This is an observed Busy-start counter, not an 8x8 historical reporting API. Oth
 
 The counter works independently of queue visibility. It can count a Busy transition when queue information is hidden or the status timer cannot be read, as long as the user's own status label remains readable.
 
-## Pause, minimise and close
+## Mute, minimise and close
 
-**Pause** freezes the displayed agent information, queue counts, Last updated time, compact timers and animations, alert checks and other statistics. It stops alert sounds and previews. The daily call counter remains active and its total can still increase while paused. Resume refreshes the page values and other statistics immediately.
+**Mute** stops all assistant tones and previews. Monitoring, agent updates, timers, progress animations, statistics and desktop notifications continue. Notifications created while muted request silent delivery. **Unmute** resumes any current alert; it does not repeat its desktop popup. The mute preference is saved for subsequent runs.
 
 The **-** button minimises the main content; **+** restores it. Monitoring and counting continue while minimised. The **x** button closes the assistant and stops all monitoring and counting, retaining statistics already saved.
 
-Settings can be edited while paused. Preview buttons remain disabled until monitoring resumes.
+Settings remain usable while muted. Preview buttons are disabled until sounds are unmuted. The compact break and disposition bars also include Mute/Unmute.
 
 ## Releases
 
@@ -89,4 +110,4 @@ npm run check
 npm test
 ```
 
-Tests use a simulated 8x8 DOM to verify status readers, timing boundaries, menu navigation, persistence, pause behavior and statistics. They do not verify live Edge notifications, audio delivery or the real 8x8 page layout.
+Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. They do not verify live Edge notifications, physical audio delivery or the real 8x8 page layout.

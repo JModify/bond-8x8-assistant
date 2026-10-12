@@ -18,10 +18,14 @@ For each authorised application update:
 - The assistant reads the page and alerts. It never changes availability or answers calls.
 - Only the three locally configured inbound queues are monitored for waiting callers; exclude outbound queues.
 - G1 denotes agents covering phones; every agent not selected in G1 is G2.
-- Pause freezes displayed data and stops alert checks, sounds and previews. Only the daily Busy-start counter continues; other statistics refresh on resume.
+- Mute silences assistant tones and previews while monitoring, timers, statistics and notifications continue. Request silent notifications while muted; never pause the monitoring loop.
+- Remove agents and their G1 selections when they disappear from a visible roster. Do not interpret a hidden roster or the user's break/disposition page as a sign-out. Me stays first without separate row shading.
+- The G2 cover alert uses native inbound Longest waiting time and only signed-in G1 members. Remove the earlier Caller Waiting information sound. Do not guess missing wait durations or use Busy time as caller wait time.
 - Busy-start counts are observations, not complete historical call totals. Preserve state through unreadable periods, do not fabricate calls, and explain the limitation.
 - On break and disposition pages, show only a compact personal progress bar. Read the dedicated break timer and Wrap up markers; do not require queue or agent rows for G1 personal reminders. Do not mistake a Disposition tab or the completed call's timer for elapsed wrap-up time.
 - For other missing information, show only `Unable to Assist: Open 8x8 agent queue information.`
-- Use seconds for all timing settings; preserve durations when migrating legacy minute preferences.
+- Record lunch in whole minutes; reminder delays and sound durations use seconds. Preserve configured durations when migrating where the new range permits them.
+- Route output only on the assistant's own AudioContext. Never alter 8x8's devices, open a microphone for device enumeration, or modify system-wide audio settings. Input selection remains disabled because the assistant has no microphone input.
+- Author: Joshua Lavagna-Slater is explicitly approved for the public script and title metadata.
 - Do not publish page captures, caller information, credentials or live staff schedules. Use fictional fixtures in tests.
 - Keep organisation queue names and staff defaults out of public source, docs, tests and archived releases. Preserve configured private download copies separately. Do not commit private configuration; it stays in browser settings or a private local bootstrap.

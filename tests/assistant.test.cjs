@@ -9,7 +9,8 @@ function check(name, fn) { fn(); passed++; console.log('PASS:', name); }
 
 // Minimal page fixture: the same status, timer and queue attributes 8x8 supplies.
 // The production reader, UI handlers, rule logic and alert lifecycle all run.
-function environment(preferences = {g1:['Me'], lunchSeconds:1800}, sounds = {}) {
+function environment(preferences = {g1:['Me'], lunchMinutes:30}, sounds = {}, options = {}) {
+  if(!options.rawPreferences)preferences={settingsVersion:3,dispositionSeconds:10,...preferences};
   let now = 100000, nextId = 0;
   const jobs = new Map(), notifications = [], storage = new Map([
     ['service-desk-8x8-preferences-v5',JSON.stringify(preferences)],
@@ -70,25 +71,34 @@ function environment(preferences = {g1:['Me'], lunchSeconds:1800}, sounds = {}) 
   const meStatus=add('div',header,{'data-test-id':'user-status','data-status-value':'Available'});
   const timerWrapper=add('span',header);
   const meTimer=add('div',timerWrapper,{'data-test-id':'user-presence-timer'},'0s');
-  const group=add('div',document.body);
+  const group=add('div',document.body,{'data-test-id':'virtuoso-item-list'});
   const agents={};
-  for(const name of ['Alex Agent','Casey Agent']){
+  function login(name,statusLabel='Available',seconds=0) {
     const row=add('div',group,{'data-test-id':'agent-item','aria-label':name});
     add('span',row,{'data-test-id':'agent-name-label',title:name},name);
-    const status=add('div',row,{'data-status-value':'Available'});
-    const timer=add('div',row,{'data-test-id':'user-presence-timer'},'0s');
-    agents[name]={status,timer};
+    const status=add('div',row,{'data-status-value':statusLabel});
+    const timer=add('div',row,{'data-test-id':'user-presence-timer'},seconds+'s');
+    agents[name]={row,status,timer};
   }
+  for(const name of ['Alex Agent','Casey Agent'])login(name);
   const queues=[];
   for(const name of ['Demo Academic Queue','Demo Transfer Queue','Demo Outbound Queue','Demo Service Queue']){
     const row=add('div',document.body,{'data-test-id':'queue-item'});
     add('span',row,{'data-test-id':'queue-name',title:name},name);
     const cell=add('span',row,{role:'gridcell',title:'0 Interactions waiting'},'0');
-    queues.push({row,cell});
+    const wait=add('span',row,{role:'gridcell',title:'0 minutes 0 seconds Longest waiting time'},'0m 0s');
+    queues.push({row,cell,wait});
   }
   const schedule=(fn,ms)=>{const id=++nextId;jobs.set(id,{fn,ms});return id;};
+  const audioContexts=[];
   class AudioContext {
-    constructor(){this.state='running';this.currentTime=0;this.destination={};}
+    constructor(){this.state='running';this.currentTime=0;this.destination={};this.sinkId='';audioContexts.push(this);}
+    async setSinkId(id){
+      if(options.beforeSink)await options.beforeSink(id);
+      if(options.rejectOutput===id)throw Error('NotAllowedError');
+      if(id && !devices.some(d=>d.kind==='audiooutput'&&d.deviceId===id))throw Error('NotFoundError');
+      this.sinkId=id;
+    }
     resume(){this.state='running';return Promise.resolve();}close(){this.state='closed';return Promise.resolve();}
     createOscillator(){return{frequency:{value:0},connect(){},disconnect(){},start(){},stop(){}};}
     createGain(){return{gain:{setValueAtTime(){},linearRampToValueAtTime(){}},connect(){},disconnect(){}};}
@@ -98,8 +108,23 @@ function environment(preferences = {g1:['Me'], lunchSeconds:1800}, sounds = {}) 
     constructor(title,options){this.title=title;this.options=options;this.closed=false;notifications.push(this);}
     close(){this.closed=true;}
   }
+  if(options.noOutputSelection)delete AudioContext.prototype.setSinkId;
+  const devices=options.devices || [
+    {kind:'audiooutput',deviceId:'default',label:'Default - Desk Speakers'},
+    {kind:'audiooutput',deviceId:'speakers',label:'Desk Speakers'},
+    {kind:'audiooutput',deviceId:'headset',label:'Support Headset'},
+    {kind:'audioinput',deviceId:'default',label:'Default - Desk Microphone'}
+  ];
+  const deviceListeners=new Set();let microphoneRequests=0;
+  const mediaDevices={
+    enumerateDevices:async()=>{if(options.enumerationFails)throw Error('NotAllowedError');return devices;},
+    getUserMedia:async()=>{microphoneRequests++;throw Error('Unexpected microphone capture');},
+    addEventListener:(name,fn)=>{if(name==='devicechange')deviceListeners.add(fn);},
+    removeEventListener:(name,fn)=>{if(name==='devicechange')deviceListeners.delete(fn);}
+  };
+  if(options.outputPicker)mediaDevices.selectAudioOutput=async()=>({kind:'audiooutput',deviceId:'headset',label:'Support Headset'});
   const window={document,location:{hostname:'vcc-au2.8x8.com',origin:'https://vcc-au2.8x8.com'},
-    navigator:{onLine:true},AudioContext,Notification,
+    navigator:{onLine:true,mediaDevices},AudioContext,Notification,
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v)},
     setInterval:schedule,setTimeout:schedule,clearInterval:id=>jobs.delete(id),clearTimeout:id=>jobs.delete(id),
     getComputedStyle:n=>({display:n.classList.contains('hidden')?'none':'block',visibility:'visible'}),
@@ -107,7 +132,7 @@ function environment(preferences = {g1:['Me'], lunchSeconds:1800}, sounds = {}) 
   window.top=window;document.defaultView=window;
   class Clock extends Date{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}}
   const source=original.replace('root.__itsCallAssist = {destroy, inspect:() => lastSample};',
-    'root.__itsCallAssist = {destroy, inspect:() => lastSample, debug:()=>({activeReminder,playing:[...sounds.keys()],running}), rescan:safeScan};');
+    'root.__itsCallAssist = {destroy, inspect:() => lastSample, debug:()=>({activeReminder,playing:[...sounds.keys()],muted,audioOutput:audio?.sinkId}), rescan:safeScan};');
   vm.runInNewContext(source,{window,location:window.location,Date:Clock,console},{timeout:1000});
   const ui=()=>document.body.querySelector('#its-call-assist-panel').shadowRoot;
   const scan=()=>{now+=2000;window.__itsCallAssist.rescan();};
@@ -136,7 +161,15 @@ function environment(preferences = {g1:['Me'], lunchSeconds:1800}, sounds = {}) 
     personalPage?.remove();personalPage=null;header.hidden=false;group.hidden=false;
     for(const q of queues)q.row.hidden=false;setMe(status,seconds);
   }
+  const waiting=(n,seconds=0,index=3)=>{
+    const q=queues[index];q.cell.textContent=String(n);q.cell.setAttribute('title',`${n} Interactions waiting`);
+    q.wait.textContent=`${Math.floor(seconds/60)}m ${seconds%60}s`;
+    q.wait.setAttribute('title',`${Math.floor(seconds/60)} minutes ${seconds%60} seconds Longest waiting time`);
+  };
   return {window,ui,scan,setMe,other,jobs,storage,notifications,queues,group,header,meTimer,meStatus,
+    login,logout:name=>agents[name].row.remove(),agents,
+    audioContexts,devices,deviceListeners,microphoneRequests:()=>microphoneRequests,
+    deviceChanged:()=>{for(const fn of deviceListeners)fn();},
     showBreak,showWrapUp,restoreMain,
     breakTime:seconds=>{breakTimer.textContent=clock(seconds);scan();},
     wrapTime:remaining=>{wrapTimer.textContent=clock(remaining);scan();},
@@ -146,17 +179,17 @@ function environment(preferences = {g1:['Me'], lunchSeconds:1800}, sounds = {}) 
     debug:()=>window.__itsCallAssist.debug(),
     checkbox:name=>ui().querySelector(`[aria-label="G1: ${name}"]`),
     button:name=>ui().querySelectorAll('button').find(n=>n.textContent===name),
-    waiting:n=>{queues[3].cell.textContent=String(n);queues[3].cell.setAttribute('title',`${n} Interactions waiting`);},
+    waiting,
     tick:(name,value)=>{const b=ui().querySelector(`[aria-label="G1: ${name}"]`);b.checked=value;b.onchange();},
-    lunch:seconds=>{const input=ui().querySelector('#its-my-lunch-seconds');input.value=String(seconds);input.oninput();}
+    lunch:minutes=>{const input=ui().querySelector('#its-my-lunch-minutes');input.value=String(minutes);input.oninput();}
   };
 }
-check('Me is selectable and reveals a 1–7200 second lunch slider',()=>{
+check('Me is selectable and reveals a 1–120 minute lunch slider',()=>{
   const e=environment({g1:['Alex Agent'],lunchSeconds:1800});
   assert(e.checkbox('Me'));assert(e.ui().querySelector('.assistant-settings').classList.contains('hidden'));
   e.tick('Me',true);e.button('Settings').onclick();assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'));
   assert.equal(e.window.__itsCallAssist.inspect().mode,'covering');
-  const slider=e.ui().querySelector('#its-my-lunch-seconds');assert.equal(slider.min,'1');assert.equal(slider.max,'7200');
+  const slider=e.ui().querySelector('#its-my-lunch-minutes');assert.equal(slider.min,'1');assert.equal(slider.max,'120');
 });
 check('Self alone is valid G1 and Available/Busy stay silent despite waiting callers',()=>{
   const e=environment();e.waiting(2);e.other('Alex Agent','On Break',1900);
@@ -189,23 +222,23 @@ check('A normal lunch stays silent including the exact selected duration',()=>{
   e.setMe('Available',0);assert(!e.debug().playing.includes('lunchOverdue'));
 });
 check('Both lunch slider endpoints use strict greater-than boundaries',()=>{
-  for(const seconds of [1,7200]){
-    const e=environment({g1:['Me'],lunchSeconds:seconds});e.setMe('On Break',seconds);assert.equal(e.notifications.length,0);
-    e.setMe('On Break',seconds+1);assert.equal(e.debug().activeReminder.kind,'lunchOverdue');
+  for(const minutes of [1,120]){
+    const e=environment({g1:['Me'],lunchMinutes:minutes});e.setMe('On Break',minutes*60);assert.equal(e.notifications.length,0);
+    e.setMe('On Break',minutes*60+1);assert.equal(e.debug().activeReminder.kind,'lunchOverdue');
   }
 });
 check('Increasing lunch allowance cancels an overdue reminder; settings persist',()=>{
   const e=environment({g1:['Me'],lunchSeconds:600});e.setMe('On Break',601);
-  e.lunch(1200);assert.equal(e.debug().activeReminder,null);assert(!e.debug().playing.includes('lunchOverdue'));
+  e.lunch(20);assert.equal(e.debug().activeReminder,null);assert(!e.debug().playing.includes('lunchOverdue'));
   const saved=JSON.parse(e.storage.get('service-desk-8x8-preferences-v5'));
-  assert.equal(saved.lunchSeconds,1200);assert.deepEqual(saved.g1,['Me']);
+  assert.equal(saved.lunchMinutes,20);assert.deepEqual(saved.g1,['Me']);
 });
 check('Other unavailable self states use the existing Available alarm',()=>{
   const e=environment();e.setMe('Work Offline',2);assert.equal(e.debug().activeReminder.kind,'critical');
   e.setMe('Busy',0);assert.equal(e.debug().activeReminder,null);assert(!e.debug().playing.includes('critical'));
 });
 check('New sound settings have separate defaults and disabled repeat durations',()=>{
-  const e=environment();const cards=e.ui().querySelectorAll('fieldset');assert.equal(cards.length,5);
+  const e=environment();const cards=e.ui().querySelectorAll('fieldset');assert.equal(cards.length,4);
   for(const [label,preset,volume]of [['Alert: Complete Disposition','Urgent pulse','80'],['Alert: Lunch Break Finished','Digital ring','85']]){
     const card=cards.find(n=>n.querySelector('legend').textContent===label);
     assert.equal(card.querySelector('select').value,preset);
@@ -215,8 +248,8 @@ check('New sound settings have separate defaults and disabled repeat durations',
     assert(!card.querySelector('[type="number"]').disabled);
   }
 });
-check('Pause and removal stop personal alarms; hidden queues retain a compact reminder',()=>{
-  for(const action of ['Pause','hidden','Remove']){
+check('Mute and removal stop personal sounds; hidden queues retain a compact reminder',()=>{
+  for(const action of ['Mute','hidden','Remove']){
     const e=environment();e.setMe('Wrap Up',11);
     if(action==='hidden'){
       e.queues[0].row.hidden=true;e.scan();assert(e.ui().querySelector('.unavailable').classList.contains('hidden'));
@@ -227,7 +260,7 @@ check('Pause and removal stop personal alarms; hidden queues retain a compact re
     else if(action!=='hidden') assert(!e.debug().playing.includes('disposition'));
   }
 });
-check('Unticking Me stops personal alarms and hides the lunch control',()=>{
+check('Unticking Me stops personal reminder sounds',()=>{
   const e=environment({g1:['Me','Alex Agent'],lunchSeconds:1800});e.setMe('Wrap Up',11);e.tick('Me',false);
   assert(!e.debug().playing.includes('disposition'));assert.equal(e.window.__itsCallAssist.inspect().mode,'assisting');
 });
@@ -276,16 +309,6 @@ check('Monitoring continues in submenus; Back stops previews only',()=>{
   sounds.children[0].querySelector('button').onclick();assert(!e.debug().playing.includes('preview'));assert(e.debug().playing.includes('disposition'));
   e.button('Settings').onclick();e.setMe('Available',0);assert.equal(e.debug().activeReminder,null);
 });
-check('Outbound waiting is ignored and its row is not required',()=>{
-  const e=environment({g1:['Alex Agent'],lunchSeconds:1800});
-  e.queues[2].cell.textContent='50';e.queues[2].cell.setAttribute('title','50 Interactions waiting');
-  e.other('Alex Agent','Busy',240);e.setMe('Work Offline',1);
-  e.other('Alex Agent','Busy',241);e.other('Casey Agent','Available',1);e.setMe('Work Offline',2);
-  assert.equal(e.notifications.length,0);assert.equal(e.window.__itsCallAssist.inspect().queues.length,3);
-  assert(!e.window.__itsCallAssist.inspect().queues.some(q=>q.name==='Demo Outbound Queue'));
-  e.queues[2].row.hidden=true;e.scan();assert.equal(e.window.__itsCallAssist.inspect().unavailable,false);
-  e.waiting(1);e.setMe('Work Offline',3);assert(e.notifications.some(n=>n.title==='Alert: Change Status To Available'));
-});
 check('Disposition delay and descriptions update immediately',()=>{
   const e=environment();e.setMe('Wrap Up',10);assert.equal(e.notifications.length,0);
   const input=e.ui().querySelector('#its-disposition-seconds');input.value='5';input.onchange();
@@ -295,20 +318,6 @@ check('Disposition delay and descriptions update immediately',()=>{
   input.value='20';input.onchange();assert.equal(e.debug().activeReminder,null);
   e.setMe('Wrap Up',20);assert.equal(e.debug().activeReminder,null);
   e.setMe('Wrap Up',21);assert.equal(e.debug().activeReminder.kind,'disposition');
-});
-check('Settings preserve custom values and existing sound choices',()=>{
-  const e=environment({g1:['Me'],lunchSeconds:2700,dispositionSeconds:15,callSeconds:240,coverSeconds:360,desktopNotifications:false},
-    {critical:{preset:'Soft bell',volume:32,seconds:4,repeat:false}});
-  const sample=e.window.__itsCallAssist.inspect();assert.equal(sample.dispositionSeconds,15);assert.equal(sample.callSeconds,240);assert.equal(sample.coverSeconds,360);
-  assert.equal(e.ui().querySelector('#its-desktop-notifications').checked,false);
-  const critical=e.ui().querySelectorAll('fieldset').find(n=>n.querySelector('legend').textContent==='Alert: Change Status To Available');
-  assert.equal(critical.querySelector('select').value,'Soft bell');
-  assert(critical.querySelector('.sound-description').textContent.includes('at least 360 seconds'));
-  const input=e.ui().querySelector('#its-call-seconds');input.value='7';input.onchange();
-  const saved=JSON.parse(e.storage.get('service-desk-8x8-preferences-v5'));
-  assert.equal(saved.callSeconds,7);assert.equal(saved.lunchSeconds,2700);assert.equal(saved.desktopNotifications,false);
-  const caller=e.ui().querySelectorAll('fieldset').find(n=>n.querySelector('legend').textContent==='Info: Caller Waiting');
-  assert(caller.querySelector('.sound-description').textContent.includes('more than 7 seconds'));
 });
 check('Desktop notifications can be disabled without silencing alerts',()=>{
   const e=environment({g1:['Me'],lunchSeconds:1800,desktopNotifications:false});e.setMe('Wrap Up',11);
@@ -325,20 +334,12 @@ check('Hidden data conceals all menu contents, then restores the open menu',()=>
   assert.equal(e.ui().querySelector('.unavailable').textContent,'Unable to Assist: Open 8x8 agent queue information.');
   e.queues[0].row.hidden=false;e.scan();assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'));
 });
-check('Custom group delays preserve strict caller and inclusive cover boundaries',()=>{
-  const context={normal:s=>s.toLowerCase().trim(),QUEUES:['a','b','c']};vm.createContext(context);
-  const start=original.indexOf('  function groupRules('),end=original.indexOf('  function dispositionStatus(',start);
-  vm.runInContext(original.slice(start,end),context);
-  const q=[{waiting:1},{waiting:0},{waiting:0}],me={status:'Work Offline'},delay={callSeconds:240,coverSeconds:360};
-  const run=s=>context.groupRules([{name:'Agent',status:'Busy',seconds:s}],q,[{status:'Available'}],me,delay);
-  assert.equal(run(240).call.length,0);assert.equal(run(241).call.length,1);assert.equal(run(359).critical,false);assert.equal(run(360).critical,true);
-});
 
-check('Release reports version 1.0.2 and bottom controls are only Pause / Settings',()=>{
-  const e=environment();assert.equal(e.window.__itsCallAssist.version,'1.0.2');
-  assert.deepEqual(e.ui().querySelector('.controls').querySelectorAll('button').map(b=>b.textContent),['Pause','Settings']);
+check('Release reports version 1.0.3 and bottom controls are only Mute / Settings',()=>{
+  const e=environment();assert.equal(e.window.__itsCallAssist.version,'1.0.3');
+  assert.deepEqual(e.ui().querySelector('.controls').querySelectorAll('button').map(b=>b.textContent),['Mute','Settings']);
   assert.deepEqual(e.ui().querySelector('.window-actions').querySelectorAll('button').map(b=>b.textContent),['-','x']);
-  assert(e.ui().querySelector('.version').textContent.includes('1.0.2'));
+  assert(e.ui().querySelector('.version').textContent.includes('1.0.3'));
 });
 check('Minimise and restore use the top button; close removes the assistant',()=>{
   const e=environment();e.button('-').onclick();assert(e.ui().querySelector('.monitor-grid').parentElement.classList.contains('hidden'));
@@ -347,7 +348,7 @@ check('Minimise and restore use the top button; close removes the assistant',()=
 });
 check('G2 explanation appears below Agents and the two finite-sound stop lines are gone',()=>{
   const e=environment();assert(e.ui().querySelector('.agent-help').textContent.includes('Group 2 (G2)'));
-  for(const label of ['Info: G1 On Break','Info: Caller Waiting']){
+  for(const label of ['Info: G1 On Break']){
     const card=e.ui().querySelectorAll('fieldset').find(n=>n.querySelector('legend').textContent===label);
     assert(!card.querySelector('.sound-description').textContent.includes('Stops when'));
     assert(card.querySelector('.sound-description').textContent.includes('G2'));
@@ -359,40 +360,6 @@ check('Each observed transition to Busy counts once, regardless of G1 selection'
   e.setMe('Busy',0);assert.equal(e.window.__itsCallAssist.statistics().total,1);
   e.setMe('Busy',3);e.setMe('Busy',30);assert.equal(e.window.__itsCallAssist.statistics().total,1);
   e.setMe('Wrap Up',1);e.setMe('Available',1);e.setMe('Busy',0);assert.equal(e.window.__itsCallAssist.statistics().total,2);
-});
-check('Pausing freezes Last updated, agent values, last-call time, queues and alert sample',()=>{
-  const e=environment();e.setMe('Available',5);
-  e.button('Pause').onclick();
-  const status=e.ui().querySelector('.monitoring-summary').textContent;
-  const table=e.ui().querySelector('tbody').textContent;
-  const last=e.ui().querySelector('.statistics').querySelectorAll('.stat-value')[2].textContent;
-  const sample=JSON.stringify(e.window.__itsCallAssist.inspect());
-  const updated=e.ui().querySelector('.last-updated').textContent;
-  assert(status.includes('Paused'));
-  e.waiting(4);e.other('Alex Agent','Busy',500);e.setMe('Busy',0);e.setMe('Busy',4);
-  assert.equal(e.ui().querySelector('.monitoring-summary').textContent,status);
-  assert.equal(e.ui().querySelector('tbody').textContent,table);
-  assert.equal(e.ui().querySelector('.statistics').querySelectorAll('.stat-value')[2].textContent,last);
-  assert.equal(JSON.stringify(e.window.__itsCallAssist.inspect()),sample);
-  assert.equal(e.ui().querySelector('.last-updated').textContent,updated);
-  assert.equal(e.window.__itsCallAssist.statistics().total,1);
-  assert.equal(e.ui().querySelector('.stat-total').textContent,'1');
-  assert.equal(e.notifications.length,0);assert.equal(e.debug().playing.length,0);
-});
-check('Resume catches up to current page values and delayed statistics without recounting Busy',()=>{
-  const e=environment();e.setMe('Available',5);e.button('Pause').onclick();e.setMe('Busy',20);e.waiting(3);
-  e.button('Resume').onclick();assert.equal(e.window.__itsCallAssist.inspect().me.timer,'20s');
-  assert.equal(e.ui().querySelector('.queue-total').textContent,'3');
-  assert.equal(e.ui().querySelector('.statistics').querySelectorAll('.stat-value')[1].textContent,'1');
-  assert.equal(e.window.__itsCallAssist.statistics().total,1);
-});
-check('Pause also stops an active alarm and blocks previews',()=>{
-  const e=environment();e.setMe('Wrap Up',11);assert(e.debug().playing.includes('disposition'));
-  e.button('Pause').onclick();assert.equal(e.debug().playing.length,0);
-  e.button('Settings').onclick();e.button('Open Sound Settings').onclick();
-  const preview=e.ui().querySelectorAll('button').find(b=>b.textContent==='Preview');assert(preview.disabled);
-  preview.onclick();assert.equal(e.debug().playing.length,0);
-  e.setMe('Work Offline',1);assert.equal(e.debug().playing.length,0);
 });
 check('Calls keep counting while queues are hidden and when the status timer cannot be read',()=>{
   const e=environment();e.queues[0].row.hidden=true;e.meTimer.textContent='timer unavailable';
@@ -425,12 +392,6 @@ check('Daily rollover uses Brisbane midnight and does not count an ongoing call 
   assert.equal(e.window.__itsCallAssist.statistics().total,0);
   e.setMe('Available',0);e.setMe('Busy',0);assert.equal(e.window.__itsCallAssist.statistics().total,1);
 });
-check('Calls last hour expire only in the running display',()=>{
-  const e=environment();e.setMe('Busy',0);e.setMe('Available',0);
-  const hour=e.ui().querySelector('.statistics').querySelectorAll('.stat-value')[1];assert.equal(hour.textContent,'1');
-  e.button('Pause').onclick();e.advance(3601000);assert.equal(hour.textContent,'1');
-  e.button('Resume').onclick();assert.equal(hour.textContent,'0');assert.equal(e.window.__itsCallAssist.statistics().total,1);
-});
 check('Missing queue configuration opens Settings and can be configured locally',()=>{
   const e=environment();e.storage.delete('service-desk-8x8-inbound-queues-v1');e.rerun();
   assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'));
@@ -441,24 +402,6 @@ check('Missing queue configuration opens Settings and can be configured locally'
   assert.equal(e.window.__itsCallAssist.inspect().unavailable,false);
 });
 
-check('Minute preferences convert once to seconds without changing durations or G1',()=>{
-  const e=environment({g1:['Me','Alex Agent'],lunchMinutes:45,callMinutes:4,coverMinutes:6,dispositionSeconds:15});
-  const sample=e.window.__itsCallAssist.inspect();
-  assert.equal(sample.lunchSeconds,2700);assert.equal(sample.callSeconds,240);assert.equal(sample.coverSeconds,360);
-  let saved=JSON.parse(e.storage.get('service-desk-8x8-preferences-v5'));
-  assert.equal(saved.lunchMinutes,undefined);assert.equal(saved.callMinutes,undefined);assert.deepEqual(saved.g1,['Me','Alex Agent']);
-  e.rerun();saved=JSON.parse(e.storage.get('service-desk-8x8-preferences-v5'));
-  assert.equal(saved.lunchSeconds,2700);assert.equal(saved.callSeconds,240);assert.equal(saved.coverSeconds,360);
-  assert(!e.ui().querySelector('.assistant-settings').textContent.includes('minutes'));
-  assert(!e.ui().querySelector('.sound-settings').textContent.includes('minutes'));
-});
-check('Exact lunch seconds and slider stay in sync, including short test allowances',()=>{
-  const e=environment();const exact=e.ui().querySelector('#its-my-lunch-exact-seconds');
-  exact.value='7';exact.onchange();assert.equal(e.ui().querySelector('#its-my-lunch-seconds').value,'7');
-  e.lunch(23);assert.equal(exact.value,'23');
-  e.setMe('On Break',23);assert.equal(e.debug().activeReminder,null);
-  e.setMe('On Break',24);assert.equal(e.debug().activeReminder.kind,'lunchOverdue');
-});
 check('Captured break page stays visible with only its status bar and no queue information',()=>{
   const e=environment();e.showBreak(421);
   assert.equal(e.window.__itsCallAssist.inspect().me.seconds,421);
@@ -486,16 +429,6 @@ check('Break timer supports hours and keeps working without saved queue names',(
   assert.equal(e.window.__itsCallAssist.inspect().view,'break');
   e.breakTime(7200);assert.equal(e.window.__itsCallAssist.inspect().me.seconds,7200);assert.equal(e.debug().activeReminder,null);
   e.breakTime(7201);assert.equal(e.debug().activeReminder.kind,'lunchOverdue');
-});
-check('Compact break data and its animation freeze while paused; resume catches up',()=>{
-  const e=environment({g1:['Me'],lunchSeconds:60});e.showBreak(50);e.breakTime(51);e.button('Pause').onclick();
-  const compact=e.ui().querySelector('.compact-view'),track=e.ui().querySelector('.progress-fill');
-  const text=compact.textContent,width=track.style.width,sample=JSON.stringify(e.window.__itsCallAssist.inspect());
-  assert(e.ui().querySelector('.panel').classList.contains('paused'));
-  e.breakTime(61);e.advance(6000);assert.equal(compact.textContent,text);assert.equal(track.style.width,width);
-  assert.equal(JSON.stringify(e.window.__itsCallAssist.inspect()),sample);assert.equal(e.debug().playing.length,0);
-  e.button('Resume').onclick();assert.equal(e.ui().querySelector('.compact-elapsed').textContent,'61s elapsed');
-  e.breakTime(62);assert.equal(e.debug().activeReminder.kind,'lunchOverdue');
 });
 check('G2 gets the compact pages without personal reminder sounds or G1 queue checks',()=>{
   const e=environment({g1:['Alex Agent'],lunchSeconds:30});e.showBreak(31);e.breakTime(32);
@@ -557,6 +490,150 @@ check('Monitoring combines inbound callers into one total and timestamps the who
   assert(e.ui().querySelector('.last-updated').textContent.startsWith('Last updated'));assert(!e.ui().querySelector('time').textContent.includes('—'));
 });
 
+check('Signed-out agents and their G1 selections are removed; logging in creates a fresh row',()=>{
+  const e=environment({g1:['Alex Agent'],lunchMinutes:30});
+  const original=e.checkbox('Alex Agent');e.logout('Alex Agent');e.scan();
+  assert.equal(e.checkbox('Alex Agent'),null);assert(!e.window.__itsCallAssist.inspect().selected.includes('Alex Agent'));
+  assert(!JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).g1.includes('Alex Agent'));
+  assert.equal(e.window.__itsCallAssist.inspect().unavailable,false);
+  e.login('Alex Agent','Busy',3);e.scan();const fresh=e.checkbox('Alex Agent');assert(fresh);assert.notEqual(fresh,original);assert.equal(fresh.checked,false);
+});
+check('Removing the last online agents leaves only Me and still allows selecting Me',()=>{
+  const e=environment({g1:['Alex Agent','Casey Agent']});e.logout('Alex Agent');e.logout('Casey Agent');e.scan();
+  assert.equal(e.ui().querySelector('tbody').querySelectorAll('tr').length,1);
+  assert.equal(e.window.__itsCallAssist.inspect().unavailable,false);e.tick('Me',true);
+  assert.equal(e.window.__itsCallAssist.inspect().mode,'covering');
+});
+check('A saved selection for an already signed-out agent cannot block the main assistant',()=>{
+  const e=environment({g1:['Former Agent']});assert.equal(e.checkbox('Former Agent'),null);
+  assert.equal(e.window.__itsCallAssist.inspect().unavailable,false);
+  assert.deepEqual(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).g1,[]);
+});
+check('Hidden roster, break and disposition pages do not erase saved G1 members',()=>{
+  const e=environment({g1:['Me','Alex Agent']});e.group.hidden=true;e.scan();
+  assert(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).g1.includes('Alex Agent'));
+  e.group.hidden=false;e.scan();e.showBreak(30);e.showWrapUp(111);e.restoreMain();
+  assert(e.checkbox('Alex Agent').checked);assert(e.window.__itsCallAssist.inspect().selected.includes('Alex Agent'));
+});
+check('New agents appear immediately and Me stays first with the same row styling',()=>{
+  const e=environment();e.login('AAA Agent');e.scan();
+  const rows=e.ui().querySelector('tbody').querySelectorAll('tr');assert.equal(rows[0].querySelector('td').textContent,'Me');
+  assert(e.checkbox('AAA Agent'));assert.equal(rows[0].className,rows[1].className);
+  assert.equal(e.ui().querySelector('.version').textContent,'Author: Joshua Lavagna-Slater | Version 1.0.3');
+});
+check('Version 1.0.2 settings migrate to minute lunches and one caller waiting delay',()=>{
+  const e=environment({g1:['Me'],lunchSeconds:2700,coverSeconds:360,callSeconds:240,dispositionSeconds:10},{},{rawPreferences:true});
+  const sample=e.window.__itsCallAssist.inspect();assert.equal(sample.lunchMinutes,45);assert.equal(sample.waitingAlertSeconds,360);assert.equal(sample.dispositionSeconds,20);
+  const saved=JSON.parse(e.storage.get('service-desk-8x8-preferences-v5'));assert.equal(saved.lunchMinutes,45);
+  assert.equal(saved.lunchSeconds,undefined);assert.equal(saved.callSeconds,undefined);assert.equal(saved.coverSeconds,undefined);assert.equal(saved.settingsVersion,3);
+  e.rerun();assert.equal(e.window.__itsCallAssist.inspect().lunchMinutes,45);assert.equal(e.window.__itsCallAssist.inspect().waitingAlertSeconds,360);
+});
+check('Disposition defaults to 20 seconds and a newly chosen 10-second value stays unchanged',()=>{
+  const e=environment({g1:['Me']},{},{rawPreferences:true});assert.equal(e.window.__itsCallAssist.inspect().dispositionSeconds,20);
+  e.setMe('Wrap Up',20);assert.equal(e.debug().activeReminder,null);e.setMe('Wrap Up',21);assert.equal(e.debug().activeReminder.kind,'disposition');
+  const delay=e.ui().querySelector('#its-disposition-seconds');delay.value='10';delay.onchange();e.rerun();
+  assert.equal(e.window.__itsCallAssist.inspect().dispositionSeconds,10);
+});
+check('Minute lunch input and slider agree, while delay settings and sound choices persist',()=>{
+  const e=environment({g1:['Me'],lunchMinutes:45,dispositionSeconds:15,waitingAlertSeconds:360,desktopNotifications:false},
+    {critical:{preset:'Soft bell',volume:32,seconds:4,repeat:false}});
+  const exact=e.ui().querySelector('#its-my-lunch-exact-minutes');exact.value='1';exact.onchange();
+  assert.equal(e.ui().querySelector('#its-my-lunch-minutes').value,'1');e.lunch(20);assert.equal(exact.value,'20');
+  e.setMe('On Break',1200);assert.equal(e.debug().activeReminder,null);e.setMe('On Break',1201);assert.equal(e.debug().activeReminder.kind,'lunchOverdue');
+  const delay=e.ui().querySelector('#its-waiting-alert-seconds');delay.value='7';delay.onchange();
+  const saved=JSON.parse(e.storage.get('service-desk-8x8-preferences-v5'));assert.equal(saved.waitingAlertSeconds,7);assert.equal(saved.lunchMinutes,20);assert.equal(saved.dispositionSeconds,15);
+  const card=e.ui().querySelectorAll('fieldset').find(n=>n.querySelector('legend').textContent==='Alert: Change Status To Available');
+  assert.equal(card.querySelector('select').value,'Soft bell');assert(card.querySelector('.sound-description').textContent.includes('at least 7 seconds'));
+  assert(!e.ui().querySelector('#its-call-seconds'));assert(!e.ui().querySelector('#its-cover-seconds'));
+  assert(!e.ui().querySelectorAll('fieldset').some(n=>n.querySelector('legend').textContent==='Info: Caller Waiting'));
+});
+check('One cover alert uses an inclusive caller wait boundary and accepts mixed unavailable G1 states',()=>{
+  const context={normal:s=>s.toLowerCase().trim(),QUEUES:['a','b','c']};vm.createContext(context);
+  const start=original.indexOf('  function groupRules('),end=original.indexOf('  function dispositionStatus(',start);vm.runInContext(original.slice(start,end),context);
+  const agents=[{name:'A',status:'Busy',seconds:1},{name:'B',status:'On Break',seconds:300},{name:'C',status:'Working Offline',seconds:2}];
+  const queues=[{waiting:1,waitSeconds:59},{waiting:0,waitSeconds:0},{waiting:0,waitSeconds:0}],me={status:'Work Offline'};
+  assert.equal(context.groupRules(agents,queues,me,60).critical,false);queues[0].waitSeconds=60;
+  assert.equal(context.groupRules(agents,queues,me,60).critical,true);
+  agents[2].status='Available';assert.equal(context.groupRules(agents,queues,me,60).critical,false);
+  agents[2].status='Wrap Up';assert.equal(context.groupRules(agents,queues,me,60).critical,true);
+  me.status='Available';assert.equal(context.groupRules(agents,queues,me,60).critical,false);
+  me.status='Work Offline';assert.equal(context.groupRules([],queues,me,60).critical,false);
+  queues[0].waitSeconds=null;assert.equal(context.groupRules(agents,queues,me,60).critical,false);
+});
+function coveragePulse(e,age,tick=1) {
+  e.other('Alex Agent','Busy',tick);e.waiting(1,age);e.setMe('Work Offline',tick);
+}
+check('Live coverage repeats only after a caller reaches the delay, regardless of short Busy time',()=>{
+  const e=environment({g1:['Alex Agent'],waitingAlertSeconds:60});coveragePulse(e,58,1);coveragePulse(e,59,2);
+  assert.equal(e.notifications.length,0);assert.equal(e.debug().playing.length,0);
+  coveragePulse(e,60,3);assert.equal(e.debug().activeReminder.kind,'critical');assert(e.debug().playing.includes('critical'));
+  coveragePulse(e,61,4);assert.equal(e.notifications.length,1);
+  e.other('Alex Agent','Available',0);e.setMe('Work Offline',5);assert.equal(e.debug().activeReminder,null);
+  coveragePulse(e,62,6);coveragePulse(e,63,7);assert.equal(e.debug().activeReminder.kind,'critical');
+  e.setMe('Available',0);assert.equal(e.debug().activeReminder,null);
+});
+check('Nobody being Available is not enough without a caller waiting for the required time',()=>{
+  const e=environment({g1:['Alex Agent'],waitingAlertSeconds:60});e.other('Alex Agent','Working Offline',1);e.setMe('Work Offline',1);
+  e.other('Alex Agent','Working Offline',2);e.setMe('Work Offline',2);
+  assert.equal(e.debug().activeReminder,null);assert.equal(e.notifications.length,0);
+});
+check('Ending or replacing the oldest waiting call stops the coverage sound',()=>{
+  const e=environment({g1:['Alex Agent'],waitingAlertSeconds:60});coveragePulse(e,60,1);coveragePulse(e,61,2);
+  assert.equal(e.debug().activeReminder.kind,'critical');coveragePulse(e,2,3);assert.equal(e.debug().activeReminder,null);
+  coveragePulse(e,60,4);assert.equal(e.debug().activeReminder.kind,'critical');e.waiting(0);e.setMe('Work Offline',5);
+  assert.equal(e.debug().activeReminder,null);
+});
+check('Unavailable longest-wait data does not produce a fabricated caller delay',()=>{
+  const e=environment({g1:['Alex Agent'],waitingAlertSeconds:60});coveragePulse(e,60,1);coveragePulse(e,61,2);
+  e.queues[3].wait.textContent='unreadable';e.queues[3].wait.setAttribute('title','unknown Longest waiting time');e.setMe('Work Offline',3);
+  assert.equal(e.debug().activeReminder,null);assert.equal(e.window.__itsCallAssist.inspect().unavailable,false);
+  assert(e.ui().querySelector('.monitoring-state').textContent.includes('caller time'));
+});
+check('Outbound waits and unselected G2 agents cannot control the coverage alert',()=>{
+  const e=environment({g1:['Alex Agent'],waitingAlertSeconds:60});e.waiting(10,900,2);e.other('Alex Agent','Busy',1);e.setMe('Work Offline',1);
+  e.other('Alex Agent','Busy',2);e.setMe('Work Offline',2);assert.equal(e.debug().activeReminder,null);
+  e.queues[2].row.hidden=true;coveragePulse(e,60,3);coveragePulse(e,61,4);
+  assert.equal(e.debug().activeReminder.kind,'critical');assert.equal(e.window.__itsCallAssist.inspect().queues.length,3);
+  assert.equal(e.ui().querySelector('.queue-total').textContent,'1');
+});
+check('Coverage queue alarms are suppressed when Me is in G1',()=>{
+  const e=environment({g1:['Me','Alex Agent'],waitingAlertSeconds:1});e.other('Alex Agent','Busy',1);e.waiting(3,300);e.setMe('Busy',1);
+  e.other('Alex Agent','Busy',2);e.waiting(3,301);e.setMe('Busy',2);assert.equal(e.notifications.length,0);assert.equal(e.debug().activeReminder,null);
+});
+check('Mute stops all tones and previews while updates, counters and notifications continue',()=>{
+  const e=environment();e.setMe('Wrap Up',11);assert(e.debug().playing.includes('disposition'));e.button('Mute').onclick();
+  assert(e.debug().muted);assert.equal(e.debug().playing.length,0);
+  assert.equal(e.debug().activeReminder.kind,'disposition');assert(e.ui().querySelectorAll('button').filter(b=>b.textContent==='Preview').every(b=>b.disabled));
+  e.setMe('Work Offline',1);assert.equal(e.debug().activeReminder.kind,'critical');assert(e.notifications.at(-1).options.silent);
+  const stamp=e.ui().querySelector('.last-updated').textContent;e.setMe('Busy',0);e.waiting(4);e.other('Alex Agent','Busy',400);e.setMe('Busy',4);
+  assert.equal(e.window.__itsCallAssist.statistics().total,1);assert.equal(e.ui().querySelector('.queue-total').textContent,'4');
+  assert.notEqual(e.ui().querySelector('.last-updated').textContent,stamp);assert.equal(e.window.__itsCallAssist.inspect().me.timer,'4s');
+  assert.equal(e.debug().playing.length,0);
+});
+check('Unmute resumes the current alert without duplicating its notification and mute persists on rerun',()=>{
+  const e=environment();e.setMe('Wrap Up',11);e.button('Mute').onclick();const count=e.notifications.length;
+  e.button('Unmute').onclick();assert(e.debug().playing.includes('disposition'));assert.equal(e.notifications.length,count);
+  e.button('Mute').onclick();e.rerun();assert(e.debug().muted);assert.equal(e.debug().playing.length,0);
+  assert.deepEqual(e.ui().querySelector('.controls').querySelectorAll('button').map(b=>b.textContent),['Unmute','Settings']);
+});
+check('Compact break time and progress continue while muted and can be unmuted from the bar',()=>{
+  const e=environment({g1:['Me'],lunchMinutes:1});e.showBreak(20);e.ui().querySelector('.compact-actions').querySelector('button').onclick();
+  const width=e.ui().querySelector('.progress-fill').style.width;e.breakTime(70);
+  assert.equal(e.ui().querySelector('.compact-elapsed').textContent,'70s elapsed');assert.notEqual(e.ui().querySelector('.progress-fill').style.width,width);
+  assert.equal(e.debug().activeReminder.kind,'lunchOverdue');assert.equal(e.debug().playing.length,0);assert(e.notifications.at(-1).options.silent);
+  e.ui().querySelector('.compact-actions').querySelector('button').onclick();assert(e.debug().playing.includes('lunchOverdue'));
+});
+check('Last-hour statistics expire while muted, rather than freezing',()=>{
+  const e=environment();e.setMe('Busy',0);e.setMe('Available',0);e.button('Mute').onclick();e.advance(3601000);
+  assert.equal(e.ui().querySelector('.statistics').querySelectorAll('.stat-value')[1].textContent,'0');
+  assert.equal(e.window.__itsCallAssist.statistics().total,1);
+});
+check('Unmute also resumes a customised repeating break information sound without another popup',()=>{
+  const e=environment({g1:['Alex Agent']},{lunch:{repeat:true}});e.other('Alex Agent','On Break',1);e.setMe('Available',1);
+  assert(e.debug().playing.includes('lunch'));const count=e.notifications.length;e.button('Mute').onclick();e.button('Unmute').onclick();
+  assert(e.debug().playing.includes('lunch'));assert.equal(e.notifications.length,count);
+});
+
 const asyncChecks=[];
 function asyncCheck(name,fn) {asyncChecks.push({name,fn});}
 asyncCheck('Desktop notification test sends a popup without an alert sound or false delivery claim',async()=>{
@@ -565,25 +642,68 @@ asyncCheck('Desktop notification test sends a popup without an alert sound or fa
   assert.equal(e.debug().playing.length,0);assert.equal(e.debug().activeReminder,null);
   assert(e.ui().querySelector('.notification-feedback').textContent.includes('If no popup appeared'));
 });
-asyncCheck('Notification test requests permission and reports denied, unsupported and failed cases',async()=>{
-  for(const result of ['granted','denied']) {
-    const e=environment();let requests=0;e.window.Notification.permission='default';
-    e.window.Notification.requestPermission=async()=>{requests++;e.window.Notification.permission=result;return result;};
-    await e.button('Test desktop notification').onclick();assert.equal(requests,1);assert.equal(e.notifications.length,result==='granted'?1:0);
-    if(result==='denied')assert(e.ui().querySelector('.notification-feedback').textContent.includes('blocked'));
+asyncCheck('Notification permissions require the documented manual Edge allow-list steps',async()=>{
+  const e=environment();const instructions=e.ui().querySelector('.notification-instructions').textContent;
+  for(const text of ['Privacy, search and services','All permissions','Allowed to send notifications','Add site','https://vcc-au2.8x8.com'])assert(instructions.includes(text));
+  let requests=0;e.window.Notification.requestPermission=async()=>{requests++;return 'granted';};
+  for(const permission of ['default','denied']) {
+    e.window.Notification.permission=permission;await e.button('Test desktop notification').onclick();
+    assert.equal(e.notifications.length,0);assert(e.ui().querySelector('.notification-feedback').textContent.includes('Edge settings'));
   }
+  assert.equal(requests,0);
+});
+asyncCheck('Muted notification tests still work quietly and disabled, unsupported or failed tests report correctly',async()=>{
+  const muted=environment({g1:['Me'],muted:true});await muted.button('Test desktop notification').onclick();
+  assert.equal(muted.notifications.length,1);assert(muted.notifications[0].options.silent);assert.equal(muted.debug().playing.length,0);
+  const off=environment({g1:['Me'],desktopNotifications:false});assert(off.button('Test desktop notification').disabled);
+  await off.button('Test desktop notification').onclick();assert.equal(off.notifications.length,0);
   const missing=environment();delete missing.window.Notification;await missing.button('Test desktop notification').onclick();
   assert(missing.ui().querySelector('.notification-feedback').textContent.includes('not supported'));
-  const failed=environment();failed.window.Notification=class {static permission='granted';constructor(){throw Error('not supported');}};
+  const failed=environment();failed.window.Notification=class{static permission='granted';constructor(){throw Error('Blocked');}};
   await failed.button('Test desktop notification').onclick();assert(failed.ui().querySelector('.notification-feedback').textContent.includes('could not be sent'));
 });
-asyncCheck('Notification tests respect disabled alerts, pause and a permission prompt completed after pause',async()=>{
-  const disabled=environment({g1:['Me'],desktopNotifications:false});assert(disabled.button('Test desktop notification').disabled);
-  await disabled.button('Test desktop notification').onclick();assert.equal(disabled.notifications.length,0);
-  const e=environment();e.window.Notification.permission='default';let complete;
-  e.window.Notification.requestPermission=()=>new Promise(resolve=>{complete=resolve;});
-  const pending=e.button('Test desktop notification').onclick();e.button('Pause').onclick();complete('granted');await pending;
-  assert.equal(e.notifications.length,0);assert(e.button('Test desktop notification').disabled);
+asyncCheck('Audio dropdowns name system defaults, input stays disabled, and selecting output affects only assistant audio',async()=>{
+  const e=environment();await e.button('Refresh devices').onclick();
+  const input=e.ui().querySelector('[aria-label="Assistant input device"]'),output=e.ui().querySelector('[aria-label="Assistant output device"]');
+  assert(input.disabled);assert.equal(input.querySelector('option').textContent,'Desk Microphone (Default)');
+  assert.equal(output.querySelector('option').textContent,'Desk Speakers (Default)');
+  const phoneAudio=new e.window.AudioContext();output.value='headset';await output.onchange();
+  assert.equal(e.debug().audioOutput,'headset');assert.equal(phoneAudio.sinkId,'');assert.equal(phoneAudio.state,'running');
+  assert.equal(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).outputDeviceId,'headset');
+  assert.equal(e.microphoneRequests(),0);output.value='';await output.onchange();assert.equal(e.debug().audioOutput,'');
+});
+asyncCheck('A saved assistant output restores on rerun and a removed device falls back to Default',async()=>{
+  const e=environment();await e.button('Refresh devices').onclick();const output=e.ui().querySelector('[aria-label="Assistant output device"]');
+  output.value='headset';await output.onchange();e.rerun();await e.button('Refresh devices').onclick();assert.equal(e.debug().audioOutput,'headset');
+  e.devices.splice(e.devices.findIndex(d=>d.deviceId==='headset'),1);e.deviceChanged();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(e.debug().audioOutput,'');assert.equal(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).outputDeviceId,'');
+  e.button('x').onclick();assert.equal(e.deviceListeners.size,0);
+});
+asyncCheck('Permission failure keeps the previous output and unsupported browsers retain a usable Default',async()=>{
+  const e=environment({}, {}, {rejectOutput:'headset'});await e.button('Refresh devices').onclick();
+  const output=e.ui().querySelector('[aria-label="Assistant output device"]');output.value='headset';await output.onchange();
+  assert.equal(e.debug().audioOutput,'');assert.equal(output.value,'');
+  const old=environment({g1:['Me'],outputDeviceId:'headset'}, {}, {noOutputSelection:true});await new Promise(resolve=>setImmediate(resolve));
+  assert(old.ui().querySelector('[aria-label="Assistant output device"]').disabled);assert.equal(old.debug().audioOutput,'');
+  old.setMe('Wrap Up',11);assert(old.debug().playing.includes('disposition'));assert.equal(old.microphoneRequests(),0);
+});
+asyncCheck('Browser output picker and unavailable device listing handle permissions without microphone capture',async()=>{
+  const e=environment({}, {}, {outputPicker:true});await e.button('Choose output device').onclick();assert.equal(e.debug().audioOutput,'headset');assert.equal(e.microphoneRequests(),0);
+  const failed=environment({}, {}, {enumerationFails:true});await failed.button('Refresh devices').onclick();
+  assert.equal(failed.debug().audioOutput,'');assert(failed.ui().textContent.includes('Could not list audio devices'));
+});
+asyncCheck('Output routing works while muted without starting a tone',async()=>{
+  const e=environment({g1:['Me'],muted:true});await e.button('Refresh devices').onclick();const output=e.ui().querySelector('[aria-label="Assistant output device"]');
+  output.value='headset';await output.onchange();e.setMe('Wrap Up',11);assert.equal(e.debug().playing.length,0);
+  e.button('Unmute').onclick();assert(e.debug().playing.includes('disposition'));assert.equal(e.debug().audioOutput,'headset');
+});
+asyncCheck('Closing during an output switch prevents a late preference write or sound restart',async()=>{
+  let finish;const pending=new Promise(resolve=>{finish=resolve;});
+  const e=environment({}, {}, {beforeSink:()=>pending});await e.button('Refresh devices').onclick();
+  const output=e.ui().querySelector('[aria-label="Assistant output device"]');output.value='headset';const changing=output.onchange();
+  await Promise.resolve();e.button('x').onclick();finish();await changing;
+  assert.equal(e.window.__itsCallAssist,undefined);assert.equal(e.jobs.size,0);assert.equal(e.deviceListeners.size,0);
+  assert.equal(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).outputDeviceId,'');
 });
 (async()=>{
   for(const {name,fn}of asyncChecks) {await fn();passed++;console.log('PASS:',name);}

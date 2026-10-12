@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.3 — 2026-10-12
+
+- Remove signed-out agents from the table and clear their G1 selections. Add returning and newly signed-in agents as fresh rows. Preserve selections while the whole roster is hidden by break/disposition pages.
+- Keep Me first without different row shading. Add Author: Joshua Lavagna-Slater beside the version under the title.
+- Restore Lunch Break Length to whole minutes, with a 1–120 minute slider and exact field. Migrate existing seconds values.
+- Default disposition reminders to 20 seconds. Upgrade the old 10-second default once while preserving other custom values.
+- Remove the informational Caller Waiting sound and its separate Busy-time delay setting.
+- Rename Extra Phone Cover Delay to Caller Waiting Alert Delay. Use native Longest waiting time: the G2 phone-cover alert requires an aged waiting caller and every signed-in G1 member to be unavailable. Keep the existing G1 personal reminders.
+- Replace Pause with Mute/Unmute in the main controls and compact bar. Keep monitoring, timers, statistics and notifications active while muted; silence tones, previews and new desktop notification sounds. Resume current repeating sounds without another popup when unmuted.
+- Add the requested manual Edge notification allow-list instructions. Keep the test button and remove automatic permission prompts.
+- Add assistant-only output device selection using supported browser APIs, labelled system defaults, device refresh and output picker where available. Restore saved outputs, retain the previous output on permission failures, and fall back to Default when a selected device is removed.
+- Display Input Device as a disabled default because the assistant does not use a microphone. Do not touch 8x8 call devices or request microphone capture.
+- Retain prior release snapshots unchanged and expand simulated behavioural checks for the new rules and audio routing.
+
 ## 1.0.2 — 2026-10-12
 
 - Use seconds for all timing settings and sound explanations. Convert saved minute values once, preserving their durations.
