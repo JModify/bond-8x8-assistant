@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.5 — 2026-10-13
+
+- Make Lunch Break Finished and Complete Disposition work in G1 and G2, including when no G1 agents or queue names are configured. Update their sound explanations and timing-setting help. Keep the configured strict greater-than boundaries and notification options.
+- Fix G1 selections being erased when 8x8 filters, virtualises or rebuilds agent rows. Separate saved membership from currently readable agents; only manual checkbox edits may remove a saved choice. Restore the previous role when a row returns or the snippet restarts.
+- Recognise partial Virtuoso lists through padding and row indexes. Suppress queue-cover decisions when a selected agent is unreadable; allow a complete roster one polling interval to settle before removing absent rows. Keep absent members out of live coverage without deleting their saved preferences.
+- Preserve active personal reminders and their timers when G1 checkboxes change, without sending duplicate desktop popups.
+- Expand setup instructions to include the status-adjacent queue button, the three configured inbound names, and Groups → Filter with the service desk group and every User status selected.
+- Apply JavaScript Standard Style to current source and tests. Add a pinned development linter, lockfile and npm run lint; include style validation in npm run check. Keep all older release snapshots unchanged.
+- Improve descriptive names, small rule/freshness/rendering helpers, readable CSS and explanatory comments for complex parsing, timing, migration, audio and lifecycle operations.
+- Expand simulated behavioural checks to 97 scenarios, including group-independent reminders and persistent membership through navigation, filtering, scrolling, row replacement and reruns.
+
 ## 1.0.4 — 2026-10-12
 
 - Allow G1 users to use Other Work and Working Offline without an immediate availability alarm. The G1 phone-cover alert now requires Me to be Working Offline, no other signed-in G1 member Available, and a caller waiting strictly longer than Caller Waiting Alert Delay. It also works when Me is the only signed-in G1 member. Retain the G2 queue rule and separate lunch/disposition reminders.

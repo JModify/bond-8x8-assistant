@@ -2,7 +2,7 @@
 
 Assistant for the Bond IT Service Desk 8x8 customer call center interface.
 
-Author: **Joshua Lavagna-Slater** | Current version: **1.0.4**.
+Author: **Joshua Lavagna-Slater** | Current version: **1.0.5**.
 
 The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
@@ -11,9 +11,13 @@ The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistan
 1. Open your existing logged-in `vcc-au2.8x8.com` page in Edge.
 2. Open Developer Tools → Sources → Snippets.
 3. Paste the complete script into a saved snippet and press Ctrl + Enter.
-4. Configure your three inbound queue names in Settings if they have not already been supplied by your configured local snippet. Queue names stay in this browser and are not part of the public source.
-5. Select the agents covering phones in G1. Tick **Me** when you are covering phones.
-6. Click Settings to adjust reminder timing, lunch length and desktop notifications. Open Sound Settings from that menu to customise audio.
+4. Open 8x8's queue information using the button immediately to the right of your status at the top of the page, next to the bell icon.
+5. In **Assistant → Settings → Inbound Queue Names**, enter or confirm the three inbound names listed at the top of your configured download. A configured snippet supplies them automatically when no valid names are already saved. The public script requires you to supply the correct names for your service desk.
+6. In 8x8, open **Groups → Filter icon**, select your service desk group, then tick **every status under User status**. This allows the assistant to see agents in all states, rather than treating a filtered list as the whole phone group.
+7. Select the agents covering phones in the assistant's **G1** column. Tick **Me** when you are covering phones.
+8. Click **Settings** to adjust reminder timing, lunch length and desktop notifications. Open **Sound Settings** from that menu to customise audio and choose the assistant's output device.
+
+If the assistant says **Unable to Assist: Open 8x8 agent queue information**, complete steps 4–6 so the required queue and agent information is visible. Keep the three inbound rows and the full agent list in view while monitoring the phone group.
 
 The snippet starts monitoring immediately. The page can remain in the background, but it must stay open. A page refresh or browser restart requires running the saved snippet again. Browser audio may need a click in the page before it can play. Background tab throttling or freezing can delay detection.
 
@@ -21,9 +25,11 @@ The snippet starts monitoring immediately. The page can remain in the background
 
 **G1** is the group covering phones. Everyone not ticked in G1 is automatically **G2**.
 
-When you are in G2, the assistant monitors G1 break status and waiting callers, and tells you when extra cover is needed. When you are in G1, it reminds you to finish disposition and return from lunch, and requests phone cover from Working Offline only when a caller has waited long enough and no other G1 member is Available. Other Work is permitted without this availability alarm.
+When you are in G2, the assistant monitors G1 break status and waiting callers, and tells you when extra cover is needed. When you are in G1, it requests phone cover from Working Offline only when a caller has waited long enough and no other G1 member is Available. Other Work is permitted without this availability alarm. **Lunch and disposition reminders apply in both groups**, including when no agents are selected in G1.
 
-Agents who disappear from a visible Groups list are removed from the assistant's table and their G1 selections are cleared. Logging in adds a fresh row, initially in G2. Temporarily hiding the entire list, including the break and disposition pages, does not erase G1 selections. Me always appears first with the same row styling as other agents.
+G1 selections are saved user choices. They change only when you tick or untick a checkbox. Navigating, filtering, scrolling, refreshing the page or rerunning the snippet does not clear them. The earlier bug deleted a selection whenever its row disappeared from the rendered list; 8x8 can temporarily remove those rows without the agent signing out.
+
+An absent agent's row is removed after the complete visible roster settles, while their saved G1 choice is retained. When the agent returns, their checkbox restores its previous value. Previously unseen agents start in G2. Hidden or virtualised list fragments cannot prove someone signed out or is unavailable; missing coverage information suppresses queue alerts. Me always appears first with the same row styling as other agents.
 
 There is one phone-cover alert, with a repeating two-tone alarm by default:
 
@@ -32,7 +38,14 @@ There is one phone-cover alert, with a repeating two-tone alarm by default:
 
 Becoming Available, an available G1 member, or no caller waiting long enough clears the alert. In G1, leaving Working Offline also clears it. Work Offline is recognised as the same status label. The earlier informational Caller Waiting sound remains removed.
 
-The delay uses each inbound queue's **Longest waiting time**, not an agent's time on Busy. Missing or stale waiting times do not produce guessed call ages. G1 break information and the existing personal G1 reminders remain separate from the phone-cover alert.
+The delay uses each inbound queue's **Longest waiting time**, not an agent's time on Busy. Missing or stale waiting times do not produce guessed call ages. G1 break information and personal lunch/disposition reminders remain separate from the phone-cover alert.
+
+| Sound | When it plays |
+| --- | --- |
+| Info: G1 On Break | You are in G2 and a selected, signed-in G1 member is On Break. Includes someone already on break when monitoring starts; suppressed during a phone-cover alert. |
+| Alert: Change Status To Available | The appropriate G1 or G2 phone-cover condition above is met. |
+| Alert: Complete Disposition | Your disposition time exceeds Disposition Reminder Delay, in G1 or G2. Stops when you leave disposition. |
+| Alert: Lunch Break Finished | Your On Break time exceeds Lunch Break Length, in G1 or G2. Stops when you leave On Break. |
 
 Waiting-call monitoring uses the three inbound queues configured locally. Outbound queues are excluded.
 
@@ -54,7 +67,7 @@ Lunch Break Length is recorded in whole minutes. Reminder delays and sound durat
 
 Lunch length has a slider and an exact minutes field; its current value appears only in the editable field, without printed slider bounds. Existing second-based lunch settings convert to the nearest whole minute, within the supported range. The former Extra Phone Cover Delay becomes Caller Waiting Alert Delay with its saved duration retained. The old 10-second disposition default upgrades once to 20 seconds; other saved delays are preserved, and newly chosen values remain unchanged on later runs.
 
-While you are on break or completing disposition, the assistant shows a compact progress bar with elapsed time, time left, the allowance and a small Mute/Unmute button. Any active reminder's explanation appears below the bar. Its colours match the main panel; a gentle shimmer becomes an orange pulse when overdue. Reduced-motion preferences are respected. The main menu returns when you leave that state. Personal reminder sounds still require **Me** to be ticked in G1.
+While you are on break or completing disposition, the assistant shows a compact progress bar with elapsed time, time left, the allowance and a small Mute/Unmute button. Any active reminder's explanation appears below the bar. Its colours match the main panel; a gentle shimmer becomes an orange pulse when overdue. Reduced-motion preferences are respected. The main menu returns when you leave that state. These reminders work in **G1 and G2**, without needing queue information. Changing group membership does not cancel a reminder for an ongoing personal state.
 
 The break reader uses 8x8's `on-break-timer`, including `MM:SS` and `H:MM:SS` values, so reminders work while all queue and agent rows are hidden.
 
@@ -112,11 +125,16 @@ The script's version, VERSION file, package.json and release snapshot must agree
 
 ## Development checks
 
-Node.js 18 or newer is sufficient; no dependencies need installing.
+The browser snippet needs no installed dependencies. Development checks use Node.js 18 or newer and the pinned JavaScript Standard Style tool:
 
 ```sh
+npm ci
 npm run check
 npm test
 ```
 
-Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. They do not verify live Edge notifications, physical audio delivery or the real 8x8 page layout.
+`npm run check` validates syntax and runs `npm run lint`. Current source and tests follow [JavaScript Standard Style](https://standardjs.com/). Historical release snapshots retain their original formatting; a new snapshot always matches the current source exactly.
+
+The code separates page parsing, pure alert conditions, persistent settings, roster reconciliation, freshness checks, UI rendering and audio/notification delivery into focused helpers. Comments explain complex selectors, elapsed/countdown conversion, migration rules, asynchronous routing and lifecycle cleanup. Styles are expanded into readable CSS and remain isolated inside the panel's shadow root.
+
+Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Regression scenarios include filtered and virtualised rosters, transient row removal, reruns while selected agents are absent, and group-independent personal reminders. They do not verify live Edge notifications, physical audio delivery or the real 8x8 page layout.

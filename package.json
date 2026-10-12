@@ -1,13 +1,22 @@
 {
   "name": "bond-8x8-assistant",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Service Desk 8x8 Assistant browser snippet",
   "scripts": {
-    "check": "node --check Service-Desk-8x8-Assistant.js",
+    "check": "node --check Service-Desk-8x8-Assistant.js && npm run lint",
+    "lint": "standard Service-Desk-8x8-Assistant.js tests/**/*.cjs",
     "test": "node tests/assistant.test.cjs"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "standard": "17.1.2"
+  },
+  "standard": {
+    "ignore": [
+      "releases/**"
+    ]
   }
 }
