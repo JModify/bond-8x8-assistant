@@ -2,7 +2,7 @@
 
 Assistant for the Bond IT Service Desk 8x8 customer call center interface.
 
-Current version: **1.0.1**. The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
+Current version: **1.0.2**. The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
 ## Running the assistant
 
@@ -23,7 +23,34 @@ When you are in G2, the assistant monitors G1 break status and waiting callers, 
 
 Waiting-call monitoring uses the three inbound queues configured locally. Outbound queues are excluded.
 
+Monitoring shows one combined **Callers waiting** total. Statistics appear as three cards in a horizontal row. **Last updated** at the bottom records the latest assistant update. Working Offline appears in orange.
+
 The script only reads page information and alerts you. It does not change your status, select disposition fields, or answer calls.
+
+## Seconds and compact reminders
+
+All timing settings use seconds. Existing minute-based preferences are converted once without changing the saved durations, G1 selections or sounds.
+
+| Setting | Default seconds | Allowed seconds |
+| --- | ---: | ---: |
+| Lunch Break Length | 1800 | 1–7200 |
+| Disposition Reminder Delay | 10 | 1–120 |
+| Caller Waiting Delay | 120 | 1–1800 |
+| Extra Phone Cover Delay | 180 | 1–3600 |
+
+Lunch length has a slider and an exact seconds field. Sound durations already use seconds.
+
+While you are on break or completing disposition, the assistant shows only a compact progress bar with elapsed time, time left and the allowance. Its colours match the main panel; a gentle shimmer becomes an orange pulse when overdue. Reduced-motion preferences are respected. The main menu returns when you leave that state. Personal reminder sounds still require **Me** to be ticked in G1.
+
+The break reader uses 8x8's `on-break-timer`, including `MM:SS` and `H:MM:SS` values, so reminders work while all queue and agent rows are hidden.
+
+The disposition reader requires the actual **Wrap up** state and its `progress-timer`. Merely opening the Disposition tab during a call does not start a reminder. [8x8's post-processing clock counts down](https://docs.8x8.com/8x8WebHelp/contact-center/agent-workspace/Content/aw/answer-incoming-calls.htm), and its other interaction timer describes the completed call. The assistant therefore measures its own disposition interval from the first observed Wrap up page, using decreases in the native countdown to catch up. Re-running the snippet retains an observed ongoing interval; starting it after disposition has already begun cannot recover the unseen start time. An expired native countdown does not silence a reminder while the Wrap up page is still open.
+
+## Testing desktop notifications
+
+In **Settings → Desktop Notifications**, turn on desktop notifications and click **Test desktop notification**. This temporary diagnostic button requests browser permission if needed and sends one popup without playing a sound or starting an alert. It reports blocked permissions, unsupported browsers and failed requests. A successful send cannot guarantee that the operating system displayed the popup; check browser and computer notification settings if it did not appear.
+
+Notification tests are disabled while paused or when desktop notifications are switched off.
 
 ## Statistics
 
@@ -39,7 +66,7 @@ The counter works independently of queue visibility. It can count a Busy transit
 
 ## Pause, minimise and close
 
-**Pause** freezes the displayed agent information, queue counts, Checked time, alert checks and other statistics. It stops alert sounds and previews. The daily call counter remains active and its total can still increase while paused. Resume refreshes the page values and other statistics immediately.
+**Pause** freezes the displayed agent information, queue counts, Last updated time, compact timers and animations, alert checks and other statistics. It stops alert sounds and previews. The daily call counter remains active and its total can still increase while paused. Resume refreshes the page values and other statistics immediately.
 
 The **-** button minimises the main content; **+** restores it. Monitoring and counting continue while minimised. The **x** button closes the assistant and stops all monitoring and counting, retaining statistics already saved.
 

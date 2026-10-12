@@ -20,6 +20,8 @@ For each authorised application update:
 - G1 denotes agents covering phones; every agent not selected in G1 is G2.
 - Pause freezes displayed data and stops alert checks, sounds and previews. Only the daily Busy-start counter continues; other statistics refresh on resume.
 - Busy-start counts are observations, not complete historical call totals. Preserve state through unreadable periods, do not fabricate calls, and explain the limitation.
-- The unavailable-information view must show only `Unable to Assist: Open 8x8 agent queue information.`
+- On break and disposition pages, show only a compact personal progress bar. Read the dedicated break timer and Wrap up markers; do not require queue or agent rows for G1 personal reminders. Do not mistake a Disposition tab or the completed call's timer for elapsed wrap-up time.
+- For other missing information, show only `Unable to Assist: Open 8x8 agent queue information.`
+- Use seconds for all timing settings; preserve durations when migrating legacy minute preferences.
 - Do not publish page captures, caller information, credentials or live staff schedules. Use fictional fixtures in tests.
 - Keep organisation queue names and staff defaults out of public source, docs, tests and archived releases. Preserve configured private download copies separately. Do not commit private configuration; it stays in browser settings or a private local bootstrap.

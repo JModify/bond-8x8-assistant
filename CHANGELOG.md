@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.2 — 2026-10-12
+
+- Use seconds for all timing settings and sound explanations. Convert saved minute values once, preserving their durations.
+- Add an exact seconds field beside the lunch slider; allow lunch lengths from 1 to 7200 seconds.
+- Add a temporary desktop notification test button with permission and send-result feedback, without playing an alert sound.
+- Read the dedicated On Break page timer and retain lunch reminders when queue and agent rows are hidden.
+- Recognise the actual Wrap up page and measure a separate disposition interval, without using the completed call's duration or assuming an administrator's timeout.
+- Show only an animated compact status bar on break and disposition pages, with elapsed, remaining and overdue time. Return to the main menu when the state ends.
+- Keep personal sounds limited to users selected in G1. Freeze compact timers and animations while paused; catch up on resume.
+- Keep disposition reminders active if the native countdown expires but the Wrap up page remains open.
+- Show statistics in a horizontal row and simplify the visible counter explanation.
+- Combine the three inbound waiting counts into one Callers waiting total. Remove the duplicate monitoring label and put Last updated in the footer.
+- Show Working Offline and Work Offline in orange.
+- Poll once each second for responsive countdowns. Retain the previous release snapshots unchanged.
+
 ## 1.0.1 — 2026-10-12
 
 - Display the release version and retain immutable copies of each released script.
