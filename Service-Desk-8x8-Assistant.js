@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — v1.0.0
+/* Service Desk 8x8 Assistant — v1.0.1
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
  * Monitoring starts automatically. Select the G1 agents; Pause/Resume is optional.
@@ -9,11 +9,13 @@
  * Keep the three inbound queue rows and selected agents rendered in the sidebar.
  * Background browser throttling, page freezing, logout, closure and refresh
  * can delay/stop monitoring. Rerun after a refresh. Not a guaranteed alarm service.
- * Outside G1, assistance uses the existing break, waiting and coverage rules.
+ * In G2, assistance uses the break, waiting and coverage rules.
  * In G1, Me gets availability, disposition and lunch reminders.
  * Timings are configurable in Assistant Settings. Only one personal alarm runs.
  * G1 selections, assistant settings and sounds persist when storage is permitted.
  * Missing queue/group information hides the controls until it returns.
+ * Pause freezes the display and alert checks. Only the Busy-start counter keeps running.
+ * Statistics record observed Busy starts, not 8x8's complete historical call totals.
  */
 (() => {
   'use strict';
@@ -24,12 +26,20 @@
   }
   root.__itsCallAssist?.destroy();
   const doc = root.document;
-  const QUEUES = (() => {
-    try {const names=JSON.parse(root.localStorage.getItem('service-desk-8x8-inbound-queues-v1') || 'null');if(Array.isArray(names) && names.length===3) return names;} catch {}
-    return root.__serviceDesk8x8Queues || [];
-  })();
+  const VERSION = '1.0.1';
   const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
   const normal = s => clean(s).toLowerCase();
+  const QUEUE_CONFIG_KEY='service-desk-8x8-inbound-queues-v1';
+  function validQueueNames(value) {
+    return Array.isArray(value) && value.length===3 && value.every(name=>typeof name==='string' && clean(name))
+      && new Set(value.map(clean)).size===3;
+  }
+  let QUEUES=[];
+  try {
+    const value=JSON.parse(root.localStorage.getItem(QUEUE_CONFIG_KEY) || 'null');
+    if (validQueueNames(value)) QUEUES=value.map(clean);
+  } catch {}
+  if (!QUEUES.length && validQueueNames(root.__serviceDesk8x8Queues)) QUEUES=root.__serviceDesk8x8Queues.map(clean);
   function duration(text) {
     const s = normal(text);
     if (!s) return null;
@@ -115,6 +125,17 @@
     }
     return candidates.length === 1 ? candidates[0] : null;
   }
+  function readCounterPresence(docs) {
+    const states=docs.flatMap(d=>[...d.querySelectorAll('[data-test-id="user-status"][data-status-value]')])
+      .filter(node=>!node.closest('[data-test-id="agent-item"]') && visible(node));
+    if (states.length!==1) {
+      // An open status picker can add icons. The header's own timer identifies
+      // the actual presence in that case; no queue or group counts are read.
+      const me=readMe(docs);return me?{status:me.status}:null;
+    }
+    const status=clean(states[0].getAttribute('data-status-value'));
+    return status?{status}:null;
+  }
   function groupRules(agents, queues, others = agents, me = null, timing = {callMinutes:2,coverMinutes:3}) {
     const waiting = queues.length === QUEUES.length && queues.every(q => q.waiting !== null) && queues.some(q => q.waiting > 0);
     return {
@@ -199,6 +220,21 @@
     .controls{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid #e4eaf2}
     .controls button{margin:0;padding:6px 8px;font-size:12px}
     .agent-help{margin:8px 0 14px}
+    .panel{width:470px}
+    .title-block h3{margin:0}
+    .version{margin-top:3px}
+    .window-actions{display:flex;gap:5px;align-self:flex-start}
+    .top .window-actions button{width:27px;height:27px;padding:0;font-size:17px;line-height:1}
+    .monitor-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:14px}
+    .monitor-grid>section{min-width:0}
+    .statistics{margin-top:10px}
+    .stat{margin-bottom:10px}
+    .stat-label{display:block;font-size:11px;color:#526176}
+    .stat-value{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+    .stat-total{font-size:25px;color:#245dc1}
+    .statistics-note{font-size:10px;color:#526176;margin-top:10px}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    @media(max-width:520px){.monitor-grid{grid-template-columns:1fr}}
   `;
   shadow.append(style);
   function el(tag, text, parent, cls) {
@@ -207,9 +243,16 @@
   }
   const panel = el('section', '', shadow, 'panel');
   const unavailableBox = el('div', 'Unable to Assist: Open 8x8 agent queue information.', panel, 'unavailable hidden');
-  const normalView = el('div', '', panel);
+  const normalView = el('div', '', panel, 'main-view');
   const top = el('div', '', normalView, 'top');
-  el('h3', 'Service Desk 8x8 Assistant', top);
+  const titleBlock=el('div','',top,'title-block');
+  el('h3', 'Service Desk 8x8 Assistant', titleBlock);
+  el('div', `Version ${VERSION}`, titleBlock, 'small version');
+  const windowActions=el('div','',top,'window-actions');
+  const minimize=el('button','-',windowActions);
+  minimize.title='Minimise assistant';minimize.setAttribute('aria-label','Minimise assistant');
+  const remove=el('button','x',windowActions);
+  remove.title='Close assistant';remove.setAttribute('aria-label','Close assistant');
   const content = el('div', '', normalView);
   el('h4', 'Agents', content, 'section-heading');
   const agentContainer = el('div', '', content, 'agents');
@@ -217,18 +260,28 @@
   const head = el('tr', '', el('thead', '', table));
   el('th', 'Name', head); el('th', 'Status', head); el('th', 'Time', head); el('th', 'G1', head);
   const agentList = el('tbody', '', table);
-  el('div', 'G1 = people covering phones. Tick Me when you are covering phones.', content, 'small agent-help');
-  el('h4', 'Monitoring', content, 'section-heading');
-  const statusBox = el('pre', 'Inspecting page…', content);
+  el('div', 'Group 1 (G1) refers to any agent covering phones. An agent which is not in Group 1 is considered Group 2 (G2).', content, 'small agent-help');
+  const monitorGrid=el('div','',content,'monitor-grid');
+  const monitoringSection=el('section','',monitorGrid);
+  el('h4', 'Monitoring', monitoringSection, 'section-heading');
+  const statusBox = el('pre', 'Inspecting page…', monitoringSection);
+  const statisticsSection=el('section','',monitorGrid);
+  el('h4','Statistics',statisticsSection,'section-heading');
+  const statisticsBody=el('div','',statisticsSection,'statistics');
+  function stat(label,cls) {
+    const box=el('div','',statisticsBody,'stat');el('span',label,box,'stat-label');
+    return el('span','—',box,'stat-value'+(cls?' '+cls:''));
+  }
+  const callTotal=stat('Calls taken today','stat-total');
+  const callsHour=stat('Calls in the last hour');
+  const lastCall=stat('Last call detected');
+  const statisticsNote=el('div','Counts Busy starts detected while this assistant is open. Hidden or closed periods may leave gaps.',statisticsBody,'statistics-note');
   const banner = el('div', '', content, 'alert hidden');
   const message = el('div', '', banner);
   const dismiss = el('button', 'Dismiss', banner);
   const controls = el('div', '', normalView, 'controls');
   const pause = el('button', 'Pause', controls);
-  const minimize = el('button', 'Collapse', controls);
-  const soundButton = el('button', 'Sounds', controls);
   const settingsButton = el('button', 'Settings', controls);
-  const remove = el('button', 'Remove', controls);
   const soundPanel = el('section', '', panel, 'menu-view sound-settings hidden');
   const settingsPanel = el('section', '', panel, 'menu-view assistant-settings hidden');
   const soundHeader = el('div', '', soundPanel, 'menu-header');
@@ -240,7 +293,7 @@
   doc.body.append(host);
   let running = true, destroyed = false, audio = null, notificationRequested = false;
   let bannerKind = '', lastScan = Date.now(), unavailable = false;
-  let activeView = 'main';
+  let activeView = QUEUES.length?'main':'settings';
   let activeReminder = null;
   const PREFERENCES_KEY = 'service-desk-8x8-preferences-v5';
   let preferences = {};
@@ -258,6 +311,26 @@
   let callMinutes=settingNumber(preferences.callMinutes,2,1,30);
   let coverMinutes=settingNumber(preferences.coverMinutes,3,1,60);
   let desktopNotifications=typeof preferences.desktopNotifications==='boolean' ? preferences.desktopNotifications : true;
+  const soundsCard=el('div','',settingsPanel,'settings-card');
+  el('h4','Sound Settings',soundsCard);
+  el('p','Choose the sound, volume, duration and repeat option for each reminder.',soundsCard,'settings-description');
+  el('button','Open Sound Settings',soundsCard).onclick=()=>openView('sounds');
+  const queuesCard=el('div','',settingsPanel,'settings-card');
+  el('h4','Inbound Queue Names',queuesCard);
+  el('p','Enter the exact names of the three inbound queues to monitor. These names are stored only in this browser. Do not include an outbound queue.',queuesCard,'settings-description');
+  const queueInputs=[0,1,2].map(index=>{
+    const label=el('label',`Queue ${index+1}`,queuesCard,'sound-field');
+    const input=el('input','',label);input.type='text';input.value=QUEUES[index] || '';
+    input.setAttribute('aria-label',`Inbound queue ${index+1}`);return input;
+  });
+  const queueError=el('p',QUEUES.length?'':'Enter three queue names to start monitoring.',queuesCard,'small');
+  for (const input of queueInputs) input.onchange=()=>{
+    const names=queueInputs.map(field=>clean(field.value));
+    if (!validQueueNames(names)) {queueError.textContent='Enter three different queue names.';return;}
+    QUEUES=names;root.__serviceDesk8x8Queues=[...names];
+    try {root.localStorage.setItem(QUEUE_CONFIG_KEY,JSON.stringify(names));} catch {}
+    queueError.textContent='';reset();safeScan();
+  };
   const lunchPanel = el('div', '', settingsPanel, 'settings-card lunch-settings');
   el('h4', 'Lunch Break Length', lunchPanel);
   el('p', 'Length of my lunch break. Only relevant when you are in G1.', lunchPanel, 'settings-description');
@@ -276,6 +349,64 @@
     try {root.localStorage.setItem(PREFERENCES_KEY,JSON.stringify({g1:[...selected],lunchMinutes,
       dispositionSeconds,callMinutes,coverMinutes,desktopNotifications}));} catch {}
   };
+  const STATISTICS_KEY='service-desk-8x8-statistics-v1';
+  const STATISTICS_ZONE='Australia/Brisbane';
+  function dayKey(time) {
+    const parts=new Intl.DateTimeFormat('en-AU',{timeZone:STATISTICS_ZONE,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(time));
+    const part=name=>parts.find(p=>p.type===name).value;
+    return `${part('year')}-${part('month')}-${part('day')}`;
+  }
+  let statistics={day:dayKey(Date.now()),calls:[],hadGaps:false,lastPresence:null};
+  try {
+    const value=JSON.parse(root.localStorage.getItem(STATISTICS_KEY) || '{}');
+    if (value && typeof value==='object') {
+      if (value.day===statistics.day && Array.isArray(value.calls)) {
+        statistics.calls=value.calls.filter(time=>Number.isFinite(time) && time<=Date.now() && dayKey(time)===statistics.day);
+        statistics.hadGaps=value.hadGaps===true;
+      }
+      const last=value.lastPresence;
+      if (last && typeof last.status==='string' && Number.isFinite(last.seenAt)) {
+        statistics.lastPresence={status:normal(last.status),seenAt:last.seenAt};
+      }
+    }
+  } catch {}
+  let lastStatisticsSave=0;
+  function saveStatistics() {
+    try {root.localStorage.setItem(STATISTICS_KEY,JSON.stringify(statistics));lastStatisticsSave=Date.now();} catch {}
+  }
+  function renderStatistics() {
+    setText(callTotal,String(statistics.calls.length));
+    if (!running) return;
+    const now=Date.now();
+    setText(callsHour,String(statistics.calls.filter(time=>time>=now-3600000).length));
+    const latest=statistics.calls.at(-1);
+    setText(lastCall,latest===undefined?'—':new Date(latest).toLocaleTimeString('en-AU',
+      {timeZone:STATISTICS_ZONE,hour:'2-digit',minute:'2-digit'}));
+    setText(statisticsNote,statistics.hadGaps
+      ? 'Some of your status updates were unreadable today. This call total may be incomplete.'
+      : 'Counts Busy starts detected while this assistant is open. Hidden or closed periods may leave gaps.');
+  }
+  function countCalls(docs) {
+    const now=Date.now(),today=dayKey(now);
+    let changed=false;
+    if (statistics.day!==today) {statistics.day=today;statistics.calls=[];statistics.hadGaps=false;changed=true;}
+    const presence=readCounterPresence(docs),old=statistics.lastPresence;
+    if (!presence) {
+      if (!statistics.hadGaps) {statistics.hadGaps=true;changed=true;}
+    } else {
+      const status=normal(presence.status),wasBusy=old?.status==='busy',busy=status==='busy';
+      // Preserve the last presence through hidden periods. An unknown sample is
+      // never treated as leaving Busy, preventing duplicate counts on recovery.
+      // Timer resets alone are not proof of another call. Do not infer calls
+      // from missing data or from a timer changing during post-processing.
+      const newCall=busy && !wasBusy;
+      if (newCall) {statistics.calls.push(now);changed=true;}
+      if (!old || status!==old.status) changed=true;
+      statistics.lastPresence={status,seenAt:now};
+    }
+    if (changed || now-lastStatisticsSave>=15000) saveStatistics();
+    renderStatistics();
+  }
   const knownAgents = new Map(), agentWidgets = new Map(), freshness = new Map(), previous = new Map();
   const callLatched = new Set(), lunchLatched = new Set();
   const notices = new Map(), observers = new Map(), interactionDocs = new Set();
@@ -338,11 +469,11 @@
     if (activeView==='sounds' && view!=='sounds') stopSound('preview');
     activeView=view;syncViews();panel.scrollTop=0;
   }
-  soundButton.onclick=()=>openView('sounds');
   settingsButton.onclick=()=>openView('settings');
-  soundBack.onclick=()=>openView('main');
+  soundBack.onclick=()=>openView('settings');
   settingsBack.onclick=()=>openView('main');
   function prepareSound() {
+    if (!running || destroyed) return;
     try {
       const C = root.AudioContext || root.webkitAudioContext;
       if (C) audio ||= new C();
@@ -350,7 +481,7 @@
     } catch (e) {console.warn('Service Desk 8x8 Assistant sound:', e.message);}
   }
   function enableAlerts(event) {
-    if (!event?.isTrusted || destroyed) return;
+    if (!event?.isTrusted || destroyed || !running) return;
     prepareSound();
     if (desktopNotifications && 'Notification' in root && root.Notification.permission === 'default' && !notificationRequested) {
       notificationRequested = true;
@@ -379,17 +510,15 @@
   const definitions = {
     lunch: {label:'Info: G1 On Break', description:()=>[
       'Plays when someone you have ticked in G1 is "On Break". This includes someone already on break when monitoring starts.',
-      'Silent when you have ticked "Me" in G1, or while the Change Status To Available alert is active.',
-      'Stops when those G1 members leave "On Break".'
+      'Plays only when you are in G2. Silent while the Change Status To Available alert is active.'
     ], preset:'Gentle chime', volume:45, seconds:2, repeat:false},
     call: {label:'Info: Caller Waiting', description:()=>[
       `Plays when a caller is waiting in a monitored queue and at least one G1 member has been "Busy" for more than ${timeWords(callMinutes,'minute')}.`,
-      'Silent when you have ticked "Me" in G1, or while the Change Status To Available alert is active.',
-      'Stops when no caller is waiting or no G1 member meets the Busy time above.'
+      'Plays only when you are in G2. Silent while the Change Status To Available alert is active.'
     ], preset:'Triple beep', volume:65, seconds:3, repeat:false},
     critical: {label:'Alert: Change Status To Available', description:()=>[
       'If you are in G1: plays when your status is neither "Available" nor "Busy", unless you are on lunch or in disposition. Lunch and disposition have their own reminders below.',
-      'If you are not in G1: plays when you are not "Available" and either of these situations applies:',
+      'If you are in G2: plays when you are not "Available" and either of these situations applies:',
       [
         'No other agent currently shown in 8x8’s Groups list is "Available" or "Busy".',
         `A caller is waiting and every G1 member has been "Busy" for at least ${timeWords(coverMinutes,'minute')}.`
@@ -428,7 +557,7 @@
     sounds.delete(kind);
   }
   function beep(kind, preview = false) {
-    if (audio?.state !== 'running') return;
+    if (!running || destroyed || audio?.state !== 'running') return;
     const key = preview ? 'preview' : kind;
     stopSound(key);
     const cfg = {...soundSettings[kind]}, preset = PRESETS[cfg.preset];
@@ -459,8 +588,9 @@
     if (!endless) job.timeout=root.setTimeout(()=>stopSound(key),total*1000);
   }
   const saveSounds = () => {try {root.localStorage.setItem(SOUND_KEY,JSON.stringify(soundSettings));} catch {}};
-  el('div','G1 means the people covering phones. The explanations below use your current Assistant Settings. With Repeat ticked, a sound keeps playing until the situation described below ends. Otherwise, it plays for the chosen duration. Volume depends on your computer’s volume.',soundPanel,'small sound-intro');
+  el('div','G1 means the people covering phones. Anyone not ticked in G1 is in G2. The explanations below use your current Assistant Settings. With Repeat ticked, a sound keeps playing until the situation described below ends. Otherwise, it plays for the chosen duration. Volume depends on your computer’s volume.',soundPanel,'small sound-intro');
   const soundDescriptions=new Map();
+  const previewButtons=[];
   function refreshSoundDescriptions() {
     for (const [kind,parent] of soundDescriptions) {
       parent.textContent='';
@@ -500,7 +630,8 @@
       if (active) beep(kind);
     };
     choice.onchange=update;volume.oninput=update;seconds.onchange=update;repeat.onchange=update;
-    el('button','Preview',section).onclick=()=>{prepareSound();beep(kind,true);};
+    const preview=el('button','Preview',section);previewButtons.push(preview);
+    preview.onclick=()=>{prepareSound();beep(kind,true);};
   }
   refreshSoundDescriptions();
   const soundActions=el('div','',soundPanel,'sound-actions');
@@ -526,10 +657,10 @@
     'Time allowed to finish the call details and click "Wrap up" before the reminder plays. Only relevant when you are in G1.',
     'its-disposition-seconds',dispositionSeconds,1,120,'seconds',number=>{dispositionSeconds=number;});
   timingSetting('Caller Waiting Delay',
-    'Busy time needed before the Caller Waiting sound can play. Only used when you are outside G1 and a caller is waiting in a queue.',
+    'Busy time needed before the Caller Waiting sound can play. Only used when you are in G2 and a caller is waiting in a queue.',
     'its-call-minutes',callMinutes,1,30,'minutes',number=>{callMinutes=number;});
   timingSetting('Extra Phone Cover Delay',
-    'Busy time needed for every G1 member before the urgent Available alert can play. Only used when you are outside G1, are not Available, and a caller is waiting.',
+    'Busy time needed for every G1 member before the urgent Available alert can play. Only used when you are in G2, are not Available, and a caller is waiting.',
     'its-cover-minutes',coverMinutes,1,60,'minutes',number=>{coverMinutes=number;});
   const desktopCard=el('div','',settingsPanel,'settings-card');
   el('h4','Desktop Notifications',desktopCard);
@@ -543,6 +674,7 @@
     else enableAlerts(event);
   };
   function notify(kind, title, body) {
+    if (!running || destroyed) return;
     bannerKind = kind; message.textContent = `${title}\n${body}`; banner.classList.remove('hidden');
     try { beep(kind); } catch {}
     if (desktopNotifications && 'Notification' in root && root.Notification.permission === 'granted') {
@@ -582,10 +714,9 @@
     lunchValue.textContent=`${lunchMinutes} min`;savePreferences();refreshSoundDescriptions();
     safeScan();
   };
-  function scan() {
-    if (destroyed) return;
+  function scan(docs) {
+    if (destroyed || !running) return;
     const now = Date.now(), gap = now - lastScan; lastScan = now;
-    const docs = documents();
     for (const [d,o] of observers) if (!docs.includes(d)) {o.disconnect();observers.delete(d);}
     for (const d of docs) if (!observers.has(d) && d.body) {
       const o = new root.MutationObserver(safeScan);
@@ -682,21 +813,43 @@
     }
   }
   function safeScan() {
-    try {scan();} catch(e) {showUnavailable(true);console.warn('Service Desk 8x8 Assistant:',e.message);}
+    if (destroyed) return;
+    try {
+      const docs=documents();
+      countCalls(docs);
+      if (running) {
+        if (!QUEUES.length) {showUnavailable(false);openView('settings');return;}
+        scan(docs);
+      }
+    } catch(e) {
+      if (running) showUnavailable(true);
+      console.warn('Service Desk 8x8 Assistant:',e.message);
+    }
   }
   pause.onclick = () => {
     running = !running;
     setText(pause, running ? 'Pause' : 'Resume');
-    if (running) freshness.clear();
-    else reset();
-    safeScan();
+    for (const preview of previewButtons) preview.disabled=!running;
+    if (running) {freshness.clear();prepareSound();safeScan();}
+    else {
+      reset();stopSound('preview');saveStatistics();
+      audio?.suspend?.().catch(()=>{});
+      setText(statusBox,statusBox.textContent.replace(/^[^\n]*/,'PAUSED'));
+    }
   };
   dismiss.onclick = () => {
     if (activeReminder?.kind===bannerKind) banner.classList.add('hidden');
     else if (bannerKind) clearAlert(bannerKind);
   };
-  minimize.onclick = () => {content.classList.toggle('hidden');minimize.textContent=content.classList.contains('hidden')?'Expand':'Collapse';};
+  minimize.onclick = () => {
+    content.classList.toggle('hidden');
+    const collapsed=content.classList.contains('hidden');
+    minimize.textContent=collapsed?'+':'-';
+    minimize.title=collapsed?'Restore assistant':'Minimise assistant';
+    minimize.setAttribute('aria-label',minimize.title);
+  };
   function destroy() {
+    saveStatistics();root.removeEventListener?.('pagehide',saveStatistics);
     destroyed=true;running=false;root.clearInterval(interval);
     for (const key of [...sounds.keys()]) stopSound(key);
     for (const o of observers.values()) o.disconnect();
@@ -707,5 +860,8 @@
   remove.onclick = destroy;
   const interval = root.setInterval(safeScan,2000);
   root.__itsCallAssist = {destroy, inspect:() => lastSample};
+  root.__itsCallAssist.version=VERSION;
+  root.__itsCallAssist.statistics=()=>({day:statistics.day,total:statistics.calls.length,calls:[...statistics.calls],hadGaps:statistics.hadGaps});
+  root.addEventListener?.('pagehide',saveStatistics);
   prepareSound();safeScan();
 })();

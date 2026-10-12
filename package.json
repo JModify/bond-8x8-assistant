@@ -1,0 +1,13 @@
+{
+  "name": "bond-8x8-assistant",
+  "version": "1.0.1",
+  "private": true,
+  "description": "Service Desk 8x8 Assistant browser snippet",
+  "scripts": {
+    "check": "node --check Service-Desk-8x8-Assistant.js",
+    "test": "node tests/assistant.test.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
