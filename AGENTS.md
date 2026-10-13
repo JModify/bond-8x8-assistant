@@ -36,7 +36,14 @@ For each authorised application update:
 - Each sound has a saved Send desktop notification checkbox, subject to the global notification setting and browser permission. A notification opt-out must not silence the sound or remove its visible reason. Keep current reasons visible above the footer, including when minimised or in submenus; previews have their own temporary explanation and never send a popup.
 - Keep the author under the title and the release version in the footer beside Last updated. Lunch length is shown only in the editable number field, without a duplicated value or printed slider bounds.
 - Author: Joshua Lavagna-Slater is explicitly approved for the public script and title metadata.
-- Do not publish page captures, caller information, credentials or live staff schedules. Use fictional fixtures in tests.
+- Do not publish caller information, credentials or identifiable live staff schedules. Page captures may be used for documentation only when the user explicitly requests them, after names, usernames, student identifiers and phone numbers are permanently covered with opaque black rectangles or removed by cropping. Inspect every published image and its metadata; never upload the unredacted originals. Use fictional fixtures in tests.
 - The three built-in ITS queue names are public by explicit user instruction. Keep staff defaults and unrelated private configuration out of public files. Historical releases remain immutable.
 - Setup instructions must include opening queue information using the top button to the right of status, next to the bell; the three automatically monitored ITS inbound queues; and selecting the service desk group with every User status ticked under Groups → Filter.
 - Follow JavaScript Standard Style in current source and tests. Explain every nontrivial parsing, timing, state, migration, audio scheduling and asynchronous operation with a useful comment; use descriptive names and small focused helpers. Run npm run check (syntax and StandardJS) plus behavioural tests before publishing. Keep historical release snapshots immutable and outside style reformatting; each new snapshot must exactly match current source.
+
+# Documentation
+
+- Keep README.md concise and written for agents using the assistant. Showcase the six main views with short descriptions and checked screenshots; Settings and Sound Settings need concise feature descriptions rather than screenshot sections.
+- Keep exact alert conditions, browser APIs, storage behaviour, migrations, routing details and development checks in TECHNICAL.md. Preserve useful technical information when shortening the README.
+- Include the 8x8 filtering images in setup: ITS selected, every User status selected and Show only favorite agents off. Keep the status-adjacent queue button, three fixed inbound queues and G1 setup instructions.
+- A documentation-only change is not an application release. Preserve the current application version, code and all release snapshots unless application behaviour also changes; push the authorised documentation commit with an expected-HEAD check.
