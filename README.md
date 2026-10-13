@@ -10,7 +10,7 @@ See phone coverage, keep call notes and get reminders to finish wrap-up or retur
 
 1. Open your logged-in 8x8 page in **Microsoft Edge**.
 2. Open the [assistant code](Service-Desk-8x8-Assistant.js), select **Raw**, then copy the whole file.
-3. Press **Ctrl+Shift+I** → **Sources → Snippets → New snippet**. Name it **8x8 Assistant**, paste the code and press **Ctrl+S**, then **Ctrl+Enter**.
+3. Press **Ctrl+Shift+i** → **Sources → Snippets → New snippet**. Name it **8x8 Assistant**, paste the code and press **Ctrl+S**, then **Ctrl+Enter**.
 4. Open 8x8's **queue information** using the button to the right of your status, next to the bell icon.
 5. Under **Groups → Filter**, select **ITS**, tick **every User status**, and leave **Show only favorite agents** off. Match the images below.
 6. Keep **ITS Academic Hotline**, **ITS Internal TRNFR** and **ITS Service Desk** visible in the queue list. These are monitored automatically.
