@@ -2,7 +2,7 @@
 
 Assistant for the Bond IT Service Desk 8x8 customer call center interface.
 
-Author: **Joshua Lavagna-Slater** | Current version: **1.1.1**.
+Author: **Joshua Lavagna-Slater** | Current version: **1.1.2**.
 
 The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
@@ -51,6 +51,8 @@ The delay uses each inbound queue's **Longest waiting time**, not an agent's tim
 Waiting-call monitoring uses the built-in **ITS Academic Hotline**, **ITS Internal TRNFR** and **ITS Service Desk** queues. Outbound queues are excluded. Queue names cannot be edited in Settings; older saved queue preferences and configuration snippets cannot change the monitored queues.
 
 Monitoring shows one combined **Callers waiting** total. Statistics appear as three cards in a horizontal row. **Last updated** at the bottom records the latest assistant update, alongside **Version**. The author stays under the title. Working Offline appears in orange.
+
+The Monitoring status uses only the three inbound queue rows. **Live** means their numbers can be read from the page; unchanged counts, empty queues, agent timers in seconds/minutes/hours, G1 choices and assistant menu changes do not make it wait for an update. Missing or inconsistent counts show **Queue data unavailable**, an unreadable waiting caller's age shows **Waiting for caller time**, and an offline browser shows **Waiting for connection**. Alerts retain their separate status and caller-time checks: a readable count alone cannot trigger a phone-cover sound. This status describes the queue reader, rather than confirming 8x8's connection to its server.
 
 The main panel fits the available height without an outer scrollbar. Its agent table can scroll when there are many agents, and long lists of names can scroll inside their reminder card; the footer and controls stay visible. Settings and Sound Settings retain their separate scrollable menus.
 

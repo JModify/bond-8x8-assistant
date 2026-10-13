@@ -986,10 +986,10 @@ check('Hidden roster conceals all menu contents, then restores the open menu', (
 })
 
 check(
-  'Release reports version 1.1.1 and bottom controls are Mute, Call History and Settings',
+  'Release reports version 1.1.2 and bottom controls are Mute, Call History and Settings',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.1.1')
+    assert.equal(e.window.__itsCallAssist.version, '1.1.2')
     assert.deepEqual(
       e
         .ui()
@@ -1008,10 +1008,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.1.1'
+      '1.1.2'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.1'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.2'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -1698,6 +1698,218 @@ check(
       assert.equal(e.debug().activeReminder.kind, 'critical')
       assert(!e.checkbox('Alex Agent'))
     }
+  }
+)
+const monitoringState = (e) => e.ui().querySelector('.monitoring-state').textContent
+check(
+  'A complete readable first snapshot reports Live without waiting for every G1 timer to change',
+  () => {
+    for (const g1 of [['Me'], ['Alex Agent', 'Casey Agent'], []]) {
+      const e = environment({ g1 })
+      assert.equal(monitoringState(e), 'Live')
+      assert.equal(e.debug().activeReminder, null)
+      assert.equal(e.notifications.length, 0)
+    }
+  }
+)
+check('An unchanged G1 timer cannot make readable queue monitoring flicker', () => {
+  const e = environment({ g1: ['Alex Agent', 'Casey Agent'] })
+  for (const tick of [1, 2]) {
+    e.other('Alex Agent', 'Available', tick)
+    e.other('Casey Agent', 'Available', tick)
+    e.setMe('Available', tick)
+  }
+  for (let tick = 3; tick <= 30; tick++) {
+    e.other('Alex Agent', 'Available', tick)
+    e.setMe('Available', tick)
+    assert.equal(monitoringState(e), 'Live')
+  }
+})
+check('Menus, mute, timing edits and G1 edits do not reset a healthy monitoring indicator', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  e.other('Alex Agent', 'Available', 1)
+  e.setMe('Available', 1)
+  e.other('Alex Agent', 'Available', 2)
+  e.setMe('Available', 2)
+  e.button('Settings').onclick()
+  e.scan()
+  assert.equal(monitoringState(e), 'Live')
+  e.button('Open Sound Settings').onclick()
+  e.scan()
+  assert.equal(monitoringState(e), 'Live')
+  e.ui().querySelector('.sound-settings').querySelector('button').onclick()
+  const delay = e.ui().querySelector('#its-waiting-alert-seconds')
+  delay.value = '120'
+  delay.onchange()
+  assert.equal(monitoringState(e), 'Live')
+  e.ui().querySelector('.assistant-settings').querySelector('button').onclick()
+  e.tick('Casey Agent', true)
+  assert.equal(monitoringState(e), 'Live')
+  e.button('Mute').onclick()
+  assert.equal(monitoringState(e), 'Live')
+  e.button('Unmute').onclick()
+  assert.equal(monitoringState(e), 'Live')
+  e.tick('Alex Agent', false)
+  e.tick('Casey Agent', false)
+  assert.equal(monitoringState(e), 'Live')
+})
+check('Unchanged queue counts stay Live because quiet queues do not imply a failed reader', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  e.other('Alex Agent', 'Available', 1)
+  e.setMe('Available', 1)
+  e.advance(31000)
+  assert.equal(monitoringState(e), 'Live')
+  e.button('Settings').onclick()
+  e.scan()
+  e.tick('Casey Agent', true)
+  e.ui().querySelector('#its-waiting-alert-seconds').onchange()
+  e.scan()
+  assert.equal(monitoringState(e), 'Live')
+  e.waiting(2, 30)
+  e.scan()
+  e.advance(3600000)
+  assert.equal(monitoringState(e), 'Live')
+  assert.equal(e.ui().querySelector('.queue-total').textContent, '2')
+  assert.equal(e.debug().activeReminder, null)
+  e.setMe('Available', 32)
+  assert.equal(monitoringState(e), 'Live')
+})
+check('Minute/hour-only agent clocks never expire queue monitoring', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  e.meTimer.textContent = '5m'
+  e.agents['Alex Agent'].timer.textContent = '1h 2m'
+  e.agents['Casey Agent'].timer.textContent = '3h'
+  e.scan()
+  e.advance(30000)
+  assert.equal(monitoringState(e), 'Live')
+  e.advance(31000)
+  assert.equal(monitoringState(e), 'Live')
+  e.meTimer.textContent = '6m'
+  e.scan()
+  e.advance(61000)
+  assert.equal(monitoringState(e), 'Live')
+  e.advance(60000)
+  assert.equal(monitoringState(e), 'Live')
+  e.meTimer.textContent = '7m'
+  e.scan()
+  assert.equal(monitoringState(e), 'Live')
+})
+check(
+  'Timer formatting, status casing and roster order do not affect the queue reader status',
+  () => {
+    const e = environment({ g1: ['Alex Agent'] })
+    e.setMe('Available', 1)
+    e.advance(31000)
+    assert.equal(monitoringState(e), 'Live')
+    e.meTimer.textContent = '1 second'
+    e.meStatus.setAttribute('data-status-value', ' available ')
+    e.group.append(e.agents['Alex Agent'].row)
+    e.scan()
+    assert.equal(monitoringState(e), 'Live')
+  }
+)
+check(
+  'Unknown waiting ages and missing queues retain their specific messages and recover on readable data',
+  () => {
+    const e = environment()
+    e.waiting(1, 60)
+    e.queues[3].wait.textContent = 'unknown'
+    e.scan()
+    assert.equal(monitoringState(e), 'Waiting for caller time')
+    e.waiting(1, 61)
+    e.scan()
+    assert.equal(monitoringState(e), 'Live')
+    e.queues[0].row.hidden = true
+    e.scan()
+    assert(monitoringState(e).includes('Queue data unavailable'))
+    e.queues[0].row.hidden = false
+    e.scan()
+    assert.equal(monitoringState(e), 'Live')
+    e.header.hidden = true
+    e.scan()
+    assert(e.window.__itsCallAssist.inspect().unavailable)
+    e.header.hidden = false
+    e.scan()
+    assert.equal(e.window.__itsCallAssist.inspect().unavailable, false)
+    assert.equal(monitoringState(e), 'Live')
+  }
+)
+check(
+  'Offline monitoring keeps its connection message and recovers from a complete readable snapshot',
+  () => {
+    const e = environment()
+    e.window.navigator.onLine = false
+    e.scan()
+    assert.equal(monitoringState(e), 'Waiting for connection')
+    e.button('Settings').onclick()
+    e.scan()
+    assert.equal(monitoringState(e), 'Waiting for connection')
+    e.window.navigator.onLine = true
+    e.scan()
+    assert.equal(monitoringState(e), 'Live')
+  }
+)
+check(
+  'A Live badge never permits a cover alert from a stale caller age while other clocks update',
+  () => {
+    const e = environment({ g1: ['Alex Agent'], waitingAlertSeconds: 5 })
+    coveragePulse(e, 6, 1)
+    coveragePulse(e, 7, 2)
+    assert.equal(e.debug().activeReminder.kind, 'critical')
+    for (let tick = 3; tick <= 20; tick++) {
+      e.other('Alex Agent', 'Busy', tick)
+      e.setMe('Work Offline', tick)
+      assert.equal(monitoringState(e), 'Live')
+    }
+    assert.equal(e.debug().activeReminder, null)
+    assert.equal(e.notifications.length, 1)
+  }
+)
+check(
+  'A Live badge never bypasses a stale G1 status when the own clock and caller age keep updating',
+  () => {
+    const e = environment({ g1: ['Alex Agent'], waitingAlertSeconds: 5 })
+    coveragePulse(e, 6, 1)
+    coveragePulse(e, 7, 2)
+    assert.equal(e.debug().activeReminder.kind, 'critical')
+    for (let tick = 3; tick <= 20; tick++) {
+      e.waiting(1, tick + 5)
+      e.setMe('Work Offline', tick)
+      assert.equal(monitoringState(e), 'Live')
+    }
+    assert.equal(e.debug().activeReminder, null)
+    assert.equal(e.notifications.length, 1)
+  }
+)
+check('A long polling gap does not force readable queues to wait for an agent-clock update', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  e.setMe('Available', 1)
+  e.setTime(170000)
+  e.scan()
+  assert.equal(monitoringState(e), 'Live')
+  assert.equal(e.debug().activeReminder, null)
+})
+check(
+  'Monitoring follows count changes in exactly the three ITS queues and excludes outbound numbers',
+  () => {
+    const e = environment({ g1: [] })
+    e.waiting(2, 30, 0)
+    e.waiting(3, 45, 1)
+    e.waiting(4, 60, 3)
+    e.waiting(99, 999, 2)
+    e.scan()
+    assert.equal(e.ui().querySelector('.queue-total').textContent, '9')
+    assert.equal(monitoringState(e), 'Live')
+    e.waiting(0, 0, 0)
+    e.waiting(0, 0, 1)
+    e.waiting(1, 65, 3)
+    e.scan()
+    assert.equal(e.ui().querySelector('.queue-total').textContent, '1')
+    assert.equal(monitoringState(e), 'Live')
+    e.waiting(0, 0, 3)
+    e.scan()
+    assert.equal(e.ui().querySelector('.queue-total').textContent, '0')
+    assert.equal(monitoringState(e), 'Live')
   }
 )
 check('G1 caller alerts stop when native queue times become unreadable or stale', () => {

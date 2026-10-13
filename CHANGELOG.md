@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2 — 2026-10-13
+
+- Fix Monitoring flickering between Live and Waiting for live updates. The former badge required every selected G1 agent's timer to change within 30 seconds; quiet rows and minute/hour displays could invalidate it even while all three queue counts remained readable.
+- Make Monitoring depend only on ITS Academic Hotline, ITS Internal TRNFR and ITS Service Desk. Start Live as soon as their numbers are readable and retain it for unchanged or empty queues, without requiring G1 selection or agent-clock movement. Preserve connection, unavailable-queue and unreadable caller-time messages, combined counts and last-read labels.
+- Keep alert conditions and their independent native status/caller-time observations unchanged. A Live badge never bypasses unreadable or stale information needed for a phone-cover alert. Preserve sound settings, secondary-ringer routing, statistics, Call History and prior release snapshots.
+- Expand behavioural checks to 183 scenarios covering the original flicker, seconds/minutes/hours, unchanged counts, menu/timing/G1 edits, mute, count changes in the three inbound queues, outbound exclusion, recovery and stale-data alert guards. Verify the supplied queue markup in Chromium at three viewport sizes, including a simulated hour with unchanged counts, menu navigation, G1 edits, changing counts and inconsistent-data recovery.
+
 ## 1.1.1 — 2026-10-13
 
 - Add Secondary Ringer under Settings → Sound Settings → Audio Devices. Default it off, reveal a separate output selector when enabled and save both its toggle and device choice. Duplicate assistant reminders and previews with matching sound, volume, duration and repeat settings, using a second assistant-owned audio context without changing 8x8 or system audio.

@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — v1.1.1
+/* Service Desk 8x8 Assistant — v1.1.2
  * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
@@ -47,7 +47,7 @@
   const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = '1.1.1'
+  const VERSION = '1.1.2'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -3952,14 +3952,14 @@
     }
   }
 
-  function monitoringMessage (offline, fresh, queues) {
-    if (!selected.size) return 'Select at least one G1 agent'
+  function monitoringMessage (offline, queues) {
     if (offline) return 'Waiting for connection'
-    if (!fresh) return 'Waiting for live updates'
     // Counts may remain readable while 8x8 has not yet exposed a caller's age.
     if (queues.some((queue) => queue.waiting > 0 && queue.waitSeconds === null)) {
       return 'Waiting for caller time'
     }
+    // Readable queue rows are live monitoring even when their numbers stay unchanged.
+    // Agent timers and G1 edits only affect separate alert checks, never this status.
     return 'Live'
   }
 
@@ -4052,15 +4052,15 @@
     }
     showUnavailable(false)
     if (gap > FRESHNESS_WINDOW_MS) freshness.clear()
-    let fresh = true
-    // G1 starts with its own live status; G2 observes the selected phone agents.
+    let alertsFresh = true
+    // Individual status checks protect alerts; Monitoring reads only the three queue rows.
     for (const agent of selfInG1 ? [me] : agents) {
       const signature = `${agent.status}|${agent.timer}`
-      if (!observeFreshSample(agent.name, signature, now)) fresh = false
+      if (!observeFreshSample(agent.name, signature, now)) alertsFresh = false
     }
     const offline = root.navigator.onLine === false
     const heading = queuesReadable
-      ? monitoringMessage(offline, fresh, sample.queues)
+      ? monitoringMessage(offline, sample.queues)
       : 'Queue data unavailable. Scroll back to your queues.'
     setText(monitorState, heading)
     monitorState.setAttribute(
@@ -4081,7 +4081,7 @@
       syncReminder(null)
     }
     setText(lastUpdated, new Date().toLocaleTimeString('en-AU', { hour12: false }))
-    if (!fresh || offline) {
+    if (!alertsFresh || offline) {
       clearAlert('lunch')
       syncReminder(null)
       return
