@@ -2,7 +2,7 @@
 
 Detailed alert rules, browser behaviour, storage, audio routing and development notes. For setup and everyday use, start with the [README](README.md).
 
-Author: **Joshua Lavagna-Slater** | Current version: **1.1.4**.
+Author: **Joshua Lavagna-Slater** | Current version: **1.1.5**.
 
 The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
@@ -18,7 +18,7 @@ The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistan
 8. Click **Settings** to adjust reminder timing, lunch length and desktop notifications. Open **Sound Settings** from that menu to customise audio, choose the assistant's output device and optionally enable **Secondary Ringer**.
 9. During a call, optionally enter the caller's staff name or student number and notes in the assistant's **On call** view. Open **Call Notes** between Mute and Settings, or from the on-call shortcut, to review records and return to your draft.
 
-If the assistant says **Unable to Assist: Open 8x8 agent queue information**, complete steps 4–6 so your own status and required agent information are readable. Keep the full agent list rendered when monitoring the phone group. If Monitoring says **Queue data unavailable**, scroll back to the three configured inbound queues for live counts and phone-cover alerts.
+If the assistant says **Agent information frozen**, complete steps 4–6 so your own status and the complete agent list are readable. The assistant keeps its last-read table and menus open while you restore the view. If Monitoring says **Queue data unavailable**, scroll back to the three configured inbound queues for live counts and phone-cover alerts.
 
 The snippet starts monitoring immediately. The page can remain in the background, but it must stay open. A page refresh or browser restart requires running the saved snippet again. Browser audio may need a click in the page before it can play. Background tab throttling or freezing can delay detection.
 
@@ -31,6 +31,16 @@ When you are in G2, the assistant monitors G1 break status and waiting callers, 
 G1 selections are saved user choices. They change only when you tick or untick a checkbox. Navigating, filtering, scrolling, refreshing the page or rerunning the snippet does not clear them. The earlier bug deleted a selection whenever its row disappeared from the rendered list; 8x8 can temporarily remove those rows without the agent signing out.
 
 An absent agent's row is removed after the complete visible roster settles, while their saved G1 choice is retained. When the agent returns, their checkbox restores its previous value. Previously unseen agents start in G2. Hidden or virtualised list fragments cannot prove someone signed out or is unavailable; missing coverage information suppresses queue alerts. Me always appears first with the same row styling as other agents.
+
+### Frozen agent information
+
+Missing own presence, hidden/partial Groups lists, unreadable timers or ambiguous rows freeze the displayed table at its last complete readable snapshot. Names, statuses, timer text and status colours are retained; cached times are never increased or replaced with blank values. An amber **Last read** badge and **Agent information frozen** card show the last successful read and tell you to open 8x8 queue information. The card sits beneath the current menu heading, remains visible when minimised and disappears automatically on recovery. Starting without data shows **Not yet read** and an unknown timer rather than an invented status.
+
+**Call Notes** remains accessible, including search, record editing, deletion/Undo and TXT import/export. A data gap does not cancel or save an active record editor, replace its input nodes or move its scroll position. Settings, mute and manual sound previews also remain usable. Cached other-agent G1 checkboxes are disabled until a readable complete table returns; Me can change their own role when their native presence is still readable. Recovery refreshes statuses and timers immediately, while sign-out pruning retains its existing settling check and never erases saved G1 choices. The display snapshot is in memory; rerunning or refreshing without readable data can show Not yet read, but saved Call Notes remains in the tab session.
+
+Freezing the table is separate from queue monitoring and alert eligibility. Readable queues can continue updating their total and Live badge even while the table is frozen; unreadable queues keep their labelled last-read total. Cached agent/queue data never supplies an alert condition. Missing data required by a particular alert stops its sound, notification and reason card, and recovery needs fresh native observations. An unrelated G2 row's bad timer does not stop an otherwise valid G1 cover alert. Valid native lunch, short-break, disposition and on-call views keep working without Groups. Observed Busy-start counters also continue when the own status remains readable. When both agent and queue data are missing, the footer's Last updated stops advancing until a readable source returns.
+
+An explicitly opened Call Notes menu survives a temporary connected-call card gap and stays open when that same call returns. A real break or disposition state retains its compact-view priority. A reader exception also leaves menus open, disables the stale on-call fields, marks monitoring unavailable and preserves the last-read table until a later scan succeeds.
 
 There is one phone-cover alert, with a repeating two-tone alarm by default:
 
@@ -209,8 +219,8 @@ npm test
 
 The code separates page parsing, pure alert conditions, persistent settings, roster reconciliation, freshness checks, UI rendering and audio/notification delivery into focused helpers. Comments explain complex selectors, elapsed/countdown conversion, migration rules, asynchronous routing and lifecycle cleanup. Styles are expanded into readable CSS and remain isolated inside the panel's shadow root.
 
-The 232 behavioural scenarios use a simulated 8x8 DOM, notifications, audio devices and file APIs. They cover roster/timing/queue rules, mute, routing, statistics, real Wrap up versus tabs/offers, repeated/switched references, disposition duplicates, draft/session persistence and safe text rendering. Call Notes checks include all editable fields, autosave, Escape, predictions, polling, navigation, deletion/Undo, independent capture guards, TXT round trips, legacy/UTF-16 imports, duplicates, limits, failed writes and late file results. The supplied Notepad example is also checked privately; its data is never included in fixtures or public files.
+The 250 behavioural scenarios use a simulated 8x8 DOM, notifications, audio devices and file APIs. They cover roster/timing/queue rules, mute, routing, statistics, real Wrap up versus tabs/offers, repeated/switched references, disposition duplicates, draft/session persistence and safe text rendering. Call Notes checks include all editable fields, autosave, Escape, predictions, polling, navigation, deletion/Undo, independent capture guards, TXT round trips, legacy/UTF-16 imports, duplicates, limits, failed writes and late file results. Frozen-data checks cover complete snapshot retention, status colours/timers, partial and ambiguous lists, sign-in/out recovery, missing-data startup, independent monitoring/statistics, safe alerts, menu warnings, active editors, call-card recovery, previews, reader exceptions and TXT transfers while all native panels are hidden. The supplied Notepad example was checked privately for 1.1.4; its data is never included in fixtures or public files.
 
-Earlier Chromium layout checks through 1.1.3 used fictional agents and fictionalised copies of the supplied break/call/disposition structures to verify caret preservation, scrolling lists, narrow/short viewports and active alerts. The new 1.1.4 layouts and file dialogs have not been tested in live Edge here; transfer behaviour is covered by API fixtures. These checks do not verify live notifications or physical audio delivery.
+Earlier Chromium layout checks through 1.1.3 used fictional agents and fictionalised copies of the supplied break/call/disposition structures to verify caret preservation, scrolling lists, narrow/short viewports and active alerts. The new 1.1.4–1.1.5 layouts and file dialogs have not been tested in live Edge here; menu/transfer behaviour is covered by fixtures. These checks do not verify live notifications or physical audio delivery.
 
 Secondary-ringer checks compare note patterns, volume envelopes, clock offsets and destinations across both contexts. They cover Default/Communications aliases, device loss, routing errors, muted startup, pending choices and shutdown. The 1.1.1 menu is checked at five viewport sizes using native Chromium audio graphs with simulated device choices; physical playback through two speakers must be checked on a computer with those devices.

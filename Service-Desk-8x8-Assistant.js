@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — v1.1.4
+/* Service Desk 8x8 Assistant — v1.1.5
  * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
@@ -21,7 +21,7 @@
  * Lunch, Short Break and disposition pages have separate compact personal views.
  * Short breaks accumulate today's minutes and never use the lunch reminder.
  * Missing queue rows keep controls open but suspend queue-based cover alerts.
- * Missing own status or required group information hides regular controls.
+ * Missing agent information freezes the last-read table; menus stay available.
  * Muting keeps monitoring, timers, notifications and statistics running.
  * Statistics record observed Busy starts, not 8x8's complete historical call totals.
  * Optional caller identifiers and notes are saved at Wrap up.
@@ -49,7 +49,7 @@
   const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = '1.1.4'
+  const VERSION = '1.1.5'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -769,8 +769,62 @@
       width: 16px;
       height: 16px;
     }
-    .unavailable {
+    .agent-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .agent-data-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 7px;
+      border-radius: 20px;
+      background: #edf7f0;
+      color: #17633a;
+      font-size: 10px;
       font-weight: 600;
+      white-space: nowrap;
+    }
+    .agent-data-badge::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      background: currentColor;
+      border-radius: 50%;
+    }
+    .agent-data-badge[data-frozen="true"] {
+      color: #99520c;
+      background: #fff1d9;
+    }
+    .agents[data-frozen="true"] .agent-status,
+    .agents[data-frozen="true"] .agent-time {
+      opacity: 0.7;
+    }
+    .data-warning {
+      flex-shrink: 0;
+      margin-top: 10px;
+      padding: 9px 11px;
+      border: 1px solid #e8cf9d;
+      border-left: 3px solid #bd7a1c;
+      border-radius: 8px;
+      background: #fff8eb;
+      color: #765018;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .data-warning strong {
+      display: block;
+      color: #81500c;
+      font-size: 12px;
+    }
+    .data-warning p {
+      margin: 4px 0 0;
+    }
+    .data-warning .data-last-read {
+      font-size: 10px;
+      color: #826849;
     }
     .top {
       display: flex;
@@ -1829,12 +1883,6 @@
     return element
   }
   const panel = createElement('section', '', shadow, 'panel')
-  const unavailableBox = createElement(
-    'div',
-    'Unable to Assist: Open 8x8 agent queue information.',
-    panel,
-    'unavailable hidden'
-  )
   const compactView = createElement('div', '', panel, 'compact-view hidden')
   const compactHeading = createElement('div', '', compactView, 'compact-heading')
   const compactTitle = createElement('span', '', compactHeading, 'compact-title')
@@ -1915,7 +1963,9 @@
   remove.title = 'Close assistant'
   remove.setAttribute('aria-label', 'Close assistant')
   const content = createElement('div', '', normalView, 'main-content')
-  createElement('h4', 'Agents', content, 'section-heading')
+  const agentHeading = createElement('div', '', content, 'agent-heading')
+  createElement('h4', 'Agents', agentHeading, 'section-heading')
+  const agentDataBadge = createElement('span', 'Live', agentHeading, 'agent-data-badge')
   const agentContainer = createElement('div', '', content, 'agents')
   const table = createElement('table', '', agentContainer, 'agent-table')
   const head = createElement('tr', '', createElement('thead', '', table))
@@ -2015,6 +2065,12 @@
   const settingsHeader = createElement('div', '', settingsPanel, 'menu-header')
   createElement('h3', 'Assistant Settings', settingsHeader)
   const settingsBack = createElement('button', 'Back', settingsHeader)
+  const dataWarning = createElement('aside', '', panel, 'data-warning hidden')
+  dataWarning.setAttribute('role', 'status')
+  dataWarning.setAttribute('aria-live', 'polite')
+  createElement('strong', 'Agent information frozen', dataWarning)
+  createElement('p', 'Open 8x8 queue information for live updates.', dataWarning)
+  const dataLastRead = createElement('p', '', dataWarning, 'data-last-read')
   const bottom = createElement('div', '', panel, 'assistant-bottom')
   const banner = createElement('div', '', bottom, 'alert current-reminders hidden')
   banner.setAttribute('role', 'region')
@@ -2054,7 +2110,7 @@
   let muted = false
   let audioOutputReady = true
   let lastScan = Date.now()
-  let unavailable = false
+  let agentsFrozen = false
   let compactKind = ''
   let historyDuringCall = false
   const reminders = new Map()
@@ -3406,6 +3462,8 @@
   let rosterVisible = false
   let rosterComplete = false
   let rosterSettled = false
+  let rosterUnreadable = false
+  let lastReadableAgentsAt = null
   let rosterSnapshot = { signature: null, changedAt: Date.now() }
   const notices = new Map()
   const observers = new Map()
@@ -3439,7 +3497,7 @@
     // A nonzero first index or an index gap also identifies a partial window.
     return indexes.every((value, index) => Number.isInteger(value) && value === index)
   }
-  function refreshAgents (docs) {
+  function readAgents (docs) {
     const current = new Map()
     const me = readMyPresence(docs)
     if (me) current.set('Me', me)
@@ -3447,6 +3505,12 @@
     // Keep the list container so a genuinely empty, still-visible roster is readable.
     if (rows.length) {
       rosterRoot = rows[0].closest('[data-test-id="virtuoso-item-list"]') || rows[0].parentElement
+    }
+    if (!rosterRoot) {
+      // A uniquely identifiable empty Groups list can still prove that only Me is signed in.
+      const lists = docs.flatMap((d) => [...d.querySelectorAll('[data-test-id="virtuoso-item-list"]')])
+        .filter((list) => isVisible(list) && !list.querySelector('[data-test-id="queue-item"]'))
+      if (lists.length === 1) rosterRoot = lists[0]
     }
     // An empty visible list differs from a hidden Groups panel during navigation.
     rosterVisible =
@@ -3460,11 +3524,16 @@
     }
     // Give list remounts one polling interval to settle before pruning rows.
     rosterSettled = rosterComplete && Date.now() - rosterSnapshot.changedAt >= ROSTER_SETTLE_MS
-    // Hidden group rows on a personal page never imply an agent has signed out.
-    const personal = !!personalPageKind(me)
+    rosterUnreadable = false
+    const names = new Set()
     for (const row of rows) {
       const name = agentName(row)
-      if (!name) continue
+      // Duplicate/unnamed rows are a partial render, never permission to choose an identity.
+      if (!name || name === 'Me' || names.has(name)) {
+        rosterUnreadable = true
+        continue
+      }
+      names.add(name)
       const status = normaliseText(
         row.querySelector('[data-status-value]')?.getAttribute('data-status-value')
       )
@@ -3474,7 +3543,13 @@
       // Build a fresh readable-presence map independently of saved G1 membership.
       current.set(name, { name, status, timer, seconds: parseDuration(timer) })
     }
-    if (rosterSettled && !personal) {
+    return current
+  }
+  function renderAgents (current, frozen) {
+    // Read and validate the entire snapshot before touching any displayed status or timer.
+    // Cached rows are display-only; alert rules always receive the independent fresh map.
+    const personal = !!personalPageKind(current.get('Me'))
+    if (!frozen && rosterSettled && !personal) {
       // Saved membership is a user choice, separate from current sign-in.
       // Removing an absent row must never untick or overwrite that choice.
       for (const [name, widget] of agentWidgets) {
@@ -3489,11 +3564,9 @@
       }
     }
     // Retain existing rows while the page is incomplete; remove them only after settling.
-    const names = new Set([
-      'Me',
-      ...current.keys(),
-      ...(!rosterSettled || personal ? agentWidgets.keys() : [])
-    ])
+    const names = frozen
+      ? new Set(['Me', ...agentWidgets.keys()])
+      : new Set(['Me', ...current.keys(), ...(!rosterSettled || personal ? agentWidgets.keys() : [])])
     // Me is always first; the remaining names use normal alphabetical ordering.
     for (const name of [...names].sort((a, b) =>
       a === 'Me' ? -1 : b === 'Me' ? 1 : a.localeCompare(b)
@@ -3503,8 +3576,8 @@
         const row = createElement('tr', '', agentList)
         createElement('td', name, row, 'agent-name')
         const statusCell = createElement('td', '', row)
-        const state = createElement('span', '', statusCell, 'agent-status')
-        const timer = createElement('td', '', row, 'agent-time')
+        const state = createElement('span', 'Not yet read', statusCell, 'agent-status')
+        const timer = createElement('td', '—', row, 'agent-time')
         const selectionCell = createElement('td', '', row)
         const box = createElement('input', '', selectionCell)
         box.type = 'checkbox'
@@ -3524,43 +3597,64 @@
       const agent = current.get(name)
       // A recreated widget inherits its saved role instead of defaulting back to G2.
       widget.box.checked = selected.has(name)
-      // A temporarily missing row cannot be edited as if it were a live agent.
-      widget.box.disabled = !agent && name !== 'Me'
-      setText(widget.state, agent?.status || 'Not currently loaded')
-      setText(widget.timer, agent?.timer || '—')
-      widget.state.setAttribute('data-state', normaliseStatus(agent?.status))
-      agentList.append(widget.row)
+      // Cached sign-in information cannot enable another agent's checkbox. Me can still
+      // change their own role when the native personal/header presence is readable.
+      widget.box.disabled = name === 'Me' ? !agent : frozen || !agent
+      if (!frozen) {
+        setText(widget.state, agent?.status || 'Not yet read')
+        setText(widget.timer, agent?.timer || '—')
+        widget.state.setAttribute('data-state', normaliseStatus(agent?.status))
+      }
+      // Leave existing rows attached while frozen; unrelated scans must not move the viewport.
+      if (!frozen || widget.row.parentElement !== agentList) agentList.append(widget.row)
     }
-    return current
+    if (!frozen) lastReadableAgentsAt = Date.now()
+    agentContainer.setAttribute('data-frozen', String(frozen))
   }
-  function showUnavailable (value) {
-    unavailable = value
+  function showFrozenAgents (value, alertsUnavailable = value) {
+    agentsFrozen = value
+    setText(agentDataBadge, value ? 'Last read' : 'Live')
+    agentDataBadge.setAttribute('data-frozen', String(value))
+    agentDataBadge.title = value ? 'Agent statuses and times are frozen until live information returns.' : 'Agent information can be read from 8x8.'
+    const readTime = lastReadableAgentsAt === null
+      ? 'No live agent information has been read yet.'
+      : 'Last read at ' + new Date(lastReadableAgentsAt).toLocaleTimeString('en-AU', { hour12: false }) + '.'
+    setText(dataLastRead, readTime + ' Call Notes is still available.')
+    dataWarning.classList.toggle('hidden', !value)
     syncViews()
-    unavailableBox.classList.toggle('hidden', !value)
-    if (value) {
-      stopSound('preview')
-      reset()
-    }
+    // Only missing information required by an alert suspends it. Display caching must not
+    // change alert eligibility when, for example, an unrelated G2 timer is unreadable.
+    if (alertsUnavailable) reset()
   }
   function syncViews () {
-    // Personal timers take priority over menus; missing data hides all regular controls.
+    // Readable personal timers take priority over menus. Missing data never hides saved notes.
     // Calls normally open the identifier view. An explicit History shortcut can temporarily
     // replace it; break and disposition bars continue to take priority over menus.
     const callHistoryOpen = compactKind === 'call' && historyDuringCall && activeView === 'history'
-    const compact = !!compactKind && !unavailable && !callHistoryOpen
+    const compact = !!compactKind && !agentsFrozen && !callHistoryOpen
     const onCall = compactKind === 'call' && compact
-    if (historyEdit && (unavailable || compact || activeView !== 'history')) saveHistoryEdit(false)
+    // Keep the shared warning beneath the current menu's heading, including when minimised.
+    // Moving only on a menu switch leaves active note inputs, focus and scroll untouched.
+    const warningParent = activeView === 'history'
+      ? historyPanel
+      : activeView === 'settings'
+        ? settingsPanel
+        : activeView === 'sounds' ? soundPanel : normalView
+    if (dataWarning.parentElement !== warningParent) {
+      warningParent.insertBefore(dataWarning, activeView === 'main' ? content : warningParent.children[1] || null)
+    }
+    if (historyEdit && (compact || activeView !== 'history')) saveHistoryEdit(false)
     panel.classList.toggle('compact', compact && !onCall)
     panel.classList.toggle('call-panel', onCall)
-    panel.classList.toggle('history-panel', !unavailable && !compact && activeView === 'history')
-    panel.classList.toggle('main-panel', !unavailable && !compact && activeView === 'main')
+    panel.classList.toggle('history-panel', !compact && activeView === 'history')
+    panel.classList.toggle('main-panel', !compact && activeView === 'main')
     compactView.classList.toggle('hidden', !compact || onCall)
     callView.classList.toggle('hidden', !onCall)
-    normalView.classList.toggle('hidden', unavailable || compact || activeView !== 'main')
-    soundPanel.classList.toggle('hidden', unavailable || compact || activeView !== 'sounds')
-    settingsPanel.classList.toggle('hidden', unavailable || compact || activeView !== 'settings')
-    historyPanel.classList.toggle('hidden', unavailable || compact || activeView !== 'history')
-    bottom.classList.toggle('hidden', unavailable)
+    normalView.classList.toggle('hidden', compact || activeView !== 'main')
+    soundPanel.classList.toggle('hidden', compact || activeView !== 'sounds')
+    settingsPanel.classList.toggle('hidden', compact || activeView !== 'settings')
+    historyPanel.classList.toggle('hidden', compact || activeView !== 'history')
+    bottom.classList.remove('hidden')
     footer.classList.toggle('hidden', compact || activeView !== 'main')
   }
   function minuteValue (seconds) {
@@ -3646,6 +3740,9 @@
   }
   settingsButton.onclick = () => openView('settings')
   historyButton.onclick = () => {
+    // A known call draft may outlive a temporarily unreadable phone card. An explicit
+    // visit to Call Notes keeps that menu open when the same native call view returns.
+    historyDuringCall = !!currentCallDraft()
     renderHistory()
     openView('history')
   }
@@ -4805,6 +4902,27 @@
     // Agent timers and G1 edits only affect separate alert checks, never this status.
     return 'Live'
   }
+  function renderMonitoring (sample) {
+    // Queue display remains independent of agent availability. Cached counts are labelled
+    // explicitly and never provide caller ages or eligibility to the alert rules.
+    const queuesReadable = sample.queueErrors.length === 0
+    const heading = queuesReadable
+      ? monitoringMessage(root.navigator.onLine === false, sample.queues)
+      : 'Queue data unavailable. Scroll back to your queues.'
+    setText(monitorState, heading)
+    monitorState.setAttribute(
+      'data-state',
+      !queuesReadable ? 'unavailable' : heading === 'Live' ? 'live' : 'waiting'
+    )
+    if (queuesReadable) {
+      lastReadableQueues = {
+        total: sample.queues.reduce((total, queue) => total + queue.waiting, 0)
+      }
+      setText(lastUpdated, new Date().toLocaleTimeString('en-AU', { hour12: false }))
+    }
+    setText(queueTotal, lastReadableQueues ? String(lastReadableQueues.total) : '—')
+    setText(queueCountLabel, queuesReadable ? 'Callers waiting' : 'Last read callers waiting')
+  }
 
   function scan (docs) {
     if (destroyed) return
@@ -4812,11 +4930,16 @@
     const gap = now - lastScan
     lastScan = now
     syncPageObservers(docs)
-    const current = refreshAgents(docs)
+    const current = readAgents(docs)
     const selfInG1 = selected.has('Me')
     const me = current.get('Me')
     const personalKind = personalPageKind(me)
-    if (personalKind !== 'call') historyDuringCall = false
+    // Missing HTML or a lone Busy header cannot prove that an ongoing call ended.
+    // Preserve an explicitly opened notes menu until a different readable state returns.
+    if ((personalKind && personalKind !== 'call') ||
+      (me && !personalKind && normaliseStatusLabel(me.status) !== 'busy')) {
+      historyDuringCall = false
+    }
     if (personalKind) {
       // A personal page has its own readable timer and needs no queue or G1 roster.
       lastSample = {
@@ -4831,9 +4954,13 @@
         desktopNotifications,
         muted,
         unavailable: false,
+        agentsFrozen: false,
         view: personalKind
       }
-      showUnavailable(false)
+      // Personal pages expose their own clocks. Keep the hidden table unchanged rather than
+      // turning absent Groups rows into blank agents while calls and reminders continue.
+      renderAgents(current, true)
+      showFrozenAgents(false)
       if (personalKind === 'call') renderCall(me)
       else renderCompact(me, personalKind)
       setText(lastUpdated, new Date().toLocaleTimeString('en-AU', { hour12: false }))
@@ -4869,9 +4996,14 @@
     const missing =
       !current.has('Me') ||
       (!rosterVisible && agentWidgets.size > 1) ||
-      (missingG1 && !rosterComplete) ||
+      (missingG1 && (!rosterComplete || rosterUnreadable)) ||
       sample.agentErrors.length > 0 ||
       samples.some((s) => s.agentErrors.length)
+    // Freeze the whole displayed table for a partial snapshot, even when the fresh subset
+    // still contains everything needed by a particular alert or by queue monitoring.
+    const tableFrozen = !!missing || !rosterComplete || rosterUnreadable ||
+      [...current.values()].some((agent) => !agent.status || agent.seconds === null) ||
+      (!rosterSettled && [...agentWidgets.keys()].some((name) => name !== 'Me' && !current.has(name)))
     const queuesReadable = sample.queueErrors.length === 0
     lastSample = {
       me: current.get('Me') || null,
@@ -4885,15 +5017,16 @@
       desktopNotifications,
       muted,
       unavailable: !!missing,
+      agentsFrozen: tableFrozen,
       queuesReadable,
       view: 'main'
     }
+    renderAgents(current, tableFrozen)
+    renderMonitoring(sample)
+    showFrozenAgents(tableFrozen, !!missing)
     if (missing) {
-      showUnavailable(true)
-      freshness.clear()
       return
     }
-    showUnavailable(false)
     if (gap > FRESHNESS_WINDOW_MS) freshness.clear()
     let alertsFresh = true
     // Individual status checks protect alerts; Monitoring reads only the three queue rows.
@@ -4902,27 +5035,12 @@
       if (!observeFreshSample(agent.name, signature, now)) alertsFresh = false
     }
     const offline = root.navigator.onLine === false
-    const heading = queuesReadable
-      ? monitoringMessage(offline, sample.queues)
-      : 'Queue data unavailable. Scroll back to your queues.'
-    setText(monitorState, heading)
-    monitorState.setAttribute(
-      'data-state',
-      !queuesReadable ? 'unavailable' : heading === 'Live' ? 'live' : 'waiting'
-    )
-    // The end user sees one total even though three inbound queues supply it.
-    if (queuesReadable) {
-      lastReadableQueues = {
-        total: sample.queues.reduce((total, queue) => total + queue.waiting, 0)
-      }
-    }
-    setText(queueTotal, lastReadableQueues ? String(lastReadableQueues.total) : '—')
-    setText(queueCountLabel, queuesReadable ? 'Callers waiting' : 'Last read callers waiting')
     if (!queuesReadable) {
       // Unmounted queue rows invalidate their freshness; recovery needs a new live update.
       for (const queue of sample.queues) freshness.delete('queue:' + queue.name)
       syncReminder(null)
     }
+    // Valid agent reads still update the footer when queue rows alone are unavailable.
     setText(lastUpdated, new Date().toLocaleTimeString('en-AU', { hour12: false }))
     if (!alertsFresh || offline) {
       clearAlert('lunch')
@@ -5003,7 +5121,24 @@
       countShortBreaks(docs)
       scan(docs)
     } catch (e) {
-      showUnavailable(true)
+      // A reader failure cannot conceal Call Notes or leave an old personal view interactive.
+      compactKind = ''
+      lastSample = {
+        ...lastSample,
+        me: null,
+        agents: [],
+        queues: [],
+        unavailable: true,
+        agentsFrozen: true,
+        queuesReadable: false,
+        view: 'main'
+      }
+      callerInput.disabled = notesInput.disabled = true
+      renderAgents(new Map(), true)
+      showFrozenAgents(true)
+      setText(monitorState, 'Queue data unavailable. Open 8x8 queue information.')
+      monitorState.setAttribute('data-state', 'unavailable')
+      setText(queueCountLabel, 'Last read callers waiting')
       console.warn('Service Desk 8x8 Assistant:', e.message)
     }
   }

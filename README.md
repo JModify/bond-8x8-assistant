@@ -2,7 +2,7 @@
 
 See phone coverage, keep call notes and get reminders to finish wrap-up or return from lunch.
 
-**Author:** Joshua Lavagna-Slater · **Version:** 1.1.4
+**Author:** Joshua Lavagna-Slater · **Version:** 1.1.5
 
 [Assistant code](Service-Desk-8x8-Assistant.js) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
 
@@ -28,7 +28,7 @@ The view changes automatically as you take calls, wrap up or go on break. Click 
 
 | View | What you can do |
 | --- | --- |
-| **Main assistant**<br><a href="docs/images/main-view.png"><img src="docs/images/main-view.png" width="320" alt="Main assistant with agent names blacked out"></a> | View agents, statuses, timers, G1 roles and a combined waiting total. See today's call count, calls in the last hour and the last call. Clear alerts explain G1 break updates and when extra phone cover is needed. |
+| **Main assistant**<br><a href="docs/images/main-view.png"><img src="docs/images/main-view.png" width="320" alt="Main assistant with agent names blacked out"></a> | View agents, statuses, timers, G1 roles and a combined waiting total. See today's call count, calls in the last hour and the last call. Clear alerts explain when phone cover is needed. Missing information freezes the agent table with a **Last read** badge; the assistant stays open. |
 | **On a call**<br><a href="docs/images/on-call-view.png"><img src="docs/images/on-call-view.png" width="320" alt="On-call example with the phone number and caller identifier blacked out"></a> | See caller number, queue, duration and hold status. Enter a name, username or student number and optional notes; they save at **Wrap up**. Blank names become **Unknown**. |
 | **Call Notes**<br><a href="docs/images/call-history-view.png"><img src="docs/images/call-history-view.png" width="320" alt="Earlier Call History view, now called Call Notes, with personal details blacked out"></a> | Search names, notes and job numbers. Notes stay visible on each record. Use the **pen** to edit the name, notes and **Job Number**; the **tick**, clicking away or **Back** saves. Delete unwanted records with the **bin**, with **Undo** available. **More details** includes timings and a caller-type prediction. |
 | **Lunch break**<br><a href="docs/images/lunch-view.png"><img src="docs/images/lunch-view.png" width="320" alt="Lunch view showing elapsed and remaining minutes"></a> | See elapsed and remaining minutes, with a reminder when your configured lunch length is exceeded. |
@@ -45,6 +45,7 @@ The view changes automatically as you take calls, wrap up or go on break. Click 
 
 ## Quick help
 
-- **Unable to Assist** or **Queue data unavailable:** check the queue panel and filters from setup.
+- **Agent information frozen:** open 8x8 queue information and check the setup filters. Last-read statuses and times stay visible until live data returns. **Call Notes** and settings remain available.
+- **Queue data unavailable:** scroll back to the three monitored queues for live waiting counts.
 - Keep 8x8 open. The counter can miss calls when the assistant is unavailable. Export Call Notes before ending your tab session. Importing or deleting notes does not change the call counter.
 - For notification setup and detailed behaviour, see the [technical guide](TECHNICAL.md).

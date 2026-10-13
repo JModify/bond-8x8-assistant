@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.5 — 2026-10-14
+
+- Replaced the blocking Unable to Assist view with a frozen last-read agent table. Missing, partial or unreadable information preserves names, statuses, timers and colours instead of clearing rows or advancing cached times.
+- Added a compact Live/Last read badge and an amber Agent information frozen warning beneath the current menu heading. The warning includes the last successful read time, explains how to restore live data, stays visible when minimised and clears automatically on recovery.
+- Kept Call Notes, active record editing, search, deletion/Undo, TXT transfers, Settings, mute and manual previews available throughout data gaps. Startup without data clearly shows Not yet read/unknown values.
+- Separated agent reading/validation from display updates. A complete readable roster catches up to native values and retains safe sign-out settling and persistent G1 choices. Cached other-agent G1 controls are disabled until live information returns.
+- Kept readable queue totals and observed call counters independent of the frozen table. Alert rules never use cached values and stop when their required native data is missing; unrelated G2 timer failures do not change valid G1 cover rules. Native personal views keep their existing priority.
+- Preserved an explicitly opened Call Notes menu and its editor through temporary call-card gaps and recovery. Reader exceptions also leave menus accessible and mark unavailable data clearly.
+- Validation: syntax and JavaScript Standard Style checks plus 250 behavioural scenarios, including 18 new frozen-data, recovery, accessibility, call-notes and transfer scenarios. Preserve all earlier release snapshots and redacted documentation images.
+
 ## 1.1.4 — 2026-10-13
 
 - Renamed Call History to **Call Notes**, including its main-menu and on-call shortcuts.

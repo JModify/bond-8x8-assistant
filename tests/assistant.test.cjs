@@ -482,6 +482,8 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     original,
     'The production controller must be instrumented for this fixture'
   )
+  // A missing-page startup exercises the real first scan, rather than hiding data afterwards.
+  options.beforeStart?.({ header, group, queues, document })
   vm.runInNewContext(
     source,
     { window, location: window.location, Date: Clock, console },
@@ -902,7 +904,7 @@ check('Mute and removal stop personal sounds; hidden queues retain a compact rem
     if (action === 'hidden') {
       e.queues[0].row.hidden = true
       e.scan()
-      assert(e.ui().querySelector('.unavailable').classList.contains('hidden'))
+      assert(e.ui().querySelector('.data-warning').classList.contains('hidden'))
       assert.equal(e.window.__itsCallAssist.inspect().view, 'disposition')
       assert(e.debug().playing.includes('disposition'))
     } else e.button(action === 'Remove' ? 'x' : action).onclick()
@@ -1049,28 +1051,28 @@ check('Desktop notifications can be disabled without silencing alerts', () => {
   assert(e.notifications[0].closed)
   assert(e.debug().playing.includes('disposition'))
 })
-check('Hidden roster conceals all menu contents, then restores the open menu', () => {
+check('A hidden roster freezes agent data while Settings stays accessible and recovers in place', () => {
   const e = environment()
   e.button('Settings').onclick()
   e.group.hidden = true
   e.scan()
-  assert(e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
+  assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
   assert(e.ui().querySelector('.sound-settings').classList.contains('hidden'))
-  assert(!e.ui().querySelector('.unavailable').classList.contains('hidden'))
-  assert.equal(
-    e.ui().querySelector('.unavailable').textContent,
-    'Unable to Assist: Open 8x8 agent queue information.'
-  )
+  assert(!e.ui().querySelector('.data-warning').classList.contains('hidden'))
+  assert(e.ui().querySelector('.data-warning').textContent.includes('Agent information frozen'))
+  assert(e.ui().querySelector('.data-warning').textContent.includes('Open 8x8 queue information'))
+  assert(e.ui().querySelector('.data-warning').closest('.assistant-settings'))
   e.group.hidden = false
   e.scan()
   assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
+  assert(e.ui().querySelector('.data-warning').classList.contains('hidden'))
 })
 
 check(
-  'Release reports version 1.1.4 and bottom controls are Mute, Call Notes and Settings',
+  'Release reports version 1.1.5 and bottom controls are Mute, Call Notes and Settings',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.1.4')
+    assert.equal(e.window.__itsCallAssist.version, '1.1.5')
     assert.deepEqual(
       e
         .ui()
@@ -1089,10 +1091,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.1.4'
+      '1.1.5'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.4'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.5'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -1252,7 +1254,7 @@ check('Captured break page stays visible with only its status bar and no queue i
   assert.equal(e.window.__itsCallAssist.inspect().me.seconds, 421)
   assert.equal(e.window.__itsCallAssist.inspect().view, 'break')
   assert(!e.ui().querySelector('.compact-view').classList.contains('hidden'))
-  for (const cls of ['.main-view', '.sound-settings', '.assistant-settings', '.unavailable']) {
+  for (const cls of ['.main-view', '.sound-settings', '.assistant-settings', '.data-warning']) {
     assert(e.ui().querySelector(cls).classList.contains('hidden'))
   }
   assert.equal(e.ui().querySelector('.compact-elapsed').textContent, '7 min elapsed')
@@ -4939,6 +4941,347 @@ asyncCheck('Closing during import rejects its late file contents without changin
   resolve('Casey\nLate import\nREQ123456')
   await importing
   assert.equal(e.session.get('service-desk-8x8-call-history-v1'), before)
+})
+function agentSnapshot (e) {
+  return e.ui().querySelector('tbody').querySelectorAll('tr').map((row) => ({
+    name: row.querySelector('.agent-name').textContent,
+    status: row.querySelector('.agent-status').textContent,
+    timer: row.querySelector('.agent-time').textContent,
+    colour: row.querySelector('.agent-status').getAttribute('data-state')
+  }))
+}
+check('Missing Groups freezes names, statuses, timers and colours, then catches up without losing G1', () => {
+  const e = environment({ g1: ['Me', 'Alex Agent'] })
+  e.other('Alex Agent', 'Working Offline', 75)
+  e.setMe('Available', 50)
+  const snapshot = agentSnapshot(e)
+  const row = e.checkbox('Alex Agent').closest('tr')
+  const lastRead = e.ui().querySelector('.data-last-read').textContent
+  e.group.hidden = true
+  e.other('Alex Agent', 'Busy', 2)
+  e.setMe('Busy', 3)
+  e.advance(60000)
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.equal(e.checkbox('Alex Agent').closest('tr'), row)
+  assert.equal(e.ui().querySelector('.data-last-read').textContent, lastRead)
+  assert.equal(e.ui().querySelector('.agent-data-badge').textContent, 'Last read')
+  assert.equal(e.ui().querySelector('.agents').getAttribute('data-frozen'), 'true')
+  assert(e.checkbox('Alex Agent').checked)
+  assert(e.checkbox('Alex Agent').disabled)
+  assert(!e.ui().querySelector('.main-view').classList.contains('hidden'))
+  assert(!e.ui().querySelector('.footer').classList.contains('hidden'))
+  e.group.hidden = false
+  e.scan()
+  const caughtUp = agentSnapshot(e)
+  assert.equal(caughtUp[0].status, 'Busy')
+  assert.equal(caughtUp.find((agent) => agent.name === 'Alex Agent').timer, '2s')
+  assert.equal(e.ui().querySelector('.agent-data-badge').textContent, 'Live')
+  assert(e.ui().querySelector('.data-warning').classList.contains('hidden'))
+  assert(!e.checkbox('Alex Agent').disabled)
+})
+check('Missing own presence freezes the whole table instead of replacing Me or pruning other agents', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  e.setMe('Working Offline', 30)
+  const snapshot = agentSnapshot(e)
+  e.header.hidden = true
+  e.logout('Alex Agent')
+  e.login('New Agent', 'Busy', 7)
+  e.scan()
+  e.advance(5000)
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.equal(e.checkbox('New Agent'), null)
+  assert(e.checkbox('Me').disabled)
+  assert(!e.ui().textContent.includes('Unable to Assist'))
+  e.header.hidden = false
+  e.scan()
+  assert.equal(e.checkbox('Alex Agent'), null)
+  assert(e.checkbox('New Agent'))
+  assert(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).g1.includes('Alex Agent'))
+})
+check('A partial virtual list freezes cached agents without inferring sign-out or advancing timers', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  const snapshot = agentSnapshot(e)
+  const list = e.ui().querySelector('.agents')
+  list.scrollTop = 55
+  e.group.setAttribute('style', 'padding-top: 30px; padding-bottom: 30px;')
+  e.agents['Alex Agent'].row.hidden = true
+  e.other('Casey Agent', 'Busy', 50)
+  e.scan()
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.equal(list.scrollTop, 55)
+  assert(e.window.__itsCallAssist.inspect().agentsFrozen)
+  assert.equal(e.debug().activeReminder, null)
+  e.group.setAttribute('style', 'padding-top: 0px; padding-bottom: 0px;')
+  e.agents['Alex Agent'].row.hidden = false
+  e.scan()
+  assert.equal(agentSnapshot(e).find((agent) => agent.name === 'Casey Agent').timer, '50s')
+  assert(!e.window.__itsCallAssist.inspect().agentsFrozen)
+})
+check('Readable queues keep their own Live total while the agent table is frozen', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  const snapshot = agentSnapshot(e)
+  e.group.hidden = true
+  e.waiting(2, 400, 0)
+  e.waiting(3, 450, 1)
+  e.waiting(4, 500, 3)
+  e.scan()
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.equal(monitoringState(e), 'Live')
+  assert.equal(e.ui().querySelector('.queue-total').textContent, '9')
+  assert.equal(e.debug().activeReminder, null)
+  e.waiting(0, 0, 0)
+  e.waiting(0, 0, 1)
+  e.waiting(0, 0, 3)
+  e.scan()
+  assert.equal(e.ui().querySelector('.queue-total').textContent, '0')
+})
+check('Missing queues alone leave agents live, and missing all data freezes both displayed snapshots', () => {
+  const e = environment()
+  e.waiting(2, 15, 0)
+  e.scan()
+  for (const queue of e.queues) queue.row.hidden = true
+  e.setMe('Working Offline', 42)
+  assert.equal(agentSnapshot(e)[0].timer, '42s')
+  assert.equal(e.ui().querySelector('.agent-data-badge').textContent, 'Live')
+  assert(e.ui().querySelector('.data-warning').classList.contains('hidden'))
+  const snapshot = agentSnapshot(e)
+  const updated = e.ui().querySelector('.last-updated').querySelector('time').textContent
+  e.header.hidden = e.group.hidden = true
+  e.scan()
+  e.advance(120000)
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.equal(e.ui().querySelector('.queue-total').textContent, '2')
+  assert(e.ui().querySelector('.queue-count-label').textContent.includes('Last read'))
+  assert.equal(e.ui().querySelector('.last-updated').querySelector('time').textContent, updated)
+})
+check('An unreadable G1 timer freezes the table and stops a repeating alert until fresh recovery', () => {
+  const e = environment({ g1: ['Me', 'Alex Agent'], waitingAlertSeconds: 5 })
+  coveragePulse(e, 6, 1)
+  coveragePulse(e, 7, 2)
+  assert.equal(e.debug().activeReminder.kind, 'critical')
+  const snapshot = agentSnapshot(e)
+  e.agents['Alex Agent'].timer.textContent = 'unreadable'
+  e.setMe('Working Offline', 99)
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.equal(e.debug().activeReminder, null)
+  assert(!e.debug().playing.includes('critical'))
+  e.agents['Alex Agent'].timer.textContent = '3s'
+  e.scan()
+  assert.equal(e.debug().activeReminder, null)
+  coveragePulse(e, 8, 100)
+  assert.equal(e.debug().activeReminder, null)
+  coveragePulse(e, 9, 101)
+  assert.equal(e.debug().activeReminder.kind, 'critical')
+})
+check('An unrelated unreadable G2 row freezes display without altering a fresh G1 alert rule', () => {
+  const e = environment({ g1: ['Me', 'Alex Agent'], waitingAlertSeconds: 5 })
+  e.agents['Casey Agent'].timer.textContent = 'unreadable'
+  coveragePulse(e, 6, 1)
+  coveragePulse(e, 7, 2)
+  assert(e.window.__itsCallAssist.inspect().agentsFrozen)
+  assert.equal(e.window.__itsCallAssist.inspect().unavailable, false)
+  assert.equal(e.debug().activeReminder.kind, 'critical')
+})
+check('Call Notes stays open and editable during a data gap, including polling and recovery', () => {
+  const e = editableHistory()
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { caller: '00123456', notes: 'Keep typing\nSecond line', jobNumber: 'REQ123456' })
+  const input = card.querySelector('.history-notes-input')
+  e.ui().querySelector('.history-list').scrollTop = 40
+  e.header.hidden = e.group.hidden = true
+  for (const queue of e.queues) queue.row.hidden = true
+  e.scan()
+  e.advance(30000)
+  assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+  assert(e.ui().querySelector('.data-warning').closest('.call-history'))
+  assert.equal(historyCard(e), card)
+  assert.equal(card.querySelector('.history-notes-input'), input)
+  assert.equal(input.value, 'Keep typing\nSecond line')
+  assert.equal(card.querySelector('.history-edit-toggle').textContent, '✓')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, '')
+  e.header.hidden = e.group.hidden = false
+  for (const queue of e.queues) queue.row.hidden = false
+  e.scan()
+  assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+  assert.equal(card.querySelector('.history-edit-toggle').textContent, '✓')
+  assert.equal(e.ui().querySelector('.history-list').scrollTop, 40)
+  e.ui().querySelector('.call-history').querySelector('button').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, 'Keep typing\nSecond line')
+})
+check('Call Notes can be opened, edited and deleted after the whole 8x8 information panel disappears', () => {
+  const e = editableHistory()
+  e.ui().querySelector('.call-history').querySelector('button').onclick()
+  e.header.hidden = e.group.hidden = true
+  for (const queue of e.queues) queue.row.hidden = true
+  e.scan()
+  e.button('Call Notes').onclick()
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'Saved while information was hidden', jobNumber: 'INC1234567' })
+  card.querySelector('.history-edit-toggle').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, 'Saved while information was hidden')
+  card.querySelector('.history-delete').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+  e.button('Undo delete').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+})
+check('Frozen warnings follow the current menu and remain visible when the main table is minimised', () => {
+  const e = environment()
+  e.group.hidden = true
+  e.scan()
+  const warning = e.ui().querySelector('.data-warning')
+  assert(warning.closest('.main-view'))
+  e.button('-').onclick()
+  assert(e.ui().querySelector('.main-content').classList.contains('hidden'))
+  assert(!warning.classList.contains('hidden'))
+  e.button('Settings').onclick()
+  assert(warning.closest('.assistant-settings'))
+  e.button('Open Sound Settings').onclick()
+  assert(warning.closest('.sound-settings'))
+  assert.equal(e.ui().querySelector('.sound-settings').children[1], warning)
+  assert.equal(warning.getAttribute('role'), 'status')
+  assert.equal(warning.getAttribute('aria-live'), 'polite')
+  e.ui().querySelector('.sound-settings').querySelector('button').onclick()
+  e.ui().querySelector('.assistant-settings').querySelector('button').onclick()
+  assert(warning.closest('.main-view'))
+})
+check('Sound Settings and manual previews remain usable while monitoring lacks agent information', () => {
+  const e = environment()
+  e.group.hidden = true
+  e.scan()
+  e.button('Settings').onclick()
+  e.button('Open Sound Settings').onclick()
+  const preview = e.ui().querySelector('fieldset').querySelectorAll('button').find((button) => button.textContent === 'Preview')
+  preview.onclick()
+  assert(e.debug().playing.includes('preview'))
+  e.scan()
+  assert(e.debug().playing.includes('preview'))
+  assert.equal(e.notifications.length, 0)
+  e.button('Stop preview').onclick()
+  assert(!e.debug().playing.includes('preview'))
+})
+check('Starting without readable data keeps menus available and clearly shows that nothing was read yet', () => {
+  const e = environment({}, {}, {
+    beforeStart: ({ header, group, queues }) => {
+      header.hidden = group.hidden = true
+      for (const queue of queues) queue.row.hidden = true
+    }
+  })
+  assert(e.window.__itsCallAssist.inspect().agentsFrozen)
+  assert.equal(agentSnapshot(e)[0].status, 'Not yet read')
+  assert.equal(agentSnapshot(e)[0].timer, '—')
+  assert(e.ui().querySelector('.data-last-read').textContent.includes('No live agent information'))
+  assert.equal(e.ui().querySelector('.queue-total').textContent, '—')
+  e.button('Call Notes').onclick()
+  assert(e.ui().querySelector('.history-empty'))
+  e.ui().querySelector('.call-history').querySelector('button').onclick()
+  e.button('Settings').onclick()
+  assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
+  e.header.hidden = e.group.hidden = false
+  for (const queue of e.queues) queue.row.hidden = false
+  e.scan()
+  assert(!e.window.__itsCallAssist.inspect().agentsFrozen)
+  assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
+})
+check('Unreadable own timers freeze the table but readable Busy transitions keep statistics accurate', () => {
+  const e = environment()
+  const snapshot = agentSnapshot(e)
+  e.meTimer.textContent = 'unreadable'
+  e.meStatus.setAttribute('data-status-value', 'Busy')
+  e.scan()
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+  e.button('Call Notes').onclick()
+  assert.equal(e.ui().querySelector('.history-statistics').querySelector('.stat-total').textContent, '1')
+  e.meStatus.setAttribute('data-status-value', 'Available')
+  e.scan()
+  e.meStatus.setAttribute('data-status-value', 'Busy')
+  e.scan()
+  assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+})
+check('A missing phone card preserves an explicitly open Call Notes editor when the same call returns', () => {
+  const e = editableHistory()
+  e.showCall({ transactionId: 'frozen-connected-call' })
+  e.caller('Current Caller')
+  e.ui().querySelector('.call-heading').querySelectorAll('button').find((button) => button.textContent === 'Call Notes').onclick()
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'Editing an earlier call' })
+  e.personalPage().hidden = true
+  e.scan()
+  assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+  e.personalPage().hidden = false
+  e.scan()
+  assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+  assert.equal(card.querySelector('.history-edit-toggle').textContent, '✓')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending[0].callerInput, 'Current Caller')
+})
+check('Call Notes opened during a call-data gap remains open on recovery; real Wrap up still takes priority', () => {
+  const e = environment({ g1: [] })
+  e.showCall()
+  e.notes('Unfinished call draft')
+  e.personalPage().hidden = true
+  e.scan()
+  e.button('Call Notes').onclick()
+  e.personalPage().hidden = false
+  e.scan()
+  assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+  e.showWrapUp(120, { seconds: 20 })
+  assert(!e.ui().querySelector('.compact-view').classList.contains('hidden'))
+  assert(e.ui().querySelector('.call-history').classList.contains('hidden'))
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, 'Unfinished call draft')
+})
+check('Ambiguous agent identities freeze the table until a complete unambiguous roster returns', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  const snapshot = agentSnapshot(e)
+  e.login('Alex Agent', 'Busy', 500)
+  e.scan()
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert(e.window.__itsCallAssist.inspect().agentsFrozen)
+  assert.equal(e.debug().activeReminder, null)
+  e.agents['Alex Agent'].row.remove()
+  e.scan()
+  assert(!e.window.__itsCallAssist.inspect().agentsFrozen)
+})
+check('A reader error keeps Call Notes accessible and frozen data out of monitoring until recovery', () => {
+  const e = editableHistory()
+  const query = e.window.document.querySelectorAll
+  const snapshot = agentSnapshot(e)
+  e.window.document.querySelectorAll = () => { throw Error('Simulated page replacement') }
+  const warn = console.warn
+  try {
+    console.warn = () => {}
+    e.scan()
+  } finally {
+    console.warn = warn
+  }
+  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+  assert(e.window.__itsCallAssist.inspect().agentsFrozen)
+  assert(monitoringState(e).includes('Queue data unavailable'))
+  historyCard(e).querySelector('.history-edit-toggle').onclick()
+  editNoteFields(historyCard(e), { notes: 'Still accessible' })
+  historyCard(e).querySelector('.history-edit-toggle').onclick()
+  e.window.document.querySelectorAll = query
+  e.scan()
+  assert(!e.window.__itsCallAssist.inspect().agentsFrozen)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, 'Still accessible')
+})
+asyncCheck('Frozen Call Notes still imports and exports local TXT without depending on 8x8 panels', async () => {
+  const e = editableHistory()
+  e.header.hidden = e.group.hidden = true
+  for (const queue of e.queues) queue.row.hidden = true
+  e.scan()
+  await e.importFile({ size: 100, text: async () => 'Imported Caller\nImported while frozen\nREQ123456' })
+  await e.button('Export TXT').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 2)
+  assert.equal(e.downloads.length, 1)
+  const exported = await e.blobs.get(e.downloads[0].href).text()
+  assert(exported.includes('Imported while frozen'))
+  assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+  assert(e.window.__itsCallAssist.inspect().agentsFrozen)
 })
 ;(async () => {
   for (const { name, fn } of asyncChecks) {
