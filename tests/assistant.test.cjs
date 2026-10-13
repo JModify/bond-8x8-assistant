@@ -89,6 +89,17 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       }
     }
 
+    insertBefore (node, reference) {
+      // Reconciliation can add a new call before an existing focused editor.
+      if (node === reference) return node
+      node.remove()
+      const index = reference ? this.children.indexOf(reference) : this.children.length
+      this.children.splice(index, 0, node)
+      node.parentElement = this
+      node.ownerDocument = this.ownerDocument
+      return node
+    }
+
     setAttribute (k, v) {
       this.attributes[k] = String(v)
     }
@@ -159,6 +170,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     remove () {
       if (this.parentElement) {
         this.parentElement.children = this.parentElement.children.filter((node) => node !== this)
+        this.parentElement = null
       }
     }
   }
@@ -986,10 +998,10 @@ check('Hidden roster conceals all menu contents, then restores the open menu', (
 })
 
 check(
-  'Release reports version 1.1.2 and bottom controls are Mute, Call History and Settings',
+  'Release reports version 1.1.3 and bottom controls are Mute, Call History and Settings',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.1.2')
+    assert.equal(e.window.__itsCallAssist.version, '1.1.3')
     assert.deepEqual(
       e
         .ui()
@@ -1008,10 +1020,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.1.2'
+      '1.1.3'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.2'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.3'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -3385,6 +3397,111 @@ check(
     }
   }
 )
+check(
+  'A finished card without Info cannot create a disposition duplicate or a second counted call',
+  () => {
+    const e = environment({ g1: [] })
+    e.showCall()
+    e.caller('Alex Example')
+    e.showWrapUp(120, { seconds: 20 })
+    e.showCall({ info: false, seconds: 21 })
+    e.scan()
+    e.restoreMain()
+    const history = e.window.__itsCallAssist.callHistorySession()
+    assert.equal(history.records.length, 1)
+    assert.equal(history.records[0].caller, 'Alex Example')
+    assert.equal(history.pending.length, 0)
+    assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+  }
+)
+check(
+  'The finished-interaction guard survives reruns and refreshes while its reference is hidden',
+  () => {
+    const e = environment({ g1: [] })
+    e.showCall({ info: false })
+    e.caller('00123456')
+    e.showWrapUp(120, { seconds: 20 })
+    e.showCall({ info: false, seconds: 25 })
+    e.rerun()
+    e.reload()
+    e.scan()
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 0)
+    assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+  }
+)
+check(
+  'Disposition markers outrank a lingering active timer even with an empty Wrap up label',
+  () => {
+    const e = environment({ g1: [] })
+    e.showCall()
+    e.caller('Alex')
+    e.showWrapUp(120, { seconds: 20 })
+    const page = e.personalPage()
+    page.querySelector('[data-test-id="wrap-up-label"]').textContent = ''
+    const stale = e.window.document.createElement('div')
+    stale.setAttribute('data-test-id', 'interaction-timer')
+    stale.setAttribute('aria-label', 'Interaction')
+    stale.textContent = '00:20'
+    page.append(stale)
+    e.scan()
+    assert.equal(e.window.__itsCallAssist.inspect().view, 'disposition')
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+    assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+    page.querySelector('[data-test-id="wrap-up-label"]').remove()
+    page.querySelector('[data-test-id="progress-timer"]').remove()
+    e.scan()
+    assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 0)
+  }
+)
+check(
+  'A lingering Busy header after Wrap up does not count again before a genuine new interaction',
+  () => {
+    const e = environment()
+    e.showCall()
+    e.showWrapUp(120, { seconds: 20 })
+    e.restoreMain('Busy', 30)
+    e.setMe('Busy', 31)
+    assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+    e.showCall({ transactionId: 'demo-next', seconds: 1 })
+    assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+    e.caller('Casey')
+    e.showWrapUp(120, { transactionId: 'demo-next', seconds: 20 })
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 2)
+  }
+)
+check(
+  'A confirmed idle state permits a genuine next call from the same number without a reference',
+  () => {
+    const e = environment()
+    for (const name of ['Alex', 'Casey']) {
+      e.showCall({ info: false })
+      e.caller(name)
+      e.showWrapUp(120, { seconds: 20 })
+      e.restoreMain()
+    }
+    assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+    assert.deepEqual(
+      Array.from(e.window.__itsCallAssist.callHistorySession().records, (r) => r.caller),
+      ['Alex', 'Casey']
+    )
+  }
+)
+check(
+  'A distinct known call reference permits the next call without requiring an idle snapshot',
+  () => {
+    const e = environment()
+    e.showCall({ transactionId: 'demo-first' })
+    e.caller('Alex')
+    e.showWrapUp(120, { transactionId: 'demo-first', seconds: 20 })
+    e.showCall({ transactionId: 'demo-next', seconds: 1 })
+    e.caller('Casey')
+    e.showWrapUp(120, { transactionId: 'demo-next', seconds: 10 })
+    assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 2)
+  }
+)
 check('Wrap up saves the identifier and every readable call detail exactly once', () => {
   const e = environment({ g1: [] })
   e.showCall({ seconds: 100, waitSeconds: 15 })
@@ -3935,6 +4052,316 @@ check('Wrap up takes priority over an on-call History view and finalises the ide
   assert(e.ui().querySelector('.call-history').classList.contains('hidden'))
   assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
 })
+
+// These scenarios use completed fictional calls so saved-record editing exercises
+// the same capture, finalisation, persistence and counters as an ordinary session.
+function editableHistory (callers = ['Alex Example']) {
+  const e = environment({ g1: [] })
+  callers.forEach((caller, index) => {
+    const transactionId = 'demo-edit-' + index
+    e.showCall({ transactionId })
+    e.caller(caller)
+    e.showWrapUp(120, { transactionId, seconds: 20 })
+    e.restoreMain()
+  })
+  e.button('Call History').onclick()
+  return e
+}
+function historyCard (e, id = 1) {
+  return e
+    .ui()
+    .querySelectorAll('.history-card')
+    .find((card) => card.getAttribute('data-call-id') === String(id))
+}
+function editIdentifier (card, value) {
+  const input = card.querySelector('.history-edit-input')
+  input.value = value
+  input.oninput()
+  return input
+}
+check(
+  'Caller type is a prediction for names, usernames and exact six-to-nine-digit student numbers',
+  () => {
+    const examples = [
+      ['Alex Example', 'Staff'],
+      ['aexample', 'Staff'],
+      ['Élodie Example', 'Staff'],
+      ['学员', 'Staff'],
+      ['staff123', 'Staff'],
+      ['123456', 'Student'],
+      ['00123456', 'Student'],
+      ['123456789', 'Student'],
+      ['12345', 'Unknown'],
+      ['1234567890', 'Unknown'],
+      ['12 3456', 'Unknown'],
+      ['', 'Unknown'],
+      [' UNKNOWN ', 'Unknown'],
+      ['???', 'Unknown']
+    ]
+    const e = editableHistory(examples.map(([caller]) => caller))
+    const records = e.window.__itsCallAssist.callHistorySession().records
+    examples.forEach(([, expected], index) => {
+      assert.equal(records[index].callerPrediction, expected)
+      assert.equal(
+        historyCard(e, index + 1).querySelector('.history-prediction').textContent,
+        'Caller type (prediction): ' + expected
+      )
+    })
+    assert(
+      historyCard(e).querySelector('.prediction-note').textContent.includes('may be incorrect')
+    )
+  }
+)
+check('The pen becomes a tick and saves only the identifier and updated prediction', () => {
+  const e = editableHistory([''])
+  const card = historyCard(e)
+  const button = card.querySelector('.history-edit-toggle')
+  const original = e.window.__itsCallAssist.callHistorySession().records[0]
+  const sessionBefore = e.session.get('service-desk-8x8-call-history-v1')
+  const total = e.window.__itsCallAssist.statistics().total
+  assert.equal(button.textContent, '✎')
+  button.onclick()
+  assert.equal(button.textContent, '✓')
+  assert(card.classList.contains('editing'))
+  assert.equal(card.querySelector('.history-edit-input').value, '')
+  editIdentifier(card, '00123456')
+  e.scan()
+  assert.equal(e.session.get('service-desk-8x8-call-history-v1'), sessionBefore)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Unknown')
+  button.onclick()
+  const saved = e.window.__itsCallAssist.callHistorySession().records[0]
+  assert.deepEqual(JSON.parse(JSON.stringify(saved)), {
+    ...original,
+    caller: '00123456',
+    callerPrediction: 'Student'
+  })
+  assert.equal(button.textContent, '✎')
+  assert.equal(e.window.__itsCallAssist.statistics().total, total)
+  assert.equal(e.debug().activeReminder, null)
+  assert.equal(e.notifications.length, 0)
+  e.reload()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, '00123456')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].callerPrediction, 'Student')
+  for (const value of e.storage.values()) assert(!value.includes('00123456'))
+})
+check(
+  'Editing a student number to a staff username refreshes the prediction without replacing its card',
+  () => {
+    const e = editableHistory(['00123456'])
+    const card = historyCard(e)
+    const details = card.querySelector('details')
+    details.open = true
+    card.querySelector('.history-edit-toggle').onclick()
+    editIdentifier(card, '  aexample  ')
+    card.querySelector('.history-edit-toggle').onclick()
+    assert.equal(historyCard(e), card)
+    assert.equal(details.open, true)
+    assert.equal(card.querySelector('.history-caller').textContent, 'aexample')
+    assert.equal(
+      card.querySelector('.history-prediction').textContent,
+      'Caller type (prediction): Staff'
+    )
+  }
+)
+check(
+  'Back and Settings cancel an unsaved edit and restore the original identifier and prediction',
+  () => {
+    for (const destination of ['Back', 'Settings']) {
+      const e = editableHistory(['Alex'])
+      const card = historyCard(e)
+      const button = card.querySelector('.history-edit-toggle')
+      button.onclick()
+      editIdentifier(card, '00123456')
+      if (destination === 'Back') { e.ui().querySelector('.call-history').querySelector('button').onclick() } else e.button('Settings').onclick()
+      assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+      assert.equal(
+        e.window.__itsCallAssist.callHistorySession().records[0].callerPrediction,
+        'Staff'
+      )
+      assert.equal(button.textContent, '✎')
+      assert(!card.classList.contains('editing'))
+      // A delayed handler from a hidden card cannot open or save a cancelled editor.
+      button.onclick()
+      e.button('Call History').onclick()
+      assert.equal(button.textContent, '✎')
+      button.onclick()
+      assert.equal(card.querySelector('.history-edit-input').value, 'Alex')
+    }
+  }
+)
+check(
+  'Only one saved call can be edited and switching records discards the first unsaved draft',
+  () => {
+    const e = editableHistory(['Alex', 'Casey'])
+    const first = historyCard(e, 1)
+    const second = historyCard(e, 2)
+    first.querySelector('.history-edit-toggle').onclick()
+    editIdentifier(first, '00123456')
+    second.querySelector('.history-edit-toggle').onclick()
+    assert.equal(first.querySelector('.history-edit-toggle').textContent, '✎')
+    assert.equal(second.querySelector('.history-edit-toggle').textContent, '✓')
+    assert.equal(e.ui().querySelectorAll('.editing').length, 1)
+    editIdentifier(second, '987654')
+    second.querySelector('.history-edit-toggle').onclick()
+    const records = e.window.__itsCallAssist.callHistorySession().records
+    assert.equal(records[0].caller, 'Alex')
+    assert.equal(records[1].caller, '987654')
+    assert.equal(records[1].callerPrediction, 'Student')
+    assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+  }
+)
+check(
+  'Enter confirms an edit, Escape cancels it and a confirmed blank name becomes Unknown',
+  () => {
+    const e = editableHistory()
+    const card = historyCard(e)
+    const button = card.querySelector('.history-edit-toggle')
+    button.onclick()
+    const input = editIdentifier(card, 'Discard me')
+    let prevented = 0
+    input.onkeydown({ key: 'Escape', preventDefault: () => prevented++ })
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex Example')
+    button.onclick()
+    editIdentifier(card, '   ')
+    input.onkeydown({ key: 'Enter', preventDefault: () => prevented++ })
+    assert.equal(prevented, 2)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Unknown')
+    assert.equal(
+      e.window.__itsCallAssist.callHistorySession().records[0].callerPrediction,
+      'Unknown'
+    )
+  }
+)
+check(
+  'Polling and a Brisbane day change preserve the saved-call editor and its unsaved text',
+  () => {
+    const e = editableHistory()
+    const card = historyCard(e)
+    card.querySelector('.history-edit-toggle').onclick()
+    const input = editIdentifier(card, 'Alex ')
+    e.ui().querySelector('.history-list').scrollTop = 75
+    e.scan()
+    e.setTime(Date.parse('2026-10-14T00:00:03+10:00'))
+    e.scan()
+    assert.equal(historyCard(e), card)
+    assert.equal(card.querySelector('.history-edit-input'), input)
+    assert.equal(input.value, 'Alex ')
+    assert.equal(card.querySelector('.history-edit-toggle').textContent, '✓')
+    assert.equal(e.ui().querySelector('.history-list').scrollTop, 75)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex Example')
+  }
+)
+check('Search uses a confirmed edit and cancels a draft when its call is filtered away', () => {
+  const e = editableHistory(['Alex', 'Casey'])
+  const card = historyCard(e)
+  const button = card.querySelector('.history-edit-toggle')
+  const search = e.ui().querySelector('.history-search')
+  button.onclick()
+  editIdentifier(card, 'Discard me')
+  search.value = 'Casey'
+  search.oninput()
+  assert(!card.parentElement)
+  assert.equal(button.textContent, '✎')
+  button.onclick()
+  assert.equal(button.textContent, '✎')
+  search.value = 'Alex'
+  search.oninput()
+  button.onclick()
+  editIdentifier(card, '00123456')
+  button.onclick()
+  assert(!historyCard(e))
+  search.value = '00123456'
+  search.oninput()
+  assert.equal(historyCard(e), card)
+  assert.equal(card.querySelector('.history-caller').textContent, '00123456')
+})
+check(
+  'Disposition cancels a history edit without overwriting either caller or creating another count',
+  () => {
+    const e = editableHistory(['Alex'])
+    e.showCall({ transactionId: 'demo-new' })
+    e.caller('Casey')
+    e.ui()
+      .querySelector('.call-heading')
+      .querySelectorAll('button')
+      .find((b) => b.textContent === 'History')
+      .onclick()
+    const card = historyCard(e)
+    card.querySelector('.history-edit-toggle').onclick()
+    editIdentifier(card, 'Discard me')
+    e.showWrapUp(120, { transactionId: 'demo-new', seconds: 20 })
+    assert.equal(card.querySelector('.history-edit-toggle').textContent, '✎')
+    const records = e.window.__itsCallAssist.callHistorySession().records
+    assert.deepEqual(
+      Array.from(records, (r) => r.caller),
+      ['Alex', 'Casey']
+    )
+    assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+  }
+)
+check('Unsaved history edits do not survive a rerun or refresh', () => {
+  for (const restart of ['rerun', 'reload']) {
+    const e = editableHistory()
+    const card = historyCard(e)
+    card.querySelector('.history-edit-toggle').onclick()
+    editIdentifier(card, 'Discard me')
+    e[restart]()
+    e.button('Call History').onclick()
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex Example')
+    assert.equal(historyCard(e).querySelector('.history-edit-toggle').textContent, '✎')
+  }
+})
+check(
+  'Blocked session storage retains confirmed history edits in memory through a snippet rerun',
+  () => {
+    const e = environment({ g1: [] }, {}, { blockSessionStorage: true })
+    e.showCall()
+    e.showWrapUp(120, { seconds: 20 })
+    e.restoreMain()
+    e.button('Call History').onclick()
+    const card = historyCard(e)
+    card.querySelector('.history-edit-toggle').onclick()
+    editIdentifier(card, '00123456')
+    card.querySelector('.history-edit-toggle').onclick()
+    e.rerun()
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, '00123456')
+    assert.equal(
+      e.window.__itsCallAssist.callHistorySession().records[0].callerPrediction,
+      'Student'
+    )
+    assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+  }
+)
+check(
+  'Saved edits remain plain text and old records derive predictions from their current identifier',
+  () => {
+    const e = environment(
+      {},
+      {},
+      {
+        callHistory: {
+          records: [
+            { id: 1, detectedAt: 0, completedAt: 1, caller: '00123456', callerPrediction: 'Staff' },
+            { id: 2, detectedAt: 2, completedAt: 3, caller: 'Alex Example' }
+          ]
+        }
+      }
+    )
+    e.button('Call History').onclick()
+    assert.equal(
+      e.window.__itsCallAssist.callHistorySession().records[0].callerPrediction,
+      'Student'
+    )
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[1].callerPrediction, 'Staff')
+    const card = historyCard(e)
+    card.querySelector('.history-edit-toggle').onclick()
+    editIdentifier(card, '<img src=x onerror=alert(1)>')
+    card.querySelector('.history-edit-toggle').onclick()
+    assert.equal(card.querySelector('.history-caller').textContent, '<img src=x onerror=alert(1)>')
+    assert.equal(card.querySelector('.history-caller').children.length, 0)
+    assert.equal(e.window.__itsCallAssist.statistics().total, 0)
+  }
+)
 ;(async () => {
   for (const { name, fn } of asyncChecks) {
     await fn()

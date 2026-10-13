@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — v1.1.2
+/* Service Desk 8x8 Assistant — v1.1.3
  * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
@@ -47,7 +47,7 @@
   const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = '1.1.2'
+  const VERSION = '1.1.3'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -178,9 +178,13 @@
     // Multiple visible phone cards are ambiguous. Never attach a name to an arbitrary caller.
     if (cards.length !== 1) return null
     const card = cards[0]
-    const wrap = [...card.querySelectorAll('[data-test-id="wrap-up-label"]')].filter(
-      (node) => isVisible(node) && dispositionStatus(node.textContent)
-    )
+    const wrap = [...card.querySelectorAll('[data-test-id="wrap-up-label"]')].filter(isVisible)
+    const completedTimers = [
+      ...card.querySelectorAll('[data-test-id="interaction-time-label"]')
+    ].filter(isVisible)
+    const wrapTimers = [
+      ...card.querySelectorAll('[data-test-id="progress-timer"][aria-label="Wrap up"]')
+    ].filter(isVisible)
     const timers = [
       ...card.querySelectorAll('[data-test-id="interaction-timer"][aria-label="Interaction"]')
     ].filter(isVisible)
@@ -189,9 +193,11 @@
         '[data-test-id="active-call-name"],[data-test-id="active-call-number"]'
       )
     ].filter(isVisible)
-    // An offer countdown or a Disposition tab alone is not a connected call or Wrap up state.
+    // Disposition has a completed-call timer and a Wrap up countdown. These markers
+    // take precedence over a lingering active heading/timer during a partial rerender.
+    // An offer countdown or the Disposition tab alone still cannot identify a call.
     const phase =
-      wrap.length === 1
+      wrap.length || completedTimers.length || wrapTimers.length
         ? 'disposition'
         : !wrap.length && timers.length === 1 && headings.length
             ? 'call'
@@ -207,9 +213,6 @@
       numberField && headingNumber && phoneDigits(numberField) !== phoneDigits(headingNumber)
         ? null
         : numberField || headingNumber
-    const completedTimers = [
-      ...card.querySelectorAll('[data-test-id="interaction-time-label"]')
-    ].filter(isVisible)
     const timer =
       phase === 'call' ? timers[0] : completedTimers.length === 1 ? completedTimers[0] : null
     const timerText = normaliseText(timer?.textContent)
@@ -220,6 +223,8 @@
     const onHold = phase === 'call' && holdTimers.length === 1
     return {
       phase,
+      remaining: wrapTimers.length === 1 ? parseDuration(wrapTimers[0].textContent) : null,
+      wrapTimer: wrapTimers.length === 1 ? normaliseText(wrapTimers[0].textContent) : '',
       number,
       queue: readCallField(card, 'queue'),
       channel: readCallField(card, 'channel name'),
@@ -241,10 +246,8 @@
     const breaks = docs
       .flatMap((d) => [...d.querySelectorAll('[data-test-id="on-break-timer"]')])
       .filter(isVisible)
-    const wraps = docs
-      .flatMap((d) => [...d.querySelectorAll('[data-test-id="wrap-up-label"]')])
-      .filter((node) => isVisible(node) && dispositionStatus(node.textContent))
-    if (breaks.length === 1 && !wraps.length) {
+    const call = readCallPage(docs)
+    if (breaks.length === 1 && !call) {
       const timer = breaks[0]
       const text = normaliseText(timer.textContent)
       const seconds = parseDuration(text)
@@ -252,21 +255,19 @@
       const kind = readBreakKind(timer.parentElement?.parentElement)
       return { kind, status: 'On Break', timer: text, seconds, liveTimer: text }
     }
-    if (wraps.length === 1 && !breaks.length) {
-      // Scope the countdown to the active phone card, not another interaction tab.
-      const card = wraps[0].closest('[data-test-id="phone-card-test-id"]')
-      const timer = card?.querySelector('[data-test-id="progress-timer"][aria-label="Wrap up"]')
-      if (!isVisible(timer)) return null
-      const text = normaliseText(timer.textContent)
-      const remaining = parseDuration(text)
-      if (remaining === null) return null
+    if (call?.phase === 'disposition' && !breaks.length) {
+      if (call.remaining === null) return null
       // This is 8x8's countdown, not time spent in disposition. The separate
       // interaction-time-label is the finished call's duration and is ignored.
-      return { kind: 'disposition', status: 'Wrap Up', remaining, liveTimer: text }
+      return {
+        kind: 'disposition',
+        status: 'Wrap Up',
+        remaining: call.remaining,
+        liveTimer: call.wrapTimer
+      }
     }
-    if (!breaks.length && !wraps.length) {
-      const call = readCallPage(docs)
-      if (call?.phase === 'call') {
+    if (!breaks.length) {
+      if (call?.phase === 'call' && !closedCallPage(call)) {
         return {
           kind: 'call',
           status: 'Busy',
@@ -427,6 +428,10 @@
     return me
   }
   function readCounterPresence (docs) {
+    const card = readCallPage(docs)
+    // A completed-call marker remains disposition even when its countdown is temporarily missing.
+    if (card?.phase === 'disposition') return { status: 'Wrap Up' }
+    if (card?.phase === 'call' && closedCallPage(card)) return null
     const page = readPersonalPage(docs)
     // Reopening a card already saved at Wrap up is not evidence of another Busy start.
     if (
@@ -445,9 +450,13 @@
       // An open status picker can add icons. The header's own timer identifies
       // the actual presence in that case; no queue or group counts are read.
       const me = readMyPresence(docs)
+      if (me && normaliseStatus(me.status) === 'busy' && callHistory.closedId !== null) return null
       return me ? { status: me.status } : null
     }
     const status = normaliseText(states[0].getAttribute('data-status-value'))
+    // Busy can linger in the header after Wrap up. A new connected identity or an
+    // observed idle state must release the completed interaction before counting again.
+    if (normaliseStatus(status) === 'busy' && callHistory.closedId !== null) return null
     return status ? { status } : null
   }
   // 8x8 uses several spellings for the same state across its header and phone card.
@@ -1386,7 +1395,7 @@
     .history-card-heading {
       display: flex;
       justify-content: space-between;
-      align-items: baseline;
+      align-items: flex-start;
       gap: 10px;
       margin-bottom: 10px;
     }
@@ -1395,6 +1404,45 @@
       font-size: 13px;
       font-weight: 650;
       overflow-wrap: anywhere;
+    }
+    .history-caller-slot {
+      flex: 1;
+      min-width: 0;
+    }
+    .history-card-actions {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-shrink: 0;
+    }
+    .history-edit-toggle {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      margin: 0;
+      color: #245dc1;
+      font-size: 17px;
+      line-height: 1;
+      border-color: #c5d5ec;
+      background: #f3f7ff;
+    }
+    .history-edit-toggle.saving {
+      color: #fff;
+      background: #245dc1;
+      border-color: #245dc1;
+    }
+    .history-edit-input {
+      width: 100%;
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid #245dc1;
+      border-radius: 5px;
+      font: inherit;
+      color: #172235;
+      background: #fff;
+    }
+    .history-card.editing .history-time {
+      display: none;
     }
     .history-time {
       font-size: 10px;
@@ -1847,7 +1895,7 @@
   historyList.tabIndex = 0
   createElement(
     'p',
-    'History is kept in this tab for this session. Calls are saved after Wrap up; blank names are Unknown.',
+    'Kept in this tab for this session. Use the pen to edit a name or ID; the tick saves. Back cancels unsaved changes.',
     historyPanel,
     'history-note'
   )
@@ -2128,12 +2176,26 @@
     startedAt: Date.now(),
     nextId: 1,
     currentId: null,
+    closedId: null,
     pending: [],
     records: []
   }
   let historyRevision = 0
   let historyRenderKey = ''
   let editingCallId = null
+  let historyEdit = null
+  const historyWidgets = new Map()
+  const historyDays = new Map()
+  let historyEmpty = null
+  function predictCaller (value) {
+    const text = normaliseText(value)
+    // Identifiers remain strings: leading zeros are significant for student numbers.
+    if (!text || normaliseStatus(text) === 'unknown') return 'Unknown'
+    if (/^\d{6,9}$/.test(text)) return 'Student'
+    // Names and usernames suggest staff; a student's name may produce the same guess.
+    if (/\p{L}/u.test(text)) return 'Staff'
+    return 'Unknown'
+  }
   // Finite numbers can still exceed JavaScript's supported date range.
   const validCallTime = (time) => Number.isFinite(time) && Number.isFinite(new Date(time).getTime())
   function savedCall (value, pending) {
@@ -2168,6 +2230,7 @@
         typeof value.callerInput === 'string' ? value.callerInput.slice(0, 160) : ''
     } else {
       call.caller = text('caller', 160) || 'Unknown'
+      call.callerPrediction = predictCaller(call.caller)
       call.completedAt = value.completedAt
       call.durationComplete = value.durationComplete === true
     }
@@ -2199,11 +2262,16 @@
       if (callHistory.pending.some((call) => call.id === saved.currentId)) {
         callHistory.currentId = saved.currentId
       }
+      if (callHistory.records.some((call) => call.id === saved.closedId)) {
+        callHistory.closedId = saved.closedId
+      }
     }
   } catch {
     // An in-memory snapshot preserves drafts on rerun when the browser blocks session storage.
     if (resumedCallHistory) Object.assign(callHistory, resumedCallHistory)
   }
+  // Older records and blocked-storage rerun snapshots derive the prediction from the identifier.
+  for (const record of callHistory.records) record.callerPrediction = predictCaller(record.caller)
   function saveCallHistory () {
     try {
       // Caller details stay in this tab's session; never put them in durable shared preferences.
@@ -2214,6 +2282,25 @@
   }
   function currentCallDraft () {
     return callHistory.pending.find((call) => call.id === callHistory.currentId) || null
+  }
+  function closedCallPage (page) {
+    if (
+      page.transactionId &&
+      callHistory.records.some((call) => call.transactionId === page.transactionId)
+    ) {
+      return true
+    }
+    const closed = callHistory.records.find((call) => call.id === callHistory.closedId)
+    if (!closed) return false
+    // A different known reference or caller proves a distinct interaction. Missing Info
+    // during disposition cannot manufacture another call with an Unknown identifier.
+    if (page.transactionId && closed.transactionId) {
+      return page.transactionId === closed.transactionId
+    }
+    if (page.number && closed.number && phoneDigits(page.number) !== phoneDigits(closed.number)) {
+      return false
+    }
+    return true
   }
   function matchesCallNumber (draft, page) {
     // Missing values do not contradict a draft; two readable different numbers do.
@@ -2265,14 +2352,19 @@
     const record = {
       ...draft,
       caller: normaliseText(draft.callerInput) || 'Unknown',
+      callerPrediction: predictCaller(draft.callerInput),
       completedAt: Math.max(Date.now(), draft.detectedAt),
       // Only a final native timer confirms the complete duration. Earlier samples are a lower bound.
       durationComplete: finalDurationReadable
     }
     delete record.callerInput
     callHistory.records.push(record)
+    callHistory.closedId = record.id
     callHistory.pending = callHistory.pending.filter((call) => call.id !== draft.id)
-    if (callHistory.currentId === draft.id) callHistory.currentId = null
+    if (callHistory.currentId === draft.id) {
+      callHistory.currentId = null
+      callerInput.disabled = true
+    }
     historyRevision++
   }
   function trackCallHistory (docs) {
@@ -2282,11 +2374,12 @@
       // Keep the draft unchanged while header and Info describe different callers.
     } else if (page?.phase === 'call') {
       // A stable transaction reference prevents repeated renders or restarts making duplicates.
-      const alreadySaved =
-        page.transactionId &&
-        callHistory.records.some((call) => call.transactionId === page.transactionId)
-      if (alreadySaved) callHistory.currentId = null
-      else {
+      const alreadySaved = closedCallPage(page)
+      if (alreadySaved) {
+        callHistory.currentId = null
+        callerInput.disabled = true
+      } else {
+        callHistory.closedId = null
         let draft = matchingCallDraft(page)
         if (!draft) {
           draft = {
@@ -2312,6 +2405,13 @@
       const draft = matchingCallDraft(page)
       // An unfamiliar Wrap up reference cannot finalise another caller's draft.
       if (draft) finishCall(draft, page)
+      else {
+        // Restore the guard when upgrading an already-saved interaction still in Wrap up.
+        const record = page.transactionId
+          ? callHistory.records.find((call) => call.transactionId === page.transactionId)
+          : callHistory.records.at(-1)
+        if (record && matchesCallNumber(record, page)) callHistory.closedId = record.id
+      }
     } else if (!page) {
       const me = readMyPresence(docs)
       // Disappearing HTML alone proves nothing. A readable idle state can recover a
@@ -2330,6 +2430,8 @@
         ].includes(normaliseStatusLabel(me.status))
       ) {
         for (const draft of [...callHistory.pending]) finishCall(draft)
+        // A confirmed return to idle permits another call, including the same telephone number.
+        callHistory.closedId = null
       }
     }
     if (JSON.stringify(callHistory) !== before) saveCallHistory()
@@ -2350,6 +2452,143 @@
       hour: '2-digit',
       minute: '2-digit'
     })
+  }
+  function syncHistoryEditor (record, widget) {
+    const editing = historyEdit?.id === record.id
+    widget.card.classList.toggle('editing', editing)
+    widget.caller.classList.toggle('hidden', editing)
+    widget.input.classList.toggle('hidden', !editing)
+    widget.button.classList.toggle('saving', editing)
+    setText(widget.caller, record.caller)
+    setText(widget.button, editing ? '✓' : '✎')
+    const action = editing ? 'Save caller name or ID' : 'Edit caller name or ID'
+    widget.button.title = action
+    widget.button.setAttribute('aria-label', `${action} for call #${record.id}`)
+    setText(widget.prediction, 'Caller type (prediction): ' + record.callerPrediction)
+    // Polling must leave the active editor's text, selection and caret untouched.
+    if (!editing) widget.input.value = record.caller === 'Unknown' ? '' : record.caller
+  }
+  function cancelHistoryEdit () {
+    if (!historyEdit) return
+    const id = historyEdit.id
+    historyEdit = null
+    const record = callHistory.records.find((call) => call.id === id)
+    const widget = historyWidgets.get(id)
+    if (record && widget) syncHistoryEditor(record, widget)
+  }
+  function beginHistoryEdit (record, widget) {
+    if (
+      destroyed ||
+      activeView !== 'history' ||
+      historyPanel.classList.contains('hidden') ||
+      widget.card.parentElement !== historyList
+    ) {
+      return
+    }
+    // Only one saved-call draft exists. Opening another editor discards the previous draft.
+    cancelHistoryEdit()
+    historyEdit = { id: record.id, value: record.caller === 'Unknown' ? '' : record.caller }
+    widget.input.value = historyEdit.value
+    syncHistoryEditor(record, widget)
+    widget.input.focus?.({ preventScroll: true })
+    widget.input.select?.()
+  }
+  function saveHistoryEdit () {
+    if (
+      destroyed ||
+      !historyEdit ||
+      activeView !== 'history' ||
+      historyPanel.classList.contains('hidden')
+    ) {
+      return
+    }
+    const record = callHistory.records.find((call) => call.id === historyEdit.id)
+    if (!record) return cancelHistoryEdit()
+    // Explicit confirmation changes only the identifier and prediction, never call timings or counts.
+    record.caller = normaliseText(historyEdit.value) || 'Unknown'
+    record.callerPrediction = predictCaller(record.caller)
+    historyEdit = null
+    historyRevision++
+    saveCallHistory()
+    renderHistory()
+  }
+  function createHistoryWidget (record) {
+    const card = createElement('article', '', historyList, 'history-card')
+    card.setAttribute('data-call-id', String(record.id))
+    const heading = createElement('div', '', card, 'history-card-heading')
+    const slot = createElement('div', '', heading, 'history-caller-slot')
+    const caller = createElement('h4', record.caller, slot, 'history-caller')
+    const input = createElement('input', '', slot, 'history-edit-input hidden')
+    input.type = 'text'
+    input.maxLength = 160
+    input.autocomplete = 'off'
+    input.placeholder = 'Name, username or student number'
+    input.setAttribute('aria-label', `Caller name or ID for call #${record.id}`)
+    const actions = createElement('div', '', heading, 'history-card-actions')
+    const time = createElement(
+      'span',
+      `#${record.id} · ${historyTime(record.detectedAt)}`,
+      actions,
+      'history-time'
+    )
+    time.title = 'Call first detected at ' + historyTime(record.detectedAt)
+    const button = createElement('button', '✎', actions, 'history-edit-toggle')
+    const information = createElement('div', '', card, 'history-information')
+    setText(
+      createCallDetail(information, 'Phone number', 'history-number'),
+      record.number || 'Unavailable'
+    )
+    setText(createCallDetail(information, 'Queue', 'history-queue'), record.queue || 'Unavailable')
+    const timings = createElement('div', '', card, 'history-timings')
+    const duration =
+      record.durationSeconds === null
+        ? '—'
+        : (record.durationComplete ? '' : '≥ ') + callClock(record.durationSeconds)
+    createElement('span', 'Duration ' + duration, timings, 'history-duration')
+    createElement('span', 'Queue wait ' + callClock(record.waitSeconds), timings, 'history-wait')
+    const details = createElement('details', '', card, 'history-extra')
+    createElement('summary', 'More details', details)
+    const prediction = createElement('p', '', details, 'history-prediction')
+    prediction.title = 'Based on the entered name or ID; this prediction may be incorrect.'
+    createElement(
+      'p',
+      'Prediction uses the entered name or ID and may be incorrect.',
+      details,
+      'prediction-note'
+    )
+    if (record.transactionId) createElement('p', 'Call reference: ' + record.transactionId, details)
+    if (record.channel) createElement('p', 'Channel: ' + record.channel, details)
+    if (record.channelNumber) createElement('p', 'Channel number: ' + record.channelNumber, details)
+    if (record.holdSeconds !== null) {
+      createElement('p', 'Hold time last read: ' + callClock(record.holdSeconds), details)
+    }
+    createElement('p', 'Saved at: ' + historyTime(record.completedAt), details)
+    if (!record.durationComplete) {
+      createElement(
+        'p',
+        'Duration shows the last time read during the call; the full duration was unavailable.',
+        details
+      )
+    }
+    const widget = { card, caller, input, button, prediction }
+    button.onclick = () =>
+      historyEdit?.id === record.id ? saveHistoryEdit() : beginHistoryEdit(record, widget)
+    input.oninput = () => {
+      if (!destroyed && historyEdit?.id === record.id) historyEdit.value = input.value.slice(0, 160)
+    }
+    // Keep editing keystrokes inside the assistant instead of invoking 8x8 shortcuts.
+    for (const event of ['keydown', 'keypress', 'keyup']) {
+      input.addEventListener(event, (e) => e.stopPropagation())
+    }
+    input.onkeydown = (event) => {
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        event.preventDefault()
+        if (event.key === 'Enter') saveHistoryEdit()
+        else cancelHistoryEdit()
+      }
+    }
+    syncHistoryEditor(record, widget)
+    return widget
   }
   function renderHistory () {
     const query = normaliseStatus(historySearch.value)
@@ -2375,17 +2614,18 @@
       `${records.length} ${records.length === 1 ? 'call' : 'calls'} saved this session`
     )
     setText(historyResults, query ? `${filtered.length} found` : 'Newest first')
-    historyList.textContent = ''
+    // Filtering an edited row away cancels its unsaved changes, just like leaving the menu.
+    if (historyEdit && !filtered.some((record) => record.id === historyEdit.id)) cancelHistoryEdit()
+    const desired = []
     if (!filtered.length) {
-      createElement(
-        'div',
+      if (!historyEmpty) historyEmpty = createElement('div', '', historyList, 'history-empty')
+      setText(
+        historyEmpty,
         query
           ? 'No matching calls. Try another name, number or queue.'
-          : 'No calls saved yet. Completed calls will appear here after Wrap up.',
-        historyList,
-        'history-empty'
+          : 'No calls saved yet. Completed calls will appear here after Wrap up.'
       )
-      return
+      desired.push(historyEmpty)
     }
     let previousDay = ''
     for (const record of filtered) {
@@ -2400,56 +2640,32 @@
               month: 'short',
               year: 'numeric'
             })
-        createElement('div', label, historyList, 'history-day')
+        let heading = historyDays.get(recordDay)
+        if (!heading) {
+          heading = createElement('div', '', historyList, 'history-day')
+          historyDays.set(recordDay, heading)
+        }
+        setText(heading, label)
+        desired.push(heading)
         previousDay = recordDay
       }
-      const card = createElement('article', '', historyList, 'history-card')
-      const heading = createElement('div', '', card, 'history-card-heading')
-      createElement('h4', record.caller, heading, 'history-caller')
-      const time = createElement(
-        'span',
-        `#${record.id} · ${historyTime(record.detectedAt)}`,
-        heading,
-        'history-time'
-      )
-      time.title = 'Call first detected at ' + historyTime(record.detectedAt)
-      const information = createElement('div', '', card, 'history-information')
-      setText(
-        createCallDetail(information, 'Phone number', 'history-number'),
-        record.number || 'Unavailable'
-      )
-      setText(
-        createCallDetail(information, 'Queue', 'history-queue'),
-        record.queue || 'Unavailable'
-      )
-      const timings = createElement('div', '', card, 'history-timings')
-      const duration =
-        record.durationSeconds === null
-          ? '—'
-          : (record.durationComplete ? '' : '≥ ') + callClock(record.durationSeconds)
-      createElement('span', 'Duration ' + duration, timings, 'history-duration')
-      createElement('span', 'Queue wait ' + callClock(record.waitSeconds), timings, 'history-wait')
-      const details = createElement('details', '', card, 'history-extra')
-      createElement('summary', 'More details', details)
-      if (record.transactionId) {
-        createElement('p', 'Call reference: ' + record.transactionId, details)
+      let widget = historyWidgets.get(record.id)
+      if (!widget) {
+        widget = createHistoryWidget(record)
+        historyWidgets.set(record.id, widget)
       }
-      if (record.channel) createElement('p', 'Channel: ' + record.channel, details)
-      if (record.channelNumber) {
-        createElement('p', 'Channel number: ' + record.channelNumber, details)
-      }
-      if (record.holdSeconds !== null) {
-        createElement('p', 'Hold time last read: ' + callClock(record.holdSeconds), details)
-      }
-      createElement('p', 'Saved at: ' + historyTime(record.completedAt), details)
-      if (!record.durationComplete) {
-        createElement(
-          'p',
-          'Duration shows the last time read during the call; the full duration was unavailable.',
-          details
-        )
-      }
+      syncHistoryEditor(record, widget)
+      desired.push(widget.card)
     }
+    // Insert new rows around existing cards instead of detaching an active input.
+    // This preserves focus, caret, expanded details and normal scroll anchoring during polling.
+    desired.forEach((node, index) => {
+      if (historyList.children[index] !== node) {
+        historyList.insertBefore(node, historyList.children[index] || null)
+      }
+    })
+    const retained = new Set(desired)
+    for (const node of [...historyList.children]) if (!retained.has(node)) node.remove()
   }
   function renderCall (page) {
     const draft = currentCallDraft()
@@ -2709,6 +2925,7 @@
     const callHistoryOpen = compactKind === 'call' && historyDuringCall && activeView === 'history'
     const compact = !!compactKind && !unavailable && !callHistoryOpen
     const onCall = compactKind === 'call' && compact
+    if (historyEdit && (unavailable || compact || activeView !== 'history')) cancelHistoryEdit()
     panel.classList.toggle('compact', compact && !onCall)
     panel.classList.toggle('call-panel', onCall)
     panel.classList.toggle('history-panel', !unavailable && !compact && activeView === 'history')
@@ -2795,6 +3012,7 @@
     syncViews()
   }
   function openView (view) {
+    if (activeView === 'history' && view !== 'history') cancelHistoryEdit()
     // Leaving Sound Settings cancels the sample sound, while actual reminders continue.
     if (activeView === 'sounds' && view !== 'sounds') stopSound('preview')
     activeView = view

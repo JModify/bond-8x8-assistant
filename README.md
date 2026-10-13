@@ -2,7 +2,7 @@
 
 Assistant for the Bond IT Service Desk 8x8 customer call center interface.
 
-Author: **Joshua Lavagna-Slater** | Current version: **1.1.2**.
+Author: **Joshua Lavagna-Slater** | Current version: **1.1.3**.
 
 The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
@@ -71,6 +71,7 @@ The call is saved when the actual **Wrap up** state appears. Simply opening 8x8'
 | Saved detail | Source |
 | --- | --- |
 | Caller name or student number | Your optional entry; Unknown when blank |
+| Caller type (prediction) | Student for exactly 6–9 digits; Staff when the entry contains letters; Unknown otherwise |
 | Phone number | The active call's Phone number field or readable number heading |
 | Queue | The active call's labelled Queue field |
 | Duration | The native interaction clock, confirmed by the final call timer at Wrap up |
@@ -82,9 +83,15 @@ The call is saved when the actual **Wrap up** state appears. Simply opening 8x8'
 
 Call History lists completed records newest first, grouped by Brisbane date. Search by name, student number, phone number, queue or call reference. Telephone searches accept spaces and punctuation. Long histories scroll while the heading, search and statistics remain accessible. **More details** expands a record's reference, channel information and saved time. Opening the menu does not create another counter: its Today, Last hour and Last detected values come from the same statistics as the main menu. The separate **calls saved this session** count includes completed history records, so it can differ from the day's observed Busy-start count.
 
+Click the **pen** in the top right of a saved call to edit its caller name or ID. It changes to a **tick**; click the tick or press Enter to save. **Back** or changing menus cancels an unsaved edit, as does Escape. Only one call can be edited at a time: opening another editor cancels the first draft. A saved edit changes only the name/ID and its prediction, leaving call times, other details and counts untouched. A confirmed blank entry becomes Unknown. Polling preserves your text and caret, and unsaved edits are never stored.
+
+**Caller type (prediction)** appears under **More details**. An exact 6–9-digit entry suggests Student, including leading zeros. A name or username containing letters suggests Staff. Blank, Unknown and other unmatched entries predict Unknown. This is only a guess from what you enter: entering a student's full name can produce a Staff prediction. It updates when an edit is saved and is also derived for older records when they are restored. This release does not add sorting by prediction.
+
 History and unfinished drafts use [browser tab session storage](https://developer.mozilla.org/en-US/docs/Web/API/Window/sessionStorage), separate from durable assistant settings. They survive refreshes and snippet reruns within the tab's page session; browser session restoration may restore them too. Normal tab/session closure ends this history. If session storage is blocked or full, recording still works in memory and can survive a snippet rerun, but a refresh cannot recover that in-memory copy. Caller details are never placed in the assistant's localStorage preferences/statistics or sent to GitHub, Library or an external service.
 
-Capture requires a readable connected phone card. A Busy header or incoming-call offer alone is not enough to create a detailed record. Previously unseen completed calls cannot be reconstructed. Hidden or ambiguous card data cannot attach a name to an arbitrary interaction; previously readable details are retained rather than erased. Repeated references do not create duplicate records. If Wrap up is missed but a readable idle state proves the call ended, the record retains its last known duration as **≥** that time; unknown values stay unavailable. Busy, hold and disposition timers never substitute for call duration. These limitations also mean calls outside the assistant's observed period may be missing.
+Capture requires a readable connected phone card. A Busy header or incoming-call offer alone is not enough to create a detailed record. Previously unseen completed calls cannot be reconstructed. Hidden or ambiguous card data cannot attach a name to an arbitrary interaction; previously readable details are retained rather than erased. Repeated references do not create duplicate records. Completed-call and Wrap up markers take priority during partial page updates, and a finished interaction stays guarded even when its Info fields disappear. A lingering Busy header or active clock cannot turn disposition into a new Unknown call or increment the counter again. A distinct new connected reference or number, or a confirmed return to idle, permits the next interaction. If no such evidence is readable, the assistant cannot reliably distinguish a new call from the old card. If Wrap up is missed but a readable idle state proves the call ended, the record retains its last known duration as **≥** that time; unknown values stay unavailable. Busy, hold and disposition timers never substitute for call duration. These limitations also mean calls outside the assistant's observed period may be missing.
+
+Version 1.1.3 prevents new disposition duplicates. Existing saved records and daily counts are retained; the assistant cannot safely determine which earlier Unknown records were erroneous or reconstruct the correct historical total.
 
 ## Timing settings and compact reminders
 
@@ -172,6 +179,6 @@ npm test
 
 The code separates page parsing, pure alert conditions, persistent settings, roster reconciliation, freshness checks, UI rendering and audio/notification delivery into focused helpers. Comments explain complex selectors, elapsed/countdown conversion, migration rules, asynchronous routing and lifecycle cleanup. Styles are expanded into readable CSS and remain isolated inside the panel's shadow root.
 
-Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Call-history checks cover real Wrap up versus tabs/offers, repeated and switched references, student numbers, safe text rendering, missing/ambiguous fields, session-only persistence, reruns/refreshes, search, shared statistics and immutable completed entries. Layout is also checked separately in Chromium with fictional agents, both supplied minimal break pages, and the supplied on-call structure with fictionalised caller details. Checks include caret preservation, an 81-record scrolling history, four viewport sizes and active alerts. These checks do not verify live Edge notifications or physical audio delivery.
+Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Call-history checks cover real Wrap up versus tabs/offers, repeated and switched references, disposition duplicates with missing Info and lingering clocks/Busy headers, student numbers, safe text rendering, missing/ambiguous fields, session-only persistence, reruns/refreshes, search and shared statistics. Saved-record checks cover one editor at a time, confirmation/cancellation, prediction changes, polling, day rollover, blocked storage, safe text and unchanged call metadata/counts. Layout is also checked separately in Chromium with fictional agents, both supplied minimal break pages, and the supplied on-call and disposition structures with fictionalised caller details. Checks include caret preservation, scrolling histories, narrow and short viewports and active alerts. These checks do not verify live Edge notifications or physical audio delivery.
 
 Secondary-ringer checks compare note patterns, volume envelopes, clock offsets and destinations across both contexts. They cover Default/Communications aliases, device loss, routing errors, muted startup, pending choices and shutdown. The 1.1.1 menu is checked at five viewport sizes using native Chromium audio graphs with simulated device choices; physical playback through two speakers must be checked on a computer with those devices.

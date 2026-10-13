@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.3 — 2026-10-13
+
+- Fix disposition creating a second Unknown history entry and another counted call when the completed card reappears without its Info/reference. Give completed-call and Wrap up markers priority over lingering active clocks, and keep a session-persistent finished-interaction guard until a distinct connected identity or confirmed idle state permits the next call. A lingering Busy header cannot count disposition again.
+- Add a pen in the top right of each saved call. Edit one caller name/ID at a time; the tick or Enter confirms, while Back, another menu, Escape, filtering the record away or a personal-state view cancels the unsaved draft. Preserve typing and caret through polling and retain call timings, metadata and counts on save. Blank confirmed identifiers become Unknown; unsaved edits remain only in memory.
+- Add Caller type (prediction) under More details: Student for exactly 6–9 digits, Staff for identifiers containing letters, and Unknown otherwise or for the Unknown placeholder. Preserve leading zeros, clearly explain that the prediction can be incorrect, and recompute it on saved edits and restored older records. Keep caller data in tab session storage and add no sorting in this release.
+- Preserve existing records and daily totals rather than guessing which historical Unknown entries were duplicates. Retain every earlier release snapshot unchanged.
+- Expand behavioural checks to 201 scenarios, including missing-reference disposition duplicates, partial markers, persistent guards, consecutive calls, editing, cancellation, prediction boundaries, safe text and privacy. Verify the supplied on-call and disposition structures with fictional caller details in Chromium at three viewport sizes, including active typing/caret, day rollover, predictions, single-editor cancellation and an 82-record scrolling history.
+
 ## 1.1.2 — 2026-10-13
 
 - Fix Monitoring flickering between Live and Waiting for live updates. The former badge required every selected G1 agent's timer to change within 30 seconds; quiet rows and minute/hour displays could invalidate it even while all three queue counts remained readable.
