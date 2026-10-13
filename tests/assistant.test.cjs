@@ -31,6 +31,10 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     ],
     ['service-desk-8x8-sounds-v4', JSON.stringify(sounds)]
   ])
+  const session = new Map()
+  if (options.callHistory) {
+    session.set('service-desk-8x8-call-history-v1', JSON.stringify(options.callHistory))
+  }
   if (options.shortBreaks) {
     storage.set('service-desk-8x8-short-breaks-v1', JSON.stringify(options.shortBreaks))
   }
@@ -309,6 +313,16 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     AudioContext,
     Notification,
     localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) },
+    sessionStorage: {
+      getItem: (k) => {
+        if (options.blockSessionStorage) throw Error('Session storage blocked')
+        return session.get(k) ?? null
+      },
+      setItem: (k, v) => {
+        if (options.blockSessionStorage) throw Error('Session storage blocked')
+        session.set(k, v)
+      }
+    },
     setInterval: schedule,
     setTimeout: schedule,
     clearInterval: (id) => jobs.delete(id),
@@ -391,6 +405,66 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
   let personalPage = null
   let breakTimer = null
   let wrapTimer = null
+  let interactionTimer = null
+  function callInfo (card, label, value) {
+    const list = card.querySelector('ul') || add('ul', card)
+    const row = add('li', list)
+    add('span', row, {}, label)
+    const wrapper = add('div', row)
+    add('span', wrapper, { title: String(value) }, String(value))
+    return row
+  }
+  function showCall (details = {}) {
+    const {
+      number = '+155501001',
+      queue = 'Demo Service Queue',
+      transactionId = 'demo-101',
+      seconds = 12,
+      waitSeconds = 15,
+      info = true,
+      onHold = false,
+      ringing = false
+    } = details
+    hideMain()
+    personalPage = add('article', document.body, { 'data-test-id': 'phone-card-test-id' })
+    add('div', personalPage, { 'data-test-id': 'user-status', 'data-status-value': 'Busy' }, 'Busy')
+    add('h1', personalPage, { 'data-test-id': 'active-call-name' }, number || 'Anonymous')
+    add('span', personalPage, { 'data-test-id': 'active-call-number' }, number || 'Anonymous')
+    interactionTimer = add(
+      'div',
+      personalPage,
+      {
+        'data-test-id': ringing ? 'progress-timer' : 'interaction-timer',
+        'aria-label': ringing ? 'Incoming call' : 'Interaction',
+        role: 'timer'
+      },
+      clock(seconds)
+    )
+    add(
+      'button',
+      personalPage,
+      { 'data-test-id': 'disposition-tab_TAB', role: 'tab', 'aria-selected': 'false' },
+      'Disposition'
+    )
+    if (onHold) {
+      add(
+        'div',
+        personalPage,
+        { 'data-test-id': 'hold-timer', 'aria-label': 'On hold', role: 'timer' },
+        '00:05'
+      )
+    }
+    if (info) {
+      if (number) callInfo(personalPage, 'Phone number', number)
+      if (queue) callInfo(personalPage, 'Queue', queue)
+      if (transactionId) callInfo(personalPage, 'Transaction ID', transactionId)
+      callInfo(personalPage, 'Queue wait duration', clock(waitSeconds))
+      callInfo(personalPage, 'Channel name', queue || 'Demo Channel')
+      callInfo(personalPage, 'Channel number', '+155509999')
+      callInfo(personalPage, 'Caller name', 'Native display name must not be used')
+    }
+    scan()
+  }
   function hideMain () {
     header.hidden = true
     group.hidden = true
@@ -411,7 +485,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     add('span', personalPage, { title: reason }, reason)
     scan()
   }
-  function showWrapUp (remaining) {
+  function showWrapUp (remaining, details = {}) {
     hideMain()
     personalPage = add('article', document.body, { 'data-test-id': 'phone-card-test-id' })
     add('div', personalPage, { 'data-test-id': 'wrap-up-label' }, 'Wrap up')
@@ -421,9 +495,10 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       {
         'data-test-id': 'interaction-time-label',
         role: 'timer',
-        'aria-label': '42 minutes 0 seconds'
+        'aria-label':
+          details.seconds === undefined ? '42 minutes 0 seconds' : `${details.seconds} seconds`
       },
-      '42:00'
+      details.seconds === undefined ? '42:00' : clock(details.seconds)
     )
     wrapTimer = add(
       'div',
@@ -431,6 +506,16 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       { 'data-test-id': 'progress-timer', role: 'timer', 'aria-label': 'Wrap up' },
       clock(remaining)
     )
+    for (const [key, label] of [
+      ['number', 'Phone number'],
+      ['queue', 'Queue'],
+      ['transactionId', 'Transaction ID']
+    ]) {
+      if (details[key]) callInfo(personalPage, label, details[key])
+    }
+    if (details.waitSeconds !== undefined) {
+      callInfo(personalPage, 'Queue wait duration', clock(details.waitSeconds))
+    }
     scan()
   }
   function restoreMain (status = 'Available', seconds = 0) {
@@ -459,6 +544,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     other,
     jobs,
     storage,
+    session,
     notifications,
     queues,
     group,
@@ -477,6 +563,28 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       for (const fn of deviceListeners) fn()
     },
     showBreak,
+    showCall,
+    callTime: (seconds) => {
+      interactionTimer.textContent = clock(seconds)
+      scan()
+    },
+    setCallInfo: (label, value) => {
+      const row = personalPage
+        .querySelectorAll('li')
+        .find((r) => r.querySelector('span')?.textContent === label)
+      if (value === null) row?.remove()
+      else if (row) {
+        const text = row.querySelector('span[title]')
+        text.setAttribute('title', value)
+        text.textContent = value
+      } else callInfo(personalPage, label, value)
+      scan()
+    },
+    caller: (value) => {
+      const input = ui().querySelector('#its-caller-identifier')
+      input.value = value
+      input.oninput()
+    },
     showShortBreak: (seconds) => showBreak(seconds, 'Short Break'),
     breakReason: (reason) => {
       const label = personalPage.querySelector('span[title]')
@@ -508,6 +616,14 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
         { window, location: window.location, Date: Clock, console },
         { timeout: 1000 }
       ),
+    reload: () => {
+      window.__itsCallAssist.destroy()
+      vm.runInNewContext(
+        source,
+        { window, location: window.location, Date: Clock, console },
+        { timeout: 1000 }
+      )
+    },
     debug: () => window.__itsCallAssist.debug(),
     checkbox: (name) => ui().querySelector(`[aria-label="G1: ${name}"]`),
     button: (name) =>
@@ -820,17 +936,17 @@ check('Hidden roster conceals all menu contents, then restores the open menu', (
 })
 
 check(
-  'Release reports version 1.0.6 in the footer and bottom controls are only Mute / Settings',
+  'Release reports version 1.1.0 and bottom controls are Mute, Call History and Settings',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.0.6')
+    assert.equal(e.window.__itsCallAssist.version, '1.1.0')
     assert.deepEqual(
       e
         .ui()
         .querySelector('.controls')
         .querySelectorAll('button')
         .map((b) => b.textContent),
-      ['Mute', 'Settings']
+      ['Mute', 'Call History', 'Settings']
     )
     assert.deepEqual(
       e
@@ -842,10 +958,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.0.6'
+      '1.1.0'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.0.6'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.0'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -1952,7 +2068,7 @@ check(
         .querySelector('.controls')
         .querySelectorAll('button')
         .map((b) => b.textContent),
-      ['Unmute', 'Settings']
+      ['Unmute', 'Call History', 'Settings']
     )
   }
 )
@@ -2483,6 +2599,581 @@ check(
     assert(e.ui().querySelector('.panel').classList.contains('compact'))
   }
 )
+check(
+  'Connected and held calls show an editable identifier without requiring queues or agents',
+  () => {
+    for (const onHold of [false, true]) {
+      const e = environment({ g1: [], lunchMinutes: 1 })
+      e.showCall({ onHold, seconds: 100 })
+      assert.equal(e.window.__itsCallAssist.inspect().view, 'call')
+      assert.equal(e.window.__itsCallAssist.inspect().unavailable, false)
+      assert(!e.ui().querySelector('.call-view').classList.contains('hidden'))
+      assert(e.ui().querySelector('.compact-view').classList.contains('hidden'))
+      assert.equal(
+        e.ui().querySelector('.call-badge').textContent,
+        onHold ? 'On hold' : 'Connected'
+      )
+      assert.equal(e.ui().querySelector('.call-duration').textContent, '01:40')
+      assert.equal(e.ui().querySelector('#its-caller-identifier').disabled, false)
+      assert(
+        e.ui().querySelector('.caller-label').textContent.includes('Caller name or student number')
+      )
+      assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+      assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+      assert.equal(e.debug().activeReminder, null)
+    }
+  }
+)
+check('Wrap up saves the identifier and every readable call detail exactly once', () => {
+  const e = environment({ g1: [] })
+  e.showCall({ seconds: 100, waitSeconds: 15 })
+  e.caller('  Alex   Example  ')
+  e.showWrapUp(120, {
+    transactionId: 'demo-101',
+    number: '+155501001',
+    queue: 'Demo Service Queue',
+    seconds: 105,
+    waitSeconds: 17
+  })
+  e.wrapTime(119)
+  e.scan()
+  const history = e.window.__itsCallAssist.callHistorySession()
+  assert.equal(history.pending.length, 0)
+  assert.equal(history.records.length, 1)
+  const record = history.records[0]
+  assert.equal(record.caller, 'Alex Example')
+  assert.equal(record.number, '+155501001')
+  assert.equal(record.queue, 'Demo Service Queue')
+  assert.equal(record.transactionId, 'demo-101')
+  assert.equal(record.durationSeconds, 105)
+  assert.equal(record.durationComplete, true)
+  assert.equal(record.waitSeconds, 17)
+  assert.equal(record.channel, 'Demo Service Queue')
+  assert.equal(record.channelNumber, '+155509999')
+  assert(record.completedAt >= record.detectedAt)
+  assert.equal(record.callerInput, undefined)
+})
+check(
+  'Student numbers remain text, including leading zeros, and blank identifiers become Unknown',
+  () => {
+    for (const [entered, expected] of [
+      ['00123456', '00123456'],
+      ['', 'Unknown'],
+      ['   ', 'Unknown']
+    ]) {
+      const e = environment()
+      e.showCall()
+      e.caller(entered)
+      e.showWrapUp(120, { seconds: 20 })
+      assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, expected)
+    }
+  }
+)
+check('8x8 native display names never substitute for the optional agent-entered identifier', () => {
+  const e = environment()
+  e.showCall()
+  e.showWrapUp(120, { seconds: 20 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Unknown')
+})
+check('Typing, polling, timer updates and G1 changes preserve the current draft', () => {
+  const e = environment()
+  e.showCall()
+  e.caller('Alex ')
+  e.callTime(20)
+  e.scan()
+  e.tick('Me', false)
+  e.tick('Me', true)
+  assert.equal(e.ui().querySelector('#its-caller-identifier').value, 'Alex ')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending[0].callerInput, 'Alex ')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+  e.caller('Alex Example')
+  e.showWrapUp(120, { seconds: 25 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex Example')
+})
+check('Opening the 8x8 Disposition tab during a call does not finalise the call', () => {
+  const e = environment()
+  e.showCall()
+  e.caller('Alex')
+  e.personalPage()
+    .querySelector('[data-test-id="disposition-tab_TAB"]')
+    .setAttribute('aria-selected', 'true')
+  e.scan()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending[0].callerInput, 'Alex')
+  assert.equal(e.debug().activeReminder, null)
+})
+check('Ringing offers and a Busy header alone do not invent detailed call-history entries', () => {
+  const e = environment()
+  e.showCall({ ringing: true })
+  e.scan()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 0)
+  e.restoreMain('Busy', 10)
+  e.showWrapUp(120)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+})
+check(
+  'Call references separate repeated calls from the same number and reset the input for the next caller',
+  () => {
+    const e = environment()
+    e.showCall({ transactionId: 'demo-a' })
+    e.caller('First Caller')
+    e.showWrapUp(120, { transactionId: 'demo-a', seconds: 20 })
+    e.showCall({ transactionId: 'demo-b', seconds: 0 })
+    assert.equal(e.ui().querySelector('#its-caller-identifier').value, '')
+    e.caller('Second Caller')
+    e.showWrapUp(120, { transactionId: 'demo-b', seconds: 30 })
+    const records = e.window.__itsCallAssist.callHistorySession().records
+    assert.equal(records.length, 2)
+    assert.equal(records[0].caller, 'First Caller')
+    assert.equal(records[1].caller, 'Second Caller')
+    assert.notEqual(records[0].id, records[1].id)
+  }
+)
+check(
+  'Replaced call DOM and unavailable Info tabs retain the typed identifier and previously read details',
+  () => {
+    const e = environment()
+    e.showCall()
+    e.caller('00123456')
+    e.showCall({ info: false, seconds: 25 })
+    assert.equal(e.ui().querySelector('#its-caller-identifier').value, '00123456')
+    assert.equal(e.ui().querySelector('.call-queue').textContent, 'Demo Service Queue')
+    e.showWrapUp(120, { seconds: 30 })
+    const record = e.window.__itsCallAssist.callHistorySession().records[0]
+    assert.equal(record.caller, '00123456')
+    assert.equal(record.queue, 'Demo Service Queue')
+    assert.equal(record.waitSeconds, 15)
+    assert.equal(record.transactionId, 'demo-101')
+  }
+)
+check('Late-arriving Info fields enrich the same draft rather than starting another call', () => {
+  const e = environment()
+  e.showCall({ info: false })
+  e.caller('Alex')
+  e.setCallInfo('Transaction ID', 'demo-late')
+  e.setCallInfo('Queue', 'Demo Transfer Queue')
+  e.setCallInfo('Queue wait duration', '00:25')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 1)
+  e.showWrapUp(120, { transactionId: 'demo-late', seconds: 30 })
+  const record = e.window.__itsCallAssist.callHistorySession().records[0]
+  assert.equal(record.caller, 'Alex')
+  assert.equal(record.queue, 'Demo Transfer Queue')
+  assert.equal(record.waitSeconds, 25)
+})
+check('Switching between phone interactions keeps each draft bound to its own reference', () => {
+  const e = environment()
+  e.showCall({ transactionId: 'demo-a', number: '+155501001' })
+  e.caller('Alex')
+  e.showCall({ transactionId: 'demo-b', number: '+155501002' })
+  e.caller('Casey')
+  e.showCall({ transactionId: 'demo-a', number: '+155501001', seconds: 20 })
+  assert.equal(e.ui().querySelector('#its-caller-identifier').value, 'Alex')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 2)
+  e.showWrapUp(120, { transactionId: 'demo-b', number: '+155501002', seconds: 25 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Casey')
+  e.showWrapUp(120, { transactionId: 'demo-a', number: '+155501001', seconds: 30 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[1].caller, 'Alex')
+})
+check('An unrelated Wrap up reference cannot finalise or steal another call draft', () => {
+  const e = environment()
+  e.showCall({ transactionId: 'demo-a' })
+  e.caller('Alex')
+  e.showWrapUp(120, { transactionId: 'demo-b', seconds: 30 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending[0].callerInput, 'Alex')
+  e.showWrapUp(120, { transactionId: 'demo-a', seconds: 35 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+})
+check(
+  'Refreshing or rerunning during a call preserves its draft and does not duplicate statistics',
+  () => {
+    const e = environment()
+    e.showCall()
+    e.caller('00123456')
+    e.rerun()
+    assert.equal(e.ui().querySelector('#its-caller-identifier').value, '00123456')
+    e.reload()
+    assert.equal(e.ui().querySelector('#its-caller-identifier').value, '00123456')
+    assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 1)
+    e.showWrapUp(120, { seconds: 20 })
+    e.rerun()
+    e.reload()
+    e.scan()
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  }
+)
+check(
+  'Caller details use tab-session storage and never leak into durable preferences or statistics',
+  () => {
+    const e = environment()
+    e.showCall()
+    e.caller('Unique Caller Identifier')
+    e.showWrapUp(120, { seconds: 20 })
+    const saved = e.session.get('service-desk-8x8-call-history-v1')
+    assert(saved.includes('Unique Caller Identifier'))
+    assert(saved.includes('+155501001'))
+    for (const value of e.storage.values()) {
+      assert(!value.includes('Unique Caller Identifier'))
+      assert(!value.includes('+155501001'))
+    }
+    assert.equal(environment().window.__itsCallAssist.callHistorySession().records.length, 0)
+  }
+)
+check(
+  'Blocked session storage keeps call history usable and preserves a draft on snippet rerun',
+  () => {
+    const e = environment({}, {}, { blockSessionStorage: true })
+    e.showCall()
+    e.caller('Alex')
+    e.rerun()
+    assert.equal(e.ui().querySelector('#its-caller-identifier').value, 'Alex')
+    e.showWrapUp(120, { seconds: 20 })
+    e.rerun()
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+  }
+)
+check(
+  'Missing call HTML never finalises a draft; an observed return to idle recovers a missed Wrap up',
+  () => {
+    const e = environment()
+    e.showCall({ seconds: 100 })
+    e.caller('Alex')
+    e.personalPage().hidden = true
+    e.advance(30000)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 1)
+    e.restoreMain()
+    const record = e.window.__itsCallAssist.callHistorySession().records[0]
+    assert.equal(record.caller, 'Alex')
+    assert.equal(record.durationSeconds, 100)
+    assert.equal(record.durationComplete, false)
+  }
+)
+check(
+  'Wrap up finalises even when its countdown is unreadable, independently of the disposition alarm',
+  () => {
+    const e = environment()
+    e.showCall()
+    e.caller('Alex')
+    e.showWrapUp(120, { seconds: 20 })
+    e.personalPage().querySelector('[data-test-id="progress-timer"]').textContent = 'Unknown'
+    e.scan()
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].durationSeconds, 20)
+    assert.equal(e.debug().activeReminder, null)
+  }
+)
+check(
+  'Mismatched caller headings and Info rows disable editing until identity is readable again',
+  () => {
+    const e = environment()
+    e.showCall()
+    e.caller('Alex')
+    e.personalPage().querySelector('[data-test-id="active-call-number"]').textContent = '+155501999'
+    e.scan()
+    assert.equal(e.ui().querySelector('#its-caller-identifier').disabled, true)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 1)
+    e.caller('Should not be assigned')
+    assert.equal(e.window.__itsCallAssist.callHistorySession().pending[0].callerInput, 'Alex')
+    e.showCall({ seconds: 25 })
+    e.showWrapUp(120, { seconds: 30 })
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+  }
+)
+check(
+  'Unreadable Info values and anonymous numbers remain unavailable without losing the call',
+  () => {
+    const e = environment()
+    e.showCall({ number: null, queue: null, transactionId: null })
+    e.caller('Alex')
+    e.showWrapUp(120, { seconds: 20 })
+    const record = e.window.__itsCallAssist.callHistorySession().records[0]
+    assert.equal(record.caller, 'Alex')
+    assert.equal(record.number, null)
+    assert.equal(record.queue, null)
+    assert.equal(record.transactionId, null)
+  }
+)
+check('Ambiguous visible phone cards cannot create or finalise an arbitrary call', () => {
+  const e = environment()
+  e.showCall()
+  e.caller('Alex')
+  const second = e.window.document.createElement('article')
+  second.setAttribute('data-test-id', 'phone-card-test-id')
+  second.textContent = 'A second phone interaction'
+  e.window.document.body.append(second)
+  e.scan()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 1)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+  second.remove()
+  e.showWrapUp(120, { seconds: 20 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+})
+check(
+  'History menu is separate, shows statistics from the same counter and returns to the main menu',
+  () => {
+    const e = environment()
+    e.showCall()
+    e.caller('Alex')
+    e.showWrapUp(120, { seconds: 20 })
+    e.restoreMain()
+    e.button('Call History').onclick()
+    assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+    assert(e.ui().querySelector('.main-view').classList.contains('hidden'))
+    assert(e.ui().querySelector('.panel').classList.contains('history-panel'))
+    const main = e
+      .ui()
+      .querySelector('.statistics')
+      .querySelectorAll('.stat-value')
+      .map((n) => n.textContent)
+    const history = e
+      .ui()
+      .querySelector('.history-statistics')
+      .querySelectorAll('.stat-value')
+      .map((n) => n.textContent)
+    assert.deepEqual(history, main)
+    assert.equal(
+      e.ui().querySelector('.history-session-count').textContent,
+      '1 call saved this session'
+    )
+    assert.equal(e.ui().querySelector('.history-caller').textContent, 'Alex')
+    e.ui().querySelector('.call-history').querySelector('button').onclick()
+    assert(e.ui().querySelector('.call-history').classList.contains('hidden'))
+    assert(!e.ui().querySelector('.main-view').classList.contains('hidden'))
+  }
+)
+check(
+  'History searches names, student numbers, formatted phones and queues, and lists the newest call first',
+  () => {
+    const e = environment()
+    for (const [id, caller, number, queue] of [
+      ['a', 'Alex Example', '+155501001', 'Demo Academic Queue'],
+      ['b', '00123456', '+155501002', 'Demo Service Queue']
+    ]) {
+      e.showCall({ transactionId: id, number, queue })
+      e.caller(caller)
+      e.showWrapUp(120, { transactionId: id, number, queue, seconds: 20 })
+    }
+    e.restoreMain()
+    e.button('Call History').onclick()
+    assert.equal(e.ui().querySelectorAll('.history-caller')[0].textContent, '00123456')
+    const search = e.ui().querySelector('.history-search')
+    for (const [query, expected] of [
+      ['alex', 'Alex Example'],
+      ['00123456', '00123456'],
+      ['+1 555 01002', '00123456'],
+      ['Academic', 'Alex Example']
+    ]) {
+      search.value = query
+      search.oninput()
+      assert.equal(e.ui().querySelectorAll('.history-card').length, 1)
+      assert.equal(e.ui().querySelector('.history-caller').textContent, expected)
+    }
+    search.value = 'No matching caller'
+    search.oninput()
+    assert(e.ui().querySelector('.history-empty').textContent.includes('No matching calls'))
+    search.value = ''
+    search.oninput()
+    assert.equal(e.ui().querySelectorAll('.history-card').length, 2)
+  }
+)
+check('Polling does not rebuild history cards or reset their scroll and expanded details', () => {
+  const e = environment()
+  e.showCall()
+  e.showWrapUp(120, { seconds: 20 })
+  e.restoreMain()
+  e.button('Call History').onclick()
+  const card = e.ui().querySelector('.history-card')
+  const details = card.querySelector('details')
+  details.open = true
+  e.ui().querySelector('.history-list').scrollTop = 90
+  e.scan()
+  e.scan()
+  assert.equal(e.ui().querySelector('.history-card'), card)
+  assert.equal(details.open, true)
+  assert.equal(e.ui().querySelector('.history-list').scrollTop, 90)
+})
+check(
+  'History renders caller text safely and captures native duration instead of Busy, hold or wrap clocks',
+  () => {
+    const e = environment()
+    e.showCall({ onHold: true, seconds: 100, waitSeconds: 65 })
+    e.caller('<img src=x onerror=alert(1)>')
+    e.showWrapUp(5, { seconds: 110 })
+    e.restoreMain()
+    e.button('Call History').onclick()
+    assert.equal(
+      e.ui().querySelector('.history-caller').textContent,
+      '<img src=x onerror=alert(1)>'
+    )
+    assert.equal(e.ui().querySelector('.history-caller').children.length, 0)
+    assert.equal(e.ui().querySelector('.history-duration').textContent, 'Duration 01:50')
+    assert.equal(e.ui().querySelector('.history-wait').textContent, 'Queue wait 01:05')
+  }
+)
+check('Midnight resets daily statistics while the session history keeps completed calls', () => {
+  const e = environment()
+  e.setTime(Date.parse('2026-10-13T23:59:50+10:00'))
+  e.showCall()
+  e.showWrapUp(120, { seconds: 20 })
+  e.restoreMain()
+  e.setTime(Date.parse('2026-10-14T00:00:03+10:00'))
+  e.scan()
+  e.button('Call History').onclick()
+  assert.equal(e.window.__itsCallAssist.statistics().total, 0)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  assert(e.ui().querySelector('.history-day').textContent.includes('13 Oct 2026'))
+  assert.equal(
+    e.ui().querySelector('.history-statistics').querySelector('.stat-value').textContent,
+    '0'
+  )
+})
+check('Muted calls still record identifiers and history independently of every sound', () => {
+  const e = environment({ muted: true, g1: [] })
+  e.showCall()
+  e.caller('Alex')
+  assert.equal(e.ui().querySelector('.call-heading').querySelector('button').textContent, 'Unmute')
+  e.showWrapUp(120, { seconds: 20 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+  assert.equal(e.debug().playing.length, 0)
+})
+check(
+  'History snapshots cannot mutate internal records and delayed input cannot rewrite a finalised name',
+  () => {
+    const e = environment()
+    e.showCall()
+    e.caller('Alex')
+    e.showWrapUp(120, { seconds: 20 })
+    e.caller('Changed too late')
+    const snapshot = e.window.__itsCallAssist.callHistorySession()
+    snapshot.records[0].caller = 'Changed through snapshot'
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+  }
+)
+check(
+  'Saved session data restores valid history, drops corrupt records and continues its sequence',
+  () => {
+    const e = environment(
+      {},
+      {},
+      {
+        callHistory: {
+          records: [
+            {
+              id: 1,
+              detectedAt: 0,
+              completedAt: 1,
+              caller: 'Restored Caller',
+              number: '+155501001'
+            },
+            { id: 1, detectedAt: 0, completedAt: 1, caller: 'Duplicate' },
+            { id: -1, detectedAt: 0, completedAt: 1 },
+            { id: 2, detectedAt: 'invalid', completedAt: 1 }
+          ],
+          pending: [],
+          nextId: 2
+        }
+      }
+    )
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+    e.showCall({ transactionId: 'new-call' })
+    e.showWrapUp(120, { transactionId: 'new-call', seconds: 20 })
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[1].id, 2)
+  }
+)
+check('A stale connected card for a previously saved reference never creates another draft', () => {
+  const e = environment()
+  e.showCall()
+  e.showWrapUp(120, { seconds: 20 })
+  e.showCall({ seconds: 25 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 0)
+  assert.equal(e.ui().querySelector('#its-caller-identifier').disabled, true)
+  assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+})
+check('Hold time is labelled as the last read segment rather than a guessed total', () => {
+  const e = environment()
+  e.showCall({ onHold: true, seconds: 20 })
+  e.showCall({ info: false, seconds: 25 })
+  e.showWrapUp(120, { seconds: 30 })
+  e.restoreMain()
+  e.button('Call History').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].holdSeconds, 5)
+  assert(e.ui().querySelector('.history-extra').textContent.includes('Hold time last read: 00:05'))
+})
+check(
+  'Unknown or contradictory native call durations never become guessed complete durations',
+  () => {
+    const e = environment()
+    e.showCall({ seconds: 20 })
+    e.showWrapUp(120, { seconds: 10 })
+    const record = e.window.__itsCallAssist.callHistorySession().records[0]
+    assert.equal(record.durationSeconds, 20)
+    assert.equal(record.durationComplete, false)
+  }
+)
+check('Call capture works without configured waiting queues and preserves all caller data', () => {
+  const e = environment({ g1: [] })
+  e.showCall({ queue: 'Demo Outbound Queue' })
+  e.caller('Alex')
+  e.storage.delete('service-desk-8x8-inbound-queues-v1')
+  e.rerun()
+  assert.equal(e.window.__itsCallAssist.inspect().view, 'call')
+  assert.equal(e.ui().querySelector('#its-caller-identifier').value, 'Alex')
+  e.showWrapUp(120, { seconds: 20 })
+  assert.equal(
+    e.window.__itsCallAssist.callHistorySession().records[0].queue,
+    'Demo Outbound Queue'
+  )
+})
+check('Invalid dates in saved session data cannot stop history rendering', () => {
+  const e = environment(
+    {},
+    {},
+    {
+      callHistory: {
+        records: [{ id: 1, detectedAt: 1e100, completedAt: 1e100, caller: 'Invalid Date' }],
+        pending: []
+      }
+    }
+  )
+  e.button('Call History').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+  assert(e.ui().querySelector('.history-empty'))
+})
+check('On-call History shortcut keeps the draft and Back restores the caller field', () => {
+  const e = environment()
+  e.showCall()
+  e.caller('Alex')
+  e.ui()
+    .querySelector('.call-heading')
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'History')
+    .onclick()
+  assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+  assert(e.ui().querySelector('.call-view').classList.contains('hidden'))
+  e.callTime(20)
+  assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
+  e.ui().querySelector('.call-history').querySelector('button').onclick()
+  assert(!e.ui().querySelector('.call-view').classList.contains('hidden'))
+  assert.equal(e.ui().querySelector('#its-caller-identifier').value, 'Alex')
+})
+check('Wrap up takes priority over an on-call History view and finalises the identifier', () => {
+  const e = environment()
+  e.showCall()
+  e.caller('Alex')
+  e.ui()
+    .querySelector('.call-heading')
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'History')
+    .onclick()
+  e.showWrapUp(120, { seconds: 20 })
+  assert.equal(e.window.__itsCallAssist.inspect().view, 'disposition')
+  assert(!e.ui().querySelector('.compact-view').classList.contains('hidden'))
+  assert(e.ui().querySelector('.call-history').classList.contains('hidden'))
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+})
 ;(async () => {
   for (const { name, fn } of asyncChecks) {
     await fn()

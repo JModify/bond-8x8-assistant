@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 — 2026-10-13
+
+- Add Call History between Mute and Settings. Provide a separate Back menu with newest-first records grouped by day, search for names/student numbers/telephone numbers/queues/references, expandable extra details and scrolling that keeps navigation and statistics accessible.
+- Add a connected/held-call view with the native duration, telephone number, queue and optional Caller name or student number field. Keep typing, caret and unfinished drafts intact through timer updates, Info-tab changes, DOM replacement, mute, group edits and snippet restarts. Add an on-call History shortcut whose Back button restores the field.
+- Save each observed call at actual Wrap up, using Unknown for blank identifiers. Read labelled call fields and native call timers; retain queue wait, reference, channel details and the last-read hold segment. Stable transaction references prevent duplicates and keep switched interactions' drafts separate. A Disposition tab, Busy icon or ringing offer alone cannot create a detailed record.
+- Store records and drafts only in the browser tab's session, with an in-memory rerun fallback when storage is unavailable. Keep caller information out of durable settings, statistics, public files and external services. Preserve saved settings and every historical release snapshot.
+- Retain known details when Info is hidden or fields are unreadable. Never finalise from missing HTML alone; recover an observed return to idle after a missed Wrap up with the last measured duration labelled as a lower bound. Ignore a reopened already-saved reference as evidence of another counted call.
+- Show the main menu's three statistics in a compact shared strip in Call History, alongside its separate saved-session total. Add no new alert sound or desktop notification for recording.
+- Expand behavioural checks to 153 scenarios. Verify the supplied on-call structure with fictional caller details in Chromium, including held calls, caret preservation, Wrap up finalisation, an 81-record history, filtering, shared statistics, active alerts and four viewport sizes; retain the existing main/break layout checks.
+
 ## 1.0.6 — 2026-10-13
 
 - Fit the main panel without an outer scrollbar. Tighten spacing, let the agent table adjust to the available height, and keep the footer and active reminders visible. Use a compact arrangement in shorter windows; Settings and Sound Settings keep their own scrolling.

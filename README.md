@@ -2,7 +2,7 @@
 
 Assistant for the Bond IT Service Desk 8x8 customer call center interface.
 
-Author: **Joshua Lavagna-Slater** | Current version: **1.0.6**.
+Author: **Joshua Lavagna-Slater** | Current version: **1.1.0**.
 
 The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
@@ -16,6 +16,7 @@ The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistan
 6. In 8x8, open **Groups → Filter icon**, select your service desk group, then tick **every status under User status**. This allows the assistant to see agents in all states, rather than treating a filtered list as the whole phone group.
 7. Select the agents covering phones in the assistant's **G1** column. Tick **Me** when you are covering phones.
 8. Click **Settings** to adjust reminder timing, lunch length and desktop notifications. Open **Sound Settings** from that menu to customise audio and choose the assistant's output device.
+9. During a call, optionally enter the caller's staff name or student number in the assistant's **On call** view. Open **Call History** between Mute and Settings to review completed calls; **History** in the on-call view lets you review earlier calls and return to your draft.
 
 If the assistant says **Unable to Assist: Open 8x8 agent queue information**, complete steps 4–6 so your own status and required agent information are readable. Keep the full agent list rendered when monitoring the phone group. If Monitoring says **Queue data unavailable**, scroll back to the three configured inbound queues for live counts and phone-cover alerts.
 
@@ -57,7 +58,31 @@ The main panel fits the available height without an outer scrollbar. Its agent t
 
 Current reminders appear in prominent Info or Alert cards directly above the footer. Each card names the sound, explains the actual trigger and shows whether its sound is playing, finished or muted. Cards remain visible when the assistant is minimised or Settings is open. Sound previews have a separate temporary card and never send a desktop notification.
 
-The script only reads page information and alerts you. It does not change your status, select disposition fields, or answer calls.
+The script reads page information, records the optional identifier you enter in its own field, and alerts you. It does not change your status, select disposition fields, or answer calls.
+
+## Call History
+
+While a connected call is visible, the assistant shows its telephone number, queue, native call duration and Connected/On hold state. The **Caller name or student number (optional)** field accepts free text and preserves leading zeros. Enter a staff member's name or a student's number after you obtain it. The assistant never substitutes 8x8's display name for your entry.
+
+The call is saved when the actual **Wrap up** state appears. Simply opening 8x8's Disposition tab while talking does not finalise it. A blank or whitespace-only identifier becomes **Unknown**. The field keeps its draft and caret through normal timer updates, changes to Info/Notes tabs, DOM replacement, muting, G1 changes and snippet reruns. The on-call **History** shortcut opens earlier records and statistics; **Back** restores the current caller field. The disposition timer takes priority when the call finishes.
+
+| Saved detail | Source |
+| --- | --- |
+| Caller name or student number | Your optional entry; Unknown when blank |
+| Phone number | The active call's Phone number field or readable number heading |
+| Queue | The active call's labelled Queue field |
+| Duration | The native interaction clock, confirmed by the final call timer at Wrap up |
+| Queue wait | The active call's Queue wait duration field |
+| Call reference | The Transaction ID, used to keep each interaction separate |
+| Channel and channel number | The active call's labelled channel fields, under More details |
+| Hold segment | The last readable On hold timer, under More details; not total hold time |
+| Detected and saved times | When the assistant first detected the call and finalised its record |
+
+Call History lists completed records newest first, grouped by Brisbane date. Search by name, student number, phone number, queue or call reference. Telephone searches accept spaces and punctuation. Long histories scroll while the heading, search and statistics remain accessible. **More details** expands a record's reference, channel information and saved time. Opening the menu does not create another counter: its Today, Last hour and Last detected values come from the same statistics as the main menu. The separate **calls saved this session** count includes completed history records, so it can differ from the day's observed Busy-start count.
+
+History and unfinished drafts use [browser tab session storage](https://developer.mozilla.org/en-US/docs/Web/API/Window/sessionStorage), separate from durable assistant settings. They survive refreshes and snippet reruns within the tab's page session; browser session restoration may restore them too. Normal tab/session closure ends this history. If session storage is blocked or full, recording still works in memory and can survive a snippet rerun, but a refresh cannot recover that in-memory copy. Caller details are never placed in the assistant's localStorage preferences/statistics or sent to GitHub, Library or an external service.
+
+Capture requires a readable connected phone card. A Busy header or incoming-call offer alone is not enough to create a detailed record. Previously unseen completed calls cannot be reconstructed. Hidden or ambiguous card data cannot attach a name to an arbitrary interaction; previously readable details are retained rather than erased. Repeated references do not create duplicate records. If Wrap up is missed but a readable idle state proves the call ended, the record retains its last known duration as **≥** that time; unknown values stay unavailable. Busy, hold and disposition timers never substitute for call duration. These limitations also mean calls outside the assistant's observed period may be missing.
 
 ## Timing settings and compact reminders
 
@@ -117,7 +142,7 @@ The counter works independently of queue visibility. It can count a Busy transit
 
 **Mute** stops all assistant tones and previews. Monitoring, agent updates, timers, progress animations, statistics and desktop notifications continue. Notifications created while muted request silent delivery. **Unmute** resumes any current alert; it does not repeat its desktop popup. The mute preference is saved for subsequent runs.
 
-The **-** button minimises the main content; **+** restores it. Monitoring and counting continue while minimised. The **x** button closes the assistant and stops all monitoring and counting, retaining statistics already saved.
+The **-** button minimises the main content; **+** restores it. Monitoring and counting continue while minimised. The **x** button closes the assistant and stops all monitoring and counting, retaining statistics and call history already saved. Closing the assistant does not end the browser tab's history session.
 
 Settings remain usable while muted. Preview buttons are disabled until sounds are unmuted. The compact break and disposition bars also include Mute/Unmute.
 
@@ -143,4 +168,4 @@ npm test
 
 The code separates page parsing, pure alert conditions, persistent settings, roster reconciliation, freshness checks, UI rendering and audio/notification delivery into focused helpers. Comments explain complex selectors, elapsed/countdown conversion, migration rules, asynchronous routing and lifecycle cleanup. Styles are expanded into readable CSS and remain isolated inside the panel's shadow root.
 
-Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Regression scenarios include filtered and virtualised rosters, transient row removal, reruns while selected agents are absent, group-independent personal reminders, separate break reasons, accumulated partial minutes, midnight rollover and queue-scroll recovery. Layout is also checked separately in Chromium with fictional agents and the supplied minimal break markup. These checks do not verify live Edge notifications or physical audio delivery.
+Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Call-history checks cover real Wrap up versus tabs/offers, repeated and switched references, student numbers, safe text rendering, missing/ambiguous fields, session-only persistence, reruns/refreshes, search, shared statistics and immutable completed entries. Layout is also checked separately in Chromium with fictional agents, both supplied minimal break pages, and the supplied on-call structure with fictionalised caller details. Checks include caret preservation, an 81-record scrolling history, four viewport sizes and active alerts. These checks do not verify live Edge notifications or physical audio delivery.
