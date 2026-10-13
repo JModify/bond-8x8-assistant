@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.4 — 2026-10-13
+
+- Renamed Call History to **Call Notes**, including its main-menu and on-call shortcuts.
+- Added optional multiline on-call notes, saved with the caller identifier at Wrap up and displayed directly on each record.
+- Added editable **Job Number** fields. The pen now edits the caller name/ID, notes and job together; caller predictions update on save.
+- Clicking outside a record, Back or another record's pen saves changes. Search, view changes, navigation and snippet restarts also save; Escape explicitly cancels. Polling preserves typing and caret.
+- Added per-record deletion with Undo. Native duplicate-call guards remain separate from deletable records, and deleting notes leaves observed call statistics unchanged.
+- Added readable Notepad TXT import/export with all saved call details, multiline escaping, unknown values, original entry numbers and stable record keys. Export uses a Save As picker where permitted, with a download fallback. Import selects a local file and supports the simple legacy name/notes/job format, longer dash separators, empty templates and UTF-8/UTF-16 files.
+- Imports add records, skip duplicates and preserve existing edits, active drafts and call counters. Invalid or oversized imports fail without partially adding records; late file results after closure are ignored.
+- Updated the concise user guide, technical reference and development constraints. Existing redacted screenshots are labelled as v1.1.3 examples; no private attachment data is published.
+- Validation: syntax and JavaScript Standard Style checks, 232 behavioural scenarios, and a private round-trip check of all four populated records in the supplied Notepad example.
+
 ## 1.1.3 — 2026-10-13
 
 - Fix disposition creating a second Unknown history entry and another counted call when the completed card reappears without its Info/reference. Give completed-call and Wrap up markers priority over lingering active clocks, and keep a session-persistent finished-interaction guard until a distinct connected identity or confirmed idle state permits the next call. A lingering Busy header cannot count disposition again.

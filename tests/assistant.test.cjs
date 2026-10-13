@@ -23,6 +23,10 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
   let nextId = 0
   const jobs = new Map()
   const notifications = []
+  const downloads = []
+  const blobs = new Map()
+  const revokedUrls = []
+  const rootListeners = new Map()
   const storage = new Map([
     ['service-desk-8x8-preferences-v5', JSON.stringify(preferences)],
     [
@@ -52,6 +56,8 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       this.value = ''
       this.checked = false
       this.disabled = false
+      this.listeners = new Map()
+      this.clicks = 0
       this.classList = {
         contains: (c) => this.className.split(/\s+/).includes(c),
         add: (c) => this.classList.toggle(c, true),
@@ -160,8 +166,26 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       return this.hidden ? [] : [{}]
     }
 
-    addEventListener () {}
-    removeEventListener () {}
+    contains (target) {
+      for (let node = target; node; node = node.parentElement) if (node === this) return true
+      return false
+    }
+
+    addEventListener (name, listener) {
+      if (!this.listeners.has(name)) this.listeners.set(name, new Set())
+      this.listeners.get(name).add(listener)
+    }
+
+    removeEventListener (name, listener) {
+      this.listeners.get(name)?.delete(listener)
+    }
+
+    click () {
+      this.clicks++
+      if (this.tagName === 'A') downloads.push({ href: this.href, filename: this.download })
+      return this.onclick?.()
+    }
+
     attachShadow () {
       this.shadowRoot = new Node('shadow-root')
       return this.shadowRoot
@@ -176,11 +200,15 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
   }
   // Node construction begins after its document exists; the class retains this same owner.
   const document = {
+    listeners: new Map(),
     createElement: (tag) => new Node(tag),
     createTextNode: (t) => new Node('#text', t),
     querySelectorAll: (s) => document.body.querySelectorAll(s),
-    addEventListener () {},
-    removeEventListener () {}
+    addEventListener: (name, listener) => {
+      if (!document.listeners.has(name)) document.listeners.set(name, new Set())
+      document.listeners.get(name).add(listener)
+    },
+    removeEventListener: (name, listener) => document.listeners.get(name)?.delete(listener)
   }
   document.body = new Node('body')
   document.body.ownerDocument = document
@@ -371,6 +399,22 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     navigator: { onLine: true, mediaDevices },
     AudioContext,
     Notification,
+    Blob,
+    TextDecoder,
+    URL: {
+      createObjectURL: (blob) => {
+        const url = 'blob:fixture-' + blobs.size
+        blobs.set(url, blob)
+        return url
+      },
+      revokeObjectURL: (url) => revokedUrls.push(url)
+    },
+    ...(options.savePicker ? { showSaveFilePicker: options.savePicker } : {}),
+    addEventListener: (name, listener) => {
+      if (!rootListeners.has(name)) rootListeners.set(name, new Set())
+      rootListeners.get(name).add(listener)
+    },
+    removeEventListener: (name, listener) => rootListeners.get(name)?.delete(listener),
     localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) },
     sessionStorage: {
       getItem: (k) => {
@@ -427,6 +471,9 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
         secondaryReady: secondaryOutputReady
       }),
       groupRules,
+      parseCallNotesText,
+      importCallNotesText,
+      exportCallNotesText,
       rescan: safeScan
     }`
   )
@@ -608,6 +655,18 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     storage,
     session,
     notifications,
+    downloads,
+    blobs,
+    revokedUrls,
+    pointerDown: (target, path) => {
+      const composed = path || []
+      if (!path) for (let node = target; node; node = node.parentElement) composed.push(node)
+      const event = { type: 'pointerdown', isTrusted: true, target, composedPath: () => composed }
+      for (const listener of document.listeners.get('pointerdown') || []) listener(event)
+    },
+    pageHide: () => {
+      for (const listener of rootListeners.get('pagehide') || []) listener()
+    },
     queues,
     group,
     header,
@@ -646,6 +705,16 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       const input = ui().querySelector('#its-caller-identifier')
       input.value = value
       input.oninput()
+    },
+    notes: (value) => {
+      const input = ui().querySelector('#its-caller-notes')
+      input.value = value
+      input.oninput()
+    },
+    importFile: (file) => {
+      const input = ui().querySelector('input[type="file"]')
+      input.files = [file]
+      return input.onchange()
     },
     showShortBreak: (seconds) => showBreak(seconds, 'Short Break'),
     breakReason: (reason) => {
@@ -998,17 +1067,17 @@ check('Hidden roster conceals all menu contents, then restores the open menu', (
 })
 
 check(
-  'Release reports version 1.1.3 and bottom controls are Mute, Call History and Settings',
+  'Release reports version 1.1.4 and bottom controls are Mute, Call Notes and Settings',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.1.3')
+    assert.equal(e.window.__itsCallAssist.version, '1.1.4')
     assert.deepEqual(
       e
         .ui()
         .querySelector('.controls')
         .querySelectorAll('button')
         .map((b) => b.textContent),
-      ['Mute', 'Call History', 'Settings']
+      ['Mute', 'Call Notes', 'Settings']
     )
     assert.deepEqual(
       e
@@ -1020,10 +1089,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.1.3'
+      '1.1.4'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.3'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.4'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -2370,7 +2439,7 @@ check(
         .querySelector('.controls')
         .querySelectorAll('button')
         .map((b) => b.textContent),
-      ['Unmute', 'Call History', 'Settings']
+      ['Unmute', 'Call Notes', 'Settings']
     )
   }
 )
@@ -3796,7 +3865,7 @@ check(
     e.caller('Alex')
     e.showWrapUp(120, { seconds: 20 })
     e.restoreMain()
-    e.button('Call History').onclick()
+    e.button('Call Notes').onclick()
     assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
     assert(e.ui().querySelector('.main-view').classList.contains('hidden'))
     assert(e.ui().querySelector('.panel').classList.contains('history-panel'))
@@ -3834,7 +3903,7 @@ check(
       e.showWrapUp(120, { transactionId: id, number, queue, seconds: 20 })
     }
     e.restoreMain()
-    e.button('Call History').onclick()
+    e.button('Call Notes').onclick()
     assert.equal(e.ui().querySelectorAll('.history-caller')[0].textContent, '00123456')
     const search = e.ui().querySelector('.history-search')
     for (const [query, expected] of [
@@ -3850,7 +3919,7 @@ check(
     }
     search.value = 'No matching caller'
     search.oninput()
-    assert(e.ui().querySelector('.history-empty').textContent.includes('No matching calls'))
+    assert(e.ui().querySelector('.history-empty').textContent.includes('No matching call notes'))
     search.value = ''
     search.oninput()
     assert.equal(e.ui().querySelectorAll('.history-card').length, 2)
@@ -3861,7 +3930,7 @@ check('Polling does not rebuild history cards or reset their scroll and expanded
   e.showCall()
   e.showWrapUp(120, { seconds: 20 })
   e.restoreMain()
-  e.button('Call History').onclick()
+  e.button('Call Notes').onclick()
   const card = e.ui().querySelector('.history-card')
   const details = card.querySelector('details')
   details.open = true
@@ -3880,7 +3949,7 @@ check(
     e.caller('<img src=x onerror=alert(1)>')
     e.showWrapUp(5, { seconds: 110 })
     e.restoreMain()
-    e.button('Call History').onclick()
+    e.button('Call Notes').onclick()
     assert.equal(
       e.ui().querySelector('.history-caller').textContent,
       '<img src=x onerror=alert(1)>'
@@ -3898,7 +3967,7 @@ check('Midnight resets daily statistics while the session history keeps complete
   e.restoreMain()
   e.setTime(Date.parse('2026-10-14T00:00:03+10:00'))
   e.scan()
-  e.button('Call History').onclick()
+  e.button('Call Notes').onclick()
   assert.equal(e.window.__itsCallAssist.statistics().total, 0)
   assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
   assert(e.ui().querySelector('.history-day').textContent.includes('13 Oct 2026'))
@@ -3976,7 +4045,7 @@ check('Hold time is labelled as the last read segment rather than a guessed tota
   e.showCall({ info: false, seconds: 25 })
   e.showWrapUp(120, { seconds: 30 })
   e.restoreMain()
-  e.button('Call History').onclick()
+  e.button('Call Notes').onclick()
   assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].holdSeconds, 5)
   assert(e.ui().querySelector('.history-extra').textContent.includes('Hold time last read: 00:05'))
 })
@@ -4016,7 +4085,7 @@ check('Invalid dates in saved session data cannot stop history rendering', () =>
       }
     }
   )
-  e.button('Call History').onclick()
+  e.button('Call Notes').onclick()
   assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
   assert(e.ui().querySelector('.history-empty'))
 })
@@ -4027,7 +4096,7 @@ check('On-call History shortcut keeps the draft and Back restores the caller fie
   e.ui()
     .querySelector('.call-heading')
     .querySelectorAll('button')
-    .find((b) => b.textContent === 'History')
+    .find((b) => b.textContent === 'Call Notes')
     .onclick()
   assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
   assert(e.ui().querySelector('.call-view').classList.contains('hidden'))
@@ -4044,7 +4113,7 @@ check('Wrap up takes priority over an on-call History view and finalises the ide
   e.ui()
     .querySelector('.call-heading')
     .querySelectorAll('button')
-    .find((b) => b.textContent === 'History')
+    .find((b) => b.textContent === 'Call Notes')
     .onclick()
   e.showWrapUp(120, { seconds: 20 })
   assert.equal(e.window.__itsCallAssist.inspect().view, 'disposition')
@@ -4064,7 +4133,7 @@ function editableHistory (callers = ['Alex Example']) {
     e.showWrapUp(120, { transactionId, seconds: 20 })
     e.restoreMain()
   })
-  e.button('Call History').onclick()
+  e.button('Call Notes').onclick()
   return e
 }
 function historyCard (e, id = 1) {
@@ -4164,7 +4233,7 @@ check(
   }
 )
 check(
-  'Back and Settings cancel an unsaved edit and restore the original identifier and prediction',
+  'Back and Settings save an edit and restore the updated identifier and prediction',
   () => {
     for (const destination of ['Back', 'Settings']) {
       const e = editableHistory(['Alex'])
@@ -4173,24 +4242,24 @@ check(
       button.onclick()
       editIdentifier(card, '00123456')
       if (destination === 'Back') { e.ui().querySelector('.call-history').querySelector('button').onclick() } else e.button('Settings').onclick()
-      assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
+      assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, '00123456')
       assert.equal(
         e.window.__itsCallAssist.callHistorySession().records[0].callerPrediction,
-        'Staff'
+        'Student'
       )
       assert.equal(button.textContent, '✎')
       assert(!card.classList.contains('editing'))
-      // A delayed handler from a hidden card cannot open or save a cancelled editor.
+      // A delayed handler from a hidden card cannot reopen an editor.
       button.onclick()
-      e.button('Call History').onclick()
+      e.button('Call Notes').onclick()
       assert.equal(button.textContent, '✎')
       button.onclick()
-      assert.equal(card.querySelector('.history-edit-input').value, 'Alex')
+      assert.equal(card.querySelector('.history-edit-input').value, '00123456')
     }
   }
 )
 check(
-  'Only one saved call can be edited and switching records discards the first unsaved draft',
+  'Only one saved call can be edited and switching records saves the first draft',
   () => {
     const e = editableHistory(['Alex', 'Casey'])
     const first = historyCard(e, 1)
@@ -4204,7 +4273,7 @@ check(
     editIdentifier(second, '987654')
     second.querySelector('.history-edit-toggle').onclick()
     const records = e.window.__itsCallAssist.callHistorySession().records
-    assert.equal(records[0].caller, 'Alex')
+    assert.equal(records[0].caller, '00123456')
     assert.equal(records[1].caller, '987654')
     assert.equal(records[1].callerPrediction, 'Student')
     assert.equal(e.window.__itsCallAssist.statistics().total, 2)
@@ -4251,20 +4320,21 @@ check(
     assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex Example')
   }
 )
-check('Search uses a confirmed edit and cancels a draft when its call is filtered away', () => {
+check('Search saves the current draft before filtering and includes its updated identifier', () => {
   const e = editableHistory(['Alex', 'Casey'])
   const card = historyCard(e)
   const button = card.querySelector('.history-edit-toggle')
   const search = e.ui().querySelector('.history-search')
   button.onclick()
-  editIdentifier(card, 'Discard me')
+  editIdentifier(card, 'Updated Alex')
   search.value = 'Casey'
   search.oninput()
   assert(!card.parentElement)
   assert.equal(button.textContent, '✎')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Updated Alex')
   button.onclick()
   assert.equal(button.textContent, '✎')
-  search.value = 'Alex'
+  search.value = 'Updated Alex'
   search.oninput()
   button.onclick()
   editIdentifier(card, '00123456')
@@ -4276,7 +4346,7 @@ check('Search uses a confirmed edit and cancels a draft when its call is filtere
   assert.equal(card.querySelector('.history-caller').textContent, '00123456')
 })
 check(
-  'Disposition cancels a history edit without overwriting either caller or creating another count',
+  'Disposition saves a history edit without overwriting the current caller or creating another count',
   () => {
     const e = editableHistory(['Alex'])
     e.showCall({ transactionId: 'demo-new' })
@@ -4284,30 +4354,30 @@ check(
     e.ui()
       .querySelector('.call-heading')
       .querySelectorAll('button')
-      .find((b) => b.textContent === 'History')
+      .find((b) => b.textContent === 'Call Notes')
       .onclick()
     const card = historyCard(e)
     card.querySelector('.history-edit-toggle').onclick()
-    editIdentifier(card, 'Discard me')
+    editIdentifier(card, 'Updated Alex')
     e.showWrapUp(120, { transactionId: 'demo-new', seconds: 20 })
     assert.equal(card.querySelector('.history-edit-toggle').textContent, '✎')
     const records = e.window.__itsCallAssist.callHistorySession().records
     assert.deepEqual(
       Array.from(records, (r) => r.caller),
-      ['Alex', 'Casey']
+      ['Updated Alex', 'Casey']
     )
     assert.equal(e.window.__itsCallAssist.statistics().total, 2)
   }
 )
-check('Unsaved history edits do not survive a rerun or refresh', () => {
+check('A rerun or refresh finalises the active saved-record editor', () => {
   for (const restart of ['rerun', 'reload']) {
     const e = editableHistory()
     const card = historyCard(e)
     card.querySelector('.history-edit-toggle').onclick()
-    editIdentifier(card, 'Discard me')
+    editIdentifier(card, 'Updated Alex')
     e[restart]()
-    e.button('Call History').onclick()
-    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex Example')
+    e.button('Call Notes').onclick()
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Updated Alex')
     assert.equal(historyCard(e).querySelector('.history-edit-toggle').textContent, '✎')
   }
 })
@@ -4318,7 +4388,7 @@ check(
     e.showCall()
     e.showWrapUp(120, { seconds: 20 })
     e.restoreMain()
-    e.button('Call History').onclick()
+    e.button('Call Notes').onclick()
     const card = historyCard(e)
     card.querySelector('.history-edit-toggle').onclick()
     editIdentifier(card, '00123456')
@@ -4347,7 +4417,7 @@ check(
         }
       }
     )
-    e.button('Call History').onclick()
+    e.button('Call Notes').onclick()
     assert.equal(
       e.window.__itsCallAssist.callHistorySession().records[0].callerPrediction,
       'Student'
@@ -4362,6 +4432,514 @@ check(
     assert.equal(e.window.__itsCallAssist.statistics().total, 0)
   }
 )
+function editNoteFields (card, { caller, notes, jobNumber }) {
+  if (caller !== undefined) editIdentifier(card, caller)
+  for (const [selector, value] of [['.history-notes-input', notes], ['.history-job-input', jobNumber]]) {
+    if (value === undefined) continue
+    const input = card.querySelector(selector)
+    input.value = value
+    input.oninput()
+  }
+}
+check('On-call multiline notes survive polling, held calls, restarts and finalisation', () => {
+  const e = environment({ g1: [] })
+  e.showCall()
+  e.caller('00123456')
+  e.notes('First line\nSecond line\n  useful detail')
+  const field = e.ui().querySelector('#its-caller-notes')
+  e.callTime(18)
+  assert.equal(e.ui().querySelector('#its-caller-notes'), field)
+  assert.equal(field.value, 'First line\nSecond line\n  useful detail')
+  e.setCallInfo('Queue', null)
+  e.rerun()
+  assert.equal(e.ui().querySelector('#its-caller-notes').value, field.value)
+  e.showCall({ onHold: true, seconds: 19 })
+  assert.equal(e.ui().querySelector('#its-caller-notes').value, field.value)
+  e.showWrapUp(120, { seconds: 22 })
+  const record = e.window.__itsCallAssist.callHistorySession().records[0]
+  assert.equal(record.notes, 'First line\nSecond line\n  useful detail')
+  assert.equal(record.caller, '00123456')
+  assert.equal(record.jobNumber, '')
+  assert.equal(record.durationSeconds, 22)
+  e.restoreMain()
+  e.button('Call Notes').onclick()
+  const notes = historyCard(e).querySelector('.history-notes')
+  assert(!notes.classList.contains('hidden'))
+  assert.equal(notes.textContent, record.notes)
+  assert.equal(notes.closest('details'), null)
+  for (const value of e.storage.values()) assert(!value.includes('useful detail'))
+})
+check('Notes stay bound to their interaction and late or ambiguous events cannot overwrite them', () => {
+  const e = environment({ g1: [] })
+  e.showCall({ transactionId: 'notes-first' })
+  e.notes('First caller notes')
+  const oldInput = e.ui().querySelector('#its-caller-notes')
+  e.showCall({ transactionId: 'notes-second' })
+  assert.equal(oldInput.value, '')
+  e.notes('Second caller notes')
+  e.showWrapUp(120, { transactionId: 'notes-second', seconds: 20 })
+  oldInput.value = 'Late event'
+  oldInput.oninput()
+  e.showCall({ transactionId: 'notes-first' })
+  assert.equal(oldInput.value, 'First caller notes')
+  e.showWrapUp(120, { transactionId: 'notes-first', seconds: 25 })
+  assert.deepEqual(Array.from(e.window.__itsCallAssist.callHistorySession().records, (call) => call.notes), ['Second caller notes', 'First caller notes'])
+})
+check('The pen edits name, notes and job together; clicking outside saves all three', () => {
+  const e = editableHistory()
+  const card = historyCard(e)
+  const original = e.window.__itsCallAssist.callHistorySession().records[0]
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { caller: '00123456', notes: 'Password reset\nCaller confirmed access', jobNumber: 'REQ123456' })
+  e.scan()
+  assert.equal(card.querySelector('.history-notes-input').value, 'Password reset\nCaller confirmed access')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, '')
+  e.pointerDown(e.window.document.body)
+  const record = e.window.__itsCallAssist.callHistorySession().records[0]
+  assert.deepEqual(JSON.parse(JSON.stringify(record)), { ...original, caller: '00123456', callerPrediction: 'Student', notes: 'Password reset\nCaller confirmed access', jobNumber: 'REQ123456' })
+  assert.equal(card.querySelector('.history-job').textContent, 'Job: REQ123456')
+  assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+  assert.equal(e.notifications.length, 0)
+})
+check('Shadow DOM clicks within the edited card preserve its draft, caret node and all fields', () => {
+  const e = editableHistory()
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'Draft line', jobNumber: 'INC1234567' })
+  const input = card.querySelector('.history-notes-input')
+  e.pointerDown(e.window.document.body.querySelector('#its-call-assist-panel'), [input, card, e.ui()])
+  e.scan()
+  assert.equal(card.querySelector('.history-edit-toggle').textContent, '✓')
+  assert.equal(card.querySelector('.history-notes-input'), input)
+  assert.equal(input.value, 'Draft line')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, '')
+})
+check('Back and switching records commit every editable field; only the new record stays in edit mode', () => {
+  const e = editableHistory(['Alex', 'Casey'])
+  const first = historyCard(e, 1)
+  first.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(first, { notes: 'First note', jobNumber: 'INC1234567' })
+  const second = historyCard(e, 2)
+  second.querySelector('.history-edit-toggle').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, 'First note')
+  editNoteFields(second, { notes: 'Second note', jobNumber: 'REQ123456' })
+  e.ui().querySelector('.call-history').querySelector('button').onclick()
+  const records = e.window.__itsCallAssist.callHistorySession().records
+  assert.equal(records[1].notes, 'Second note')
+  assert.equal(records[1].jobNumber, 'REQ123456')
+  assert.equal(e.ui().querySelectorAll('.editing').length, 0)
+})
+check('Notes allow Enter for a new line, Ctrl+Enter saves, and Escape cancels all editable fields', () => {
+  const e = editableHistory()
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'Saved note', jobNumber: 'INC1234567' })
+  let prevented = 0
+  const event = { key: 'Enter', preventDefault: () => prevented++ }
+  card.querySelector('.history-notes-input').onkeydown(event)
+  assert.equal(prevented, 0)
+  card.querySelector('.history-notes-input').onkeydown({ ...event, ctrlKey: true })
+  assert.equal(prevented, 1)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { caller: 'Student', notes: 'Cancel this', jobNumber: 'REQ999999' })
+  card.querySelector('.history-job-input').onkeydown({ key: 'Escape', preventDefault () {} })
+  const record = e.window.__itsCallAssist.callHistorySession().records[0]
+  assert.equal(record.caller, 'Alex Example')
+  assert.equal(record.notes, 'Saved note')
+  assert.equal(record.jobNumber, 'INC1234567')
+})
+check('Page navigation and blocked-storage reruns autosave names, notes and jobs', () => {
+  for (const restart of ['pageHide', 'rerun']) {
+    const e = environment({ g1: [] }, {}, { blockSessionStorage: restart === 'rerun' })
+    e.showCall()
+    e.showWrapUp(120, { seconds: 20 })
+    e.restoreMain()
+    e.button('Call Notes').onclick()
+    const card = historyCard(e)
+    card.querySelector('.history-edit-toggle').onclick()
+    editNoteFields(card, { caller: '00123456', notes: 'Persist this note', jobNumber: 'INC1234567' })
+    e[restart]()
+    const record = e.window.__itsCallAssist.callHistorySession().records[0]
+    assert.equal(record.notes, 'Persist this note')
+    assert.equal(record.jobNumber, 'INC1234567')
+    assert.equal(record.callerPrediction, 'Student')
+  }
+})
+check('Notes and job numbers are searchable, and search punctuation does not autosave during polling', () => {
+  const e = editableHistory()
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'Reset VPN | account', jobNumber: 'INC1234567' })
+  card.querySelector('.history-edit-toggle').onclick()
+  const search = e.ui().querySelector('.history-search')
+  for (const value of ['VPN |', 'inc1234567']) {
+    search.value = value
+    search.oninput()
+    assert.equal(historyCard(e), card)
+  }
+  search.value = 'VPN |'
+  search.oninput()
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'New unsaved value' })
+  e.scan()
+  assert.equal(card.querySelector('.history-edit-toggle').textContent, '✓')
+})
+check('Deleting and undoing a call note preserve counters, timings, alerts and saved-session privacy', () => {
+  const e = editableHistory(['Alex', 'Casey'])
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'Short hang-up', jobNumber: 'INC1234567' })
+  card.querySelector('.history-delete').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  assert.equal(historyCard(e), undefined)
+  assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+  e.button('Undo delete').onclick()
+  const restored = e.window.__itsCallAssist.callHistorySession().records.find((call) => call.id === 1)
+  assert.equal(restored.notes, 'Short hang-up')
+  assert.equal(restored.jobNumber, 'INC1234567')
+  assert.equal(restored.durationSeconds, 20)
+  assert.equal(e.notifications.length, 0)
+  historyCard(e).querySelector('.history-delete').onclick()
+  e.reload()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+})
+check('Deleting a record cannot resurrect its call during late disposition renders or a restart', () => {
+  const e = editableHistory(['Alex'])
+  historyCard(e).querySelector('.history-delete').onclick()
+  e.showWrapUp(120, { transactionId: 'demo-edit-0', seconds: 20 })
+  e.showCall({ transactionId: 'demo-edit-0', info: false, seconds: 21 })
+  e.rerun()
+  e.scan()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending.length, 0)
+  assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+  e.showCall({ transactionId: 'genuine-next', seconds: 1 })
+  e.showWrapUp(120, { transactionId: 'genuine-next', seconds: 2 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  assert.equal(e.window.__itsCallAssist.statistics().total, 2)
+})
+check('TXT round trips every call detail, multiline notes, leading zeros and delimiter-like content', () => {
+  const e = editableHistory(['Name: Alex Example'])
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'Notes: preserve this\n--------------------\n[Call details]\n\\file\n  indented line', jobNumber: 'REQ001234' })
+  card.querySelector('.history-edit-toggle').onclick()
+  const record = e.window.__itsCallAssist.callHistorySession().records[0]
+  const text = e.window.__itsCallAssist.exportCallNotesText()
+  assert(text.includes('REQ001234'))
+  assert(text.includes('\r\n[Call details]\r\n'))
+  const imported = environment({ g1: [] })
+  assert.deepEqual(JSON.parse(JSON.stringify(imported.window.__itsCallAssist.importCallNotesText(text))), { added: 1, skipped: 0 })
+  assert.deepEqual(JSON.parse(JSON.stringify(imported.window.__itsCallAssist.callHistorySession().records[0])), JSON.parse(JSON.stringify(record)))
+  assert.equal(imported.window.__itsCallAssist.statistics().total, 0)
+  imported.reload()
+  assert.deepEqual(JSON.parse(JSON.stringify(imported.window.__itsCallAssist.callHistorySession().records[0])), JSON.parse(JSON.stringify(record)))
+})
+check('Legacy TXT accepts different separators, blank templates, multiline notes and non-INC tickets', () => {
+  const e = environment({ g1: [] })
+  const text = '\uFEFF' + [
+    '-'.repeat(47), '00123456', 'Alex Example helped with setup', 'Access is now working', 'IMS0012345',
+    '-'.repeat(47), '', '', '-'.repeat(20), 'unknown', 'NO JOB NUMBER',
+    '-'.repeat(20), 'Caller name: Casey Example', 'Notes: Login problem', 'Job Number: REQ001234',
+    '-'.repeat(25), 'Name/SID:', 'Notes: Name not supplied', 'no job number', '-'.repeat(25)
+  ].join('\r\n')
+  const result = e.window.__itsCallAssist.importCallNotesText(text)
+  assert.equal(result.added, 4)
+  const records = e.window.__itsCallAssist.callHistorySession().records
+  assert.equal(records[0].caller, '00123456')
+  assert.equal(records[0].notes, 'Alex Example helped with setup\nAccess is now working')
+  assert.equal(records[0].jobNumber, 'IMS0012345')
+  assert.equal(records[1].notes, '')
+  assert.equal(records[1].jobNumber, '')
+  assert.equal(records[2].jobNumber, 'REQ001234')
+  assert.equal(records[3].caller, 'Unknown')
+  for (const call of records) {
+    assert.equal(call.detectedAt, null)
+    assert.equal(call.completedAt, null)
+    assert.equal(call.durationSeconds, null)
+  }
+  e.button('Call Notes').onclick()
+  assert.equal(e.ui().querySelector('.history-day').textContent, 'Call date unknown')
+  assert.equal(e.window.__itsCallAssist.statistics().total, 0)
+  e.reload()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 4)
+})
+check('TXT omits missing notes, exports NO JOB NUMBER and preserves unknown metadata', () => {
+  const e = editableHistory([''])
+  const text = e.window.__itsCallAssist.exportCallNotesText()
+  assert(text.includes('\r\nUnknown\r\nNO JOB NUMBER\r\n[Call details]'))
+  const other = environment()
+  other.window.__itsCallAssist.importCallNotesText(text)
+  assert.equal(other.window.__itsCallAssist.callHistorySession().records[0].caller, 'Unknown')
+  const legacy = other.window.__itsCallAssist.parseCallNotesText('Unknown\nNO JOB NUMBER')[0]
+  assert.equal(legacy.notes, '')
+  assert.equal(legacy.jobNumber, '')
+  assert.equal(legacy.durationComplete, false)
+})
+check('An empty name line imports as Unknown without consuming the first line of notes', () => {
+  const e = environment()
+  const records = e.window.__itsCallAssist.parseCallNotesText('--------------------\n\nFirst note line\nSecond note line\nREQ123456\n--------------------')
+  assert.equal(records.length, 1)
+  assert.equal(records[0].caller, 'Unknown')
+  assert.equal(records[0].notes, 'First note line\nSecond note line')
+  assert.equal(records[0].jobNumber, 'REQ123456')
+})
+check('Import limits and contradictory detail types reject the whole file before adding records', () => {
+  const e = editableHistory()
+  const exportText = e.window.__itsCallAssist.exportCallNotesText()
+  for (const text of [
+    ('--------------------\nAlex\nNO JOB NUMBER\n').repeat(2001),
+    exportText.replace('Full duration recorded: Yes', 'Full duration recorded: Maybe'),
+    exportText.replace('First detected:', 'First detected: invalid date\nUnrecognised label:'),
+    exportText.replace('Queue:', 'Queue: {"bad":true}\nUnrecognised label:').replace('Queue: {"bad":true}', 'Queue: "unfinished')
+  ]) {
+    assert.throws(() => e.window.__itsCallAssist.importCallNotesText(text))
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  }
+})
+check('Importing during an active call preserves the on-call name and notes until Wrap up', () => {
+  const e = environment({ g1: [] })
+  e.showCall()
+  e.caller('Current Caller')
+  e.notes('Current call notes')
+  e.window.__itsCallAssist.importCallNotesText('Old Caller\nImported notes\nREQ123456')
+  e.scan()
+  assert.equal(e.ui().querySelector('#its-caller-identifier').value, 'Current Caller')
+  assert.equal(e.ui().querySelector('#its-caller-notes').value, 'Current call notes')
+  e.showWrapUp(120, { seconds: 20 })
+  const records = e.window.__itsCallAssist.callHistorySession().records
+  assert.equal(records[0].caller, 'Old Caller')
+  assert.equal(records[1].notes, 'Current call notes')
+  assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+})
+check('Exported lower-bound durations and unknown dates retain their exact meaning after import', () => {
+  const e = environment({ g1: [] })
+  e.showCall({ seconds: 17 })
+  e.notes('Missed wrap-up sample')
+  e.restoreMain()
+  e.window.__itsCallAssist.importCallNotesText('Old Caller\nNO JOB NUMBER')
+  const other = environment()
+  other.window.__itsCallAssist.importCallNotesText(e.window.__itsCallAssist.exportCallNotesText())
+  const native = other.window.__itsCallAssist.callHistorySession().records.find((call) => call.origin === '8x8')
+  const legacy = other.window.__itsCallAssist.callHistorySession().records.find((call) => call.origin === 'text')
+  assert.equal(native.durationSeconds, 17)
+  assert.equal(native.durationComplete, false)
+  assert.equal(legacy.detectedAt, null)
+  assert.equal(legacy.completedAt, null)
+})
+check('Repeated assistant and legacy imports skip duplicates while preserving identical calls within a file', () => {
+  const e = environment()
+  const text = '--------------------\nAlex\nSame issue\nINC1234567\n--------------------\nAlex\nSame issue\nINC1234567\n--------------------'
+  assert.equal(e.window.__itsCallAssist.importCallNotesText(text).added, 2)
+  assert.equal(e.window.__itsCallAssist.importCallNotesText(text).skipped, 2)
+  const exported = e.window.__itsCallAssist.exportCallNotesText()
+  assert.equal(e.window.__itsCallAssist.importCallNotesText(exported).skipped, 2)
+  e.reload()
+  assert.equal(e.window.__itsCallAssist.importCallNotesText(exported).skipped, 2)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 2)
+})
+check('Imports preserve an existing edited record and assign fresh local row numbers to distinct records', () => {
+  const e = editableHistory()
+  const exported = e.window.__itsCallAssist.exportCallNotesText()
+  const card = historyCard(e)
+  card.querySelector('.history-edit-toggle').onclick()
+  editNoteFields(card, { notes: 'Edited locally' })
+  const result = e.window.__itsCallAssist.importCallNotesText(exported)
+  assert.equal(result.skipped, 1)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].notes, 'Edited locally')
+  e.window.__itsCallAssist.importCallNotesText('Casey\nDifferent issue\nREQ123456')
+  assert.deepEqual(Array.from(e.window.__itsCallAssist.callHistorySession().records, (call) => call.id), [1, 2])
+  const newer = e.window.__itsCallAssist.exportCallNotesText()
+  const other = environment()
+  other.window.__itsCallAssist.importCallNotesText('Existing\nNO JOB NUMBER')
+  other.window.__itsCallAssist.importCallNotesText(newer)
+  const original = e.window.__itsCallAssist.callHistorySession().records[0]
+  const restored = other.window.__itsCallAssist.callHistorySession().records.find((call) => call.recordKey === original.recordKey)
+  assert(restored.id > 1)
+  assert.equal(restored.originalId, original.originalId)
+  assert.equal(restored.recordKey, original.recordKey)
+})
+check('Import does not hide a genuine new call just because its reference was in a TXT file', () => {
+  const source = editableHistory()
+  const text = source.window.__itsCallAssist.exportCallNotesText()
+  const e = environment({ g1: [] })
+  e.window.__itsCallAssist.importCallNotesText(text)
+  e.showCall({ transactionId: 'demo-edit-0' })
+  e.notes('New observed call')
+  e.showWrapUp(120, { transactionId: 'demo-edit-0', seconds: 20 })
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 2)
+  assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records[1].notes, 'New observed call')
+})
+check('A deleted exported record can be reimported without Undo adding a duplicate', () => {
+  const e = editableHistory()
+  const text = e.window.__itsCallAssist.exportCallNotesText()
+  historyCard(e).querySelector('.history-delete').onclick()
+  e.window.__itsCallAssist.importCallNotesText(text)
+  e.button('Undo delete').onclick()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+})
+check('Malformed or oversized imports fail atomically and never evaluate caller text as HTML', () => {
+  const e = editableHistory()
+  const controller = e.window.__itsCallAssist
+  const count = controller.callHistorySession().records.length
+  const exported = controller.exportCallNotesText()
+  for (const bad of ['', '--------------------\n--------------------', 'a\u0000b', 'a'.repeat(5 * 1024 * 1024 + 1), exported.replace('Duration seconds: 20', 'Duration seconds: -1'), exported.replace('(TXT v1)', '(TXT v99)'), 'Alex\n' + 'x'.repeat(20001) + '\nNO JOB NUMBER', exported.replace('[Call details]', '[Call details]\nSource: text')]) {
+    assert.throws(() => controller.importCallNotesText(bad))
+    assert.equal(controller.callHistorySession().records.length, count)
+  }
+  controller.importCallNotesText('<img src=x onerror=alert(1)>\n<script>private</script>\nINC1234567')
+  const card = historyCard(e, 2)
+  assert.equal(card.querySelector('.history-caller').children.length, 0)
+  assert.equal(card.querySelector('.history-notes').children.length, 0)
+  assert.equal(card.querySelector('.history-notes').textContent, '<script>private</script>')
+})
+asyncCheck('Export opens a save-location picker and commits all records, including outside the search filter', async () => {
+  let pickerOptions
+  const writes = []
+  let closed = false
+  const e = environment({ g1: [] }, {}, {
+    savePicker: async (options) => {
+      pickerOptions = options
+      return { createWritable: async () => ({ write: async (text) => writes.push(text), close: async () => { closed = true }, abort: async () => {} }) }
+    }
+  })
+  e.showCall()
+  e.showWrapUp(120, { seconds: 20 })
+  e.restoreMain()
+  e.button('Call Notes').onclick()
+  historyCard(e).querySelector('.history-edit-toggle').onclick()
+  editNoteFields(historyCard(e), { notes: 'Exported draft', jobNumber: 'INC1234567' })
+  const search = e.ui().querySelector('.history-search')
+  search.value = 'No matching call'
+  search.oninput()
+  await e.button('Export TXT').onclick()
+  assert(pickerOptions.suggestedName.endsWith('.txt'))
+  assert.equal(pickerOptions.types[0].accept['text/plain'][0], '.txt')
+  assert.equal(writes.length, 1)
+  assert(writes[0].includes('Exported draft'))
+  assert(writes[0].includes('INC1234567'))
+  assert.equal(closed, true)
+  assert(e.ui().querySelector('.history-transfer-status').textContent.includes('selected location'))
+})
+asyncCheck('Save-picker cancellation writes nothing and keeps notes intact without starting a download', async () => {
+  const e = environment({}, {}, { savePicker: async () => { const error = Error('Cancelled'); error.name = 'AbortError'; throw error } })
+  e.window.__itsCallAssist.importCallNotesText('Alex\nNO JOB NUMBER')
+  e.button('Call Notes').onclick()
+  await e.button('Export TXT').onclick()
+  assert.equal(e.downloads.length, 0)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+  assert.equal(e.ui().querySelector('.history-transfer-status').textContent, 'Export cancelled.')
+  assert.equal(e.button('Export TXT').disabled, false)
+})
+asyncCheck('A denied save picker offers an explicit TXT download with a filename and the full text', async () => {
+  const e = environment({}, {}, { savePicker: async () => { const error = Error('Blocked'); error.name = 'SecurityError'; throw error } })
+  e.window.__itsCallAssist.importCallNotesText('Alex\nUseful note\nREQ123456')
+  e.button('Call Notes').onclick()
+  await e.button('Export TXT').onclick()
+  assert.equal(e.downloads.length, 0)
+  assert(!e.button('Download TXT').classList.contains('hidden'))
+  e.button('Download TXT').onclick()
+  assert.equal(e.downloads.length, 1)
+  const download = e.downloads[0]
+  assert(download.filename.endsWith('.txt'))
+  assert((await e.blobs.get(download.href).text()).includes('Useful note'))
+  for (const { fn, ms } of e.jobs.values()) if (ms === 30000) fn()
+  assert(e.revokedUrls.includes(download.href))
+})
+asyncCheck('Unsupported save-location APIs use a Notepad TXT download and explain Edge-controlled location', async () => {
+  const e = editableHistory()
+  await e.button('Export TXT').onclick()
+  assert.equal(e.downloads.length, 1)
+  const file = e.blobs.get(e.downloads[0].href)
+  assert.equal(file.type, 'text/plain;charset=utf-8')
+  assert((await file.text()).includes('Alex Example'))
+  assert(e.ui().querySelector('.history-transfer-status').textContent.includes('download settings'))
+})
+asyncCheck('A failed write aborts the file stream and offers a download without claiming success', async () => {
+  let aborted = false
+  let closed = false
+  const e = environment({}, {}, { savePicker: async () => ({ createWritable: async () => ({ write: async () => { throw Error('Disk full') }, close: async () => { closed = true }, abort: async () => { aborted = true } }) }) })
+  e.window.__itsCallAssist.importCallNotesText('Alex\nNO JOB NUMBER')
+  await e.button('Export TXT').onclick()
+  assert.equal(aborted, true)
+  assert.equal(closed, false)
+  assert.equal(e.ui().querySelector('.history-transfer-status').getAttribute('data-error'), 'true')
+  assert.equal(e.button('Export TXT').disabled, false)
+})
+asyncCheck('Closing during a save picker or stream creation rejects late writes', async () => {
+  for (const stage of ['picker', 'stream']) {
+    let resolve
+    const pending = new Promise((_resolve) => { resolve = _resolve })
+    let writes = 0
+    let aborted = false
+    let markCreated
+    const creating = new Promise((resolve) => { markCreated = resolve })
+    const stream = { write: async () => { writes++ }, close: async () => {}, abort: async () => { aborted = true } }
+    const handle = { createWritable: async () => { markCreated(); return stage === 'stream' ? pending : stream } }
+    const e = environment({}, {}, { savePicker: async () => stage === 'picker' ? pending : handle })
+    e.window.__itsCallAssist.importCallNotesText('Alex\nNO JOB NUMBER')
+    const exporting = e.button('Export TXT').onclick()
+    if (stage === 'stream') await creating
+    e.window.__itsCallAssist.destroy()
+    resolve(stage === 'picker' ? handle : stream)
+    await exporting
+    assert.equal(writes, 0)
+    assert.equal(aborted, stage === 'stream')
+  }
+})
+asyncCheck('Import opens a local file selector, accepts UTF-8 and UTF-16 Notepad files, and can select again', async () => {
+  const text = '--------------------\n00123456\nA useful note\nINC1234567\n--------------------'
+  for (const encoding of ['utf8', 'utf16le', 'utf16be']) {
+    const e = environment()
+    e.button('Call Notes').onclick()
+    e.button('Import TXT').onclick()
+    const input = e.ui().querySelector('input[type="file"]')
+    assert.equal(input.clicks, 1)
+    assert(input.accept.includes('.txt'))
+    let bytes = Buffer.from(text, encoding === 'utf8' ? 'utf8' : 'utf16le')
+    if (encoding !== 'utf8') {
+      bytes = Buffer.concat([Buffer.from([255, 254]), bytes])
+      if (encoding === 'utf16be') bytes.swap16()
+    }
+    const file = { size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) }
+    await e.importFile(file)
+    const record = e.window.__itsCallAssist.callHistorySession().records[0]
+    assert.equal(record.caller, '00123456')
+    assert.equal(record.notes, 'A useful note')
+    assert.equal(record.jobNumber, 'INC1234567')
+    assert.equal(input.value, '')
+    await e.importFile(file)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1)
+    assert(e.ui().querySelector('.history-transfer-status').textContent.includes('already present'))
+  }
+})
+asyncCheck('Import errors, cancelled selections and oversized files leave existing records intact', async () => {
+  const e = editableHistory()
+  const count = e.window.__itsCallAssist.callHistorySession().records.length
+  const input = e.ui().querySelector('input[type="file"]')
+  input.files = []
+  await input.onchange()
+  assert(e.ui().querySelector('.history-transfer-status').classList.contains('hidden'))
+  for (const file of [{ size: 6 * 1024 * 1024, text: async () => { throw Error('Should not read') } }, { size: 5, text: async () => { throw Error('File unavailable') } }, { size: 1, text: async () => '' }]) {
+    await e.importFile(file)
+    assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, count)
+    assert.equal(e.ui().querySelector('.history-transfer-status').getAttribute('data-error'), 'true')
+    assert.equal(e.button('Import TXT').disabled, false)
+  }
+})
+asyncCheck('Closing during import rejects its late file contents without changing session data', async () => {
+  let resolve
+  const pending = new Promise((_resolve) => { resolve = _resolve })
+  const e = editableHistory()
+  const importing = e.importFile({ size: 100, text: async () => pending })
+  e.window.__itsCallAssist.destroy()
+  const before = e.session.get('service-desk-8x8-call-history-v1')
+  resolve('Casey\nLate import\nREQ123456')
+  await importing
+  assert.equal(e.session.get('service-desk-8x8-call-history-v1'), before)
+})
 ;(async () => {
   for (const { name, fn } of asyncChecks) {
     await fn()

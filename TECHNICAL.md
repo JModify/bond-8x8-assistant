@@ -2,7 +2,7 @@
 
 Detailed alert rules, browser behaviour, storage, audio routing and development notes. For setup and everyday use, start with the [README](README.md).
 
-Author: **Joshua Lavagna-Slater** | Current version: **1.1.3**.
+Author: **Joshua Lavagna-Slater** | Current version: **1.1.4**.
 
 The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
@@ -16,7 +16,7 @@ The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistan
 6. In 8x8, open **Groups → Filter icon**, select your service desk group, then tick **every status under User status**. This allows the assistant to see agents in all states, rather than treating a filtered list as the whole phone group.
 7. Select the agents covering phones in the assistant's **G1** column. Tick **Me** when you are covering phones.
 8. Click **Settings** to adjust reminder timing, lunch length and desktop notifications. Open **Sound Settings** from that menu to customise audio, choose the assistant's output device and optionally enable **Secondary Ringer**.
-9. During a call, optionally enter the caller's staff name or student number in the assistant's **On call** view. Open **Call History** between Mute and Settings to review completed calls; **History** in the on-call view lets you review earlier calls and return to your draft.
+9. During a call, optionally enter the caller's staff name or student number and notes in the assistant's **On call** view. Open **Call Notes** between Mute and Settings, or from the on-call shortcut, to review records and return to your draft.
 
 If the assistant says **Unable to Assist: Open 8x8 agent queue information**, complete steps 4–6 so your own status and required agent information are readable. Keep the full agent list rendered when monitoring the phone group. If Monitoring says **Queue data unavailable**, scroll back to the three configured inbound queues for live counts and phone-cover alerts.
 
@@ -62,15 +62,17 @@ Current reminders appear in prominent Info or Alert cards directly above the foo
 
 The script reads page information, records the optional identifier you enter in its own field, and alerts you. It does not change your status, select disposition fields, or answer calls.
 
-## Call History
+## Call Notes
 
-While a connected call is visible, the assistant shows its telephone number, queue, native call duration and Connected/On hold state. The **Caller name or student number (optional)** field accepts free text and preserves leading zeros. Enter a staff member's name or a student's number after you obtain it. The assistant never substitutes 8x8's display name for your entry.
+While a connected call is visible, the assistant shows its telephone number, queue, native call duration and Connected/On hold state. The **Caller name or student number (optional)** field accepts free text and preserves leading zeros. A separate **Notes (optional)** field accepts multiline notes. The assistant never substitutes 8x8's display name for your entry.
 
-The call is saved when the actual **Wrap up** state appears. Simply opening 8x8's Disposition tab while talking does not finalise it. A blank or whitespace-only identifier becomes **Unknown**. The field keeps its draft and caret through normal timer updates, changes to Info/Notes tabs, DOM replacement, muting, G1 changes and snippet reruns. The on-call **History** shortcut opens earlier records and statistics; **Back** restores the current caller field. The disposition timer takes priority when the call finishes.
+The call is saved when the actual **Wrap up** state appears. Simply opening 8x8's Disposition tab while talking does not finalise it. A blank or whitespace-only identifier becomes **Unknown**. Both fields keep their drafts and caret through normal timer updates, changes to Info/Notes tabs, DOM replacement, muting, G1 changes and snippet reruns. The on-call **Call Notes** shortcut opens earlier records and statistics; **Back** restores the current caller fields. The disposition timer takes priority when the call finishes.
 
 | Saved detail | Source |
 | --- | --- |
 | Caller name or student number | Your optional entry; Unknown when blank |
+| Notes | Your optional multiline entry; shown directly on each saved record |
+| Job Number | Your optional entry in a saved record's editor, such as INC1234567 or REQ123456 |
 | Caller type (prediction) | Student for exactly 6–9 digits; Staff when the entry contains letters; Unknown otherwise |
 | Phone number | The active call's Phone number field or readable number heading |
 | Queue | The active call's labelled Queue field |
@@ -81,17 +83,45 @@ The call is saved when the actual **Wrap up** state appears. Simply opening 8x8'
 | Hold segment | The last readable On hold timer, under More details; not total hold time |
 | Detected and saved times | When the assistant first detected the call and finalised its record |
 
-Call History lists completed records newest first, grouped by Brisbane date. Search by name, student number, phone number, queue or call reference. Telephone searches accept spaces and punctuation. Long histories scroll while the heading, search and statistics remain accessible. **More details** expands a record's reference, channel information and saved time. Opening the menu does not create another counter: its Today, Last hour and Last detected values come from the same statistics as the main menu. The separate **calls saved this session** count includes completed history records, so it can differ from the day's observed Busy-start count.
+Call Notes lists completed records newest first, grouped by Brisbane date. Undated imports appear under **Call date unknown** after dated calls. Search by name, student number, notes, job number, phone number, queue or call reference. Telephone searches accept spaces and punctuation. Long lists scroll while the heading, search, transfer buttons and statistics remain accessible. Notes and job numbers are visible without expanding **More details**, which contains reference, channel information and saved time. The menu shares the main menu's Today, Last hour and Last detected statistics. Its separate record count can differ from observed Busy starts, particularly after importing or deleting notes.
 
-Click the **pen** in the top right of a saved call to edit its caller name or ID. It changes to a **tick**; click the tick or press Enter to save. **Back** or changing menus cancels an unsaved edit, as does Escape. Only one call can be edited at a time: opening another editor cancels the first draft. A saved edit changes only the name/ID and its prediction, leaving call times, other details and counts untouched. A confirmed blank entry becomes Unknown. Polling preserves your text and caret, and unsaved edits are never stored.
+Click the **pen** in the top right of a saved call to edit its name/ID, notes and Job Number. It changes to a **tick**. The tick, clicking outside the record, **Back**, another record's pen or leaving the view saves all fields. Search, personal-state transitions, page navigation, closing the assistant and snippet reruns also finalise the editor. Only one record is editable at a time. Enter saves from the name/job field; notes retain multiline Enter and use Ctrl+Enter (or Command+Enter) to save. **Escape** cancels explicitly. A blank name becomes Unknown. Polling preserves the input nodes, text and caret. Saving changes only user-entered fields and the derived prediction; native timings and statistics remain unchanged.
+
+The **bin** deletes a saved note immediately. **Undo delete** restores the latest deletion while this assistant remains open. Deletion does not reduce the observed call counter. The native transaction ledger and current completed-interaction guard survive deletion and session restoration, preventing an old Wrap up or lingering Busy card from recreating the deleted record or counting it again.
 
 **Caller type (prediction)** appears under **More details**. An exact 6–9-digit entry suggests Student, including leading zeros. A name or username containing letters suggests Staff. Blank, Unknown and other unmatched entries predict Unknown. This is only a guess from what you enter: entering a student's full name can produce a Staff prediction. It updates when an edit is saved and is also derived for older records when they are restored. This release does not add sorting by prediction.
 
-History and unfinished drafts use [browser tab session storage](https://developer.mozilla.org/en-US/docs/Web/API/Window/sessionStorage), separate from durable assistant settings. They survive refreshes and snippet reruns within the tab's page session; browser session restoration may restore them too. Normal tab/session closure ends this history. If session storage is blocked or full, recording still works in memory and can survive a snippet rerun, but a refresh cannot recover that in-memory copy. Caller details are never placed in the assistant's localStorage preferences/statistics or sent to GitHub, Library or an external service.
+Call Notes and unfinished drafts use [browser tab session storage](https://developer.mozilla.org/en-US/docs/Web/API/Window/sessionStorage), separate from durable assistant settings. They survive refreshes and snippet reruns within the tab's page session; browser session restoration may restore them too. Normal tab/session closure ends these notes unless you export a copy. If session storage is blocked or full, recording still works in memory and can survive a snippet rerun, but a refresh cannot recover that copy. Caller details are never placed in localStorage preferences/statistics or sent to GitHub, Library or an external service. Local TXT files are written or read only when you choose Export/Import.
 
 Capture requires a readable connected phone card. A Busy header or incoming-call offer alone is not enough to create a detailed record. Previously unseen completed calls cannot be reconstructed. Hidden or ambiguous card data cannot attach a name to an arbitrary interaction; previously readable details are retained rather than erased. Repeated references do not create duplicate records. Completed-call and Wrap up markers take priority during partial page updates, and a finished interaction stays guarded even when its Info fields disappear. A lingering Busy header or active clock cannot turn disposition into a new Unknown call or increment the counter again. A distinct new connected reference or number, or a confirmed return to idle, permits the next interaction. If no such evidence is readable, the assistant cannot reliably distinguish a new call from the old card. If Wrap up is missed but a readable idle state proves the call ended, the record retains its last known duration as **≥** that time; unknown values stay unavailable. Busy, hold and disposition timers never substitute for call duration. These limitations also mean calls outside the assistant's observed period may be missing.
 
-Version 1.1.3 prevents new disposition duplicates. Existing saved records and daily counts are retained; the assistant cannot safely determine which earlier Unknown records were erroneous or reconstruct the correct historical total.
+Since 1.1.3, disposition duplicates are prevented. Existing saved records and daily counts are retained; the assistant cannot reconstruct the correct earlier total. Unwanted records can now be deleted manually.
+
+### TXT import and export
+
+**Export TXT** includes every saved record, including those hidden by search. It does not finalise a live on-call draft. Where permitted, the [File System Access Save As picker](https://developer.chrome.com/docs/capabilities/web-apis/file-system-access#write_the_file_to_the_local_file_system) lets you choose the filename and location. The picker opens directly from the click, and the write succeeds only after the stream closes. Cancellation writes nothing. If the picker is unsupported, Export starts a normal TXT download; if permission or writing fails, an explicit **Download TXT** fallback appears. Its location is controlled by Edge's download settings. No browser policy or download setting is changed.
+
+The UTF-8 export uses Windows CRLF endings and 20-dash separators. Each record starts with its name/ID, optional multiline notes and its job number (or **NO JOB NUMBER**), followed by **[Call details]** and labelled metadata. For example, the basic portion is:
+
+```text
+--------------------
+Alex Example
+Helped restore account access.
+Caller confirmed the issue is resolved.
+INC1234567
+--------------------
+Unknown
+NO JOB NUMBER
+--------------------
+```
+
+Assistant exports also include a stable record key, original entry number, source, detected/saved timestamps, phone/queue/reference/channel details, native durations, the full-duration flag and caller prediction. Text metadata is quoted to distinguish literal text from unknown values. Separator-like note lines, the details marker and leading backslashes are escaped with a leading backslash and restored on import. Times retain milliseconds; unknown values and duration lower bounds keep their meaning. Original entry numbers survive import even when fresh local row numbers are needed to avoid collisions. Predictions are recalculated from the name/ID.
+
+**Import TXT** opens a local file selector. It adds records after validating the entire file and never overwrites an existing record with the same exported key. Reimporting an assistant export skips known keys. Simple legacy files accept separators of 20 or more dashes, multiline notes, optional labels and ticket prefixes beyond INC/REQ, including IMS. Empty templates are ignored. A missing name line or empty labelled name becomes Unknown; missing notes/job fields stay empty. Legacy records have no guessed call dates, queue details or durations. UTF-8 (with or without BOM) and BOM-marked UTF-16 little/big endian Notepad files are accepted.
+
+Repeated legacy imports compare full record contents as a multiset: two identical entries in one file remain two calls, while importing that same unchanged file again skips existing copies. An edited legacy entry may differ enough to import as another record; legacy text has no stable identity. Imports and deletions do not change observed call statistics, and imported transaction references never populate the native capture guard ledger or interfere with an active call draft.
+
+Imports are limited to 5 MB and 2,000 nonempty records at a time. Caller identifiers allow 160 characters, notes 20,000 characters and job numbers 80 characters. Oversized, binary or invalid structured data fails before records are added. Imported content is rendered as text, never executed. Closing/replacing the assistant rejects late file reads or picker results. Cancelled/failed transfers leave existing records intact and do not play sounds or send notifications.
 
 ## Timing settings and compact reminders
 
@@ -153,7 +183,7 @@ The counter works independently of queue visibility. It can count a Busy transit
 
 **Mute** stops all assistant tones and previews. Monitoring, agent updates, timers, progress animations, statistics and desktop notifications continue. Notifications created while muted request silent delivery. **Unmute** resumes any current alert; it does not repeat its desktop popup. The mute preference is saved for subsequent runs.
 
-The **-** button minimises the main content; **+** restores it. Monitoring and counting continue while minimised. The **x** button closes the assistant and stops all monitoring and counting, retaining statistics and call history already saved. Closing the assistant does not end the browser tab's history session.
+The **-** button minimises the main content; **+** restores it. Monitoring and counting continue while minimised. The **x** button closes the assistant and stops monitoring and counting, retaining statistics and Call Notes already saved. Closing the assistant does not end the browser tab's notes session.
 
 Settings remain usable while muted. Preview buttons are disabled until sounds are unmuted. The compact break and disposition bars also include Mute/Unmute.
 
@@ -179,6 +209,8 @@ npm test
 
 The code separates page parsing, pure alert conditions, persistent settings, roster reconciliation, freshness checks, UI rendering and audio/notification delivery into focused helpers. Comments explain complex selectors, elapsed/countdown conversion, migration rules, asynchronous routing and lifecycle cleanup. Styles are expanded into readable CSS and remain isolated inside the panel's shadow root.
 
-Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Call-history checks cover real Wrap up versus tabs/offers, repeated and switched references, disposition duplicates with missing Info and lingering clocks/Busy headers, student numbers, safe text rendering, missing/ambiguous fields, session-only persistence, reruns/refreshes, search and shared statistics. Saved-record checks cover one editor at a time, confirmation/cancellation, prediction changes, polling, day rollover, blocked storage, safe text and unchanged call metadata/counts. Layout is also checked separately in Chromium with fictional agents, both supplied minimal break pages, and the supplied on-call and disposition structures with fictionalised caller details. Checks include caret preservation, scrolling histories, narrow and short viewports and active alerts. These checks do not verify live Edge notifications or physical audio delivery.
+The 232 behavioural scenarios use a simulated 8x8 DOM, notifications, audio devices and file APIs. They cover roster/timing/queue rules, mute, routing, statistics, real Wrap up versus tabs/offers, repeated/switched references, disposition duplicates, draft/session persistence and safe text rendering. Call Notes checks include all editable fields, autosave, Escape, predictions, polling, navigation, deletion/Undo, independent capture guards, TXT round trips, legacy/UTF-16 imports, duplicates, limits, failed writes and late file results. The supplied Notepad example is also checked privately; its data is never included in fixtures or public files.
+
+Earlier Chromium layout checks through 1.1.3 used fictional agents and fictionalised copies of the supplied break/call/disposition structures to verify caret preservation, scrolling lists, narrow/short viewports and active alerts. The new 1.1.4 layouts and file dialogs have not been tested in live Edge here; transfer behaviour is covered by API fixtures. These checks do not verify live notifications or physical audio delivery.
 
 Secondary-ringer checks compare note patterns, volume envelopes, clock offsets and destinations across both contexts. They cover Default/Communications aliases, device loss, routing errors, muted startup, pending choices and shutdown. The 1.1.1 menu is checked at five viewport sizes using native Chromium audio graphs with simulated device choices; physical playback through two speakers must be checked on a computer with those devices.

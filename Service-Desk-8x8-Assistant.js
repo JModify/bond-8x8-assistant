@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — v1.1.3
+/* Service Desk 8x8 Assistant — v1.1.4
  * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
@@ -9,7 +9,7 @@
  * Lunch and disposition reminders apply in both G1 and G2.
  * Browser audio may require a click in the page; normal interactions enable it.
  * Optional Secondary Ringer sends assistant sounds to a second output device.
- * No downloads, external requests, credentials, or second login are used.
+ * No external requests, credentials or second login are used. TXT transfers are optional.
  * Reads rendered queue/agent HTML; never changes your availability or answers calls.
  * Keep selected agents rendered; scroll back to the inbound queues for live counts.
  * Background browser throttling, page freezing, logout, closure and refresh
@@ -24,8 +24,8 @@
  * Missing own status or required group information hides regular controls.
  * Muting keeps monitoring, timers, notifications and statistics running.
  * Statistics record observed Busy starts, not 8x8's complete historical call totals.
- * On-call caller names or student numbers are optional and saved at Wrap up.
- * Call History keeps caller details only in this tab's session, never in shared settings.
+ * Optional caller identifiers and notes are saved at Wrap up.
+ * Call Notes stays in this tab's session unless you choose to export a local TXT file.
  */
 ;(() => {
   'use strict'
@@ -44,15 +44,20 @@
   // the previous assistant's observers, audio and panel before starting again.
   const resumedWrapUp = root.__itsCallAssist?.wrapUpSession?.()
   // Session storage normally handles restarts; this copy also supports blocked storage.
+  // Finish a saved-record editor before taking the blocked-storage restart snapshot.
+  root.__itsCallAssist?.finaliseCallNotes?.()
   const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = '1.1.3'
+  const VERSION = '1.1.4'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
   const SECONDS_PER_MINUTE = 60
   const MILLISECONDS_PER_SECOND = 1000
+  const MAX_NOTES_LENGTH = 20000
+  const MAX_IMPORT_BYTES = 5 * 1024 * 1024
+  const MAX_IMPORT_RECORDS = 2000
   let wrapUpSession = resumedWrapUp || null
   // Page labels may contain repeated whitespace or missing text nodes.
   const normaliseText = (value) =>
@@ -437,7 +442,7 @@
     if (
       page?.kind === 'call' &&
       page.transactionId &&
-      callHistory.records.some((call) => call.transactionId === page.transactionId)
+      callHistory.completedTransactions.includes(page.transactionId)
     ) {
       return null
     }
@@ -1236,6 +1241,7 @@
     }
     .call-heading {
       justify-content: space-between;
+      flex-wrap: wrap;
       margin-bottom: 12px;
     }
     .call-title {
@@ -1294,12 +1300,15 @@
       font-size: 12px;
       font-weight: 600;
     }
-    .caller-label input {
+    .caller-label input,
+    .caller-label textarea {
       margin-top: 7px;
       font: 13px system-ui;
       padding: 9px;
     }
     .caller-label input:focus,
+    .caller-label textarea:focus,
+    .history-edit-input:focus,
     .history-search:focus {
       outline: 2px solid #245dc1;
       outline-offset: 2px;
@@ -1309,6 +1318,46 @@
       line-height: 1.5;
       margin: 8px 0 0;
       color: #526176;
+    }
+    .caller-notes-label {
+      display: block;
+      margin-top: 12px;
+    }
+    .caller-label textarea,
+    .history-notes-input {
+      width: 100%;
+      min-height: 65px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    .caller-label textarea {
+      border: 1px solid #a4b2c7;
+      border-radius: 6px;
+      color: #172235;
+      background: #fff;
+    }
+    .history-transfer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 10px;
+    }
+    .history-transfer button {
+      flex: 1 1 110px;
+      margin: 0;
+    }
+    .history-transfer-status {
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: #edf4ff;
+      color: #245dc1;
+      font-size: 11px;
+      line-height: 1.5;
+      margin: 0 0 10px;
+    }
+    .history-transfer-status[data-error="true"] {
+      background: #fff1ed;
+      color: #a03d23;
     }
     .panel.history-panel {
       display: flex;
@@ -1378,7 +1427,7 @@
       margin-bottom: 11px;
     }
     .history-list {
-      min-height: 70px;
+      min-height: 0;
       max-height: 460px;
       overflow: auto;
       overscroll-behavior: contain;
@@ -1415,7 +1464,8 @@
       gap: 7px;
       flex-shrink: 0;
     }
-    .history-edit-toggle {
+    .history-edit-toggle,
+    .history-delete {
       width: 28px;
       height: 28px;
       padding: 0;
@@ -1425,6 +1475,47 @@
       line-height: 1;
       border-color: #c5d5ec;
       background: #f3f7ff;
+    }
+    .history-delete {
+      color: #a03d23;
+      background: #fff6f3;
+      border-color: #ead2c9;
+      font-size: 15px;
+    }
+    .history-card.editing {
+      border-color: #8dafe0;
+      background: #f8faff;
+    }
+    .history-notes {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+      line-height: 1.5;
+      margin: 10px 0;
+      color: #35445b;
+    }
+    .history-job {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #245dc1;
+      background: #edf4ff;
+      border-radius: 5px;
+      padding: 5px 7px;
+      margin: 0 0 9px;
+      overflow-wrap: anywhere;
+    }
+    .history-editor-fields label {
+      display: block;
+      margin: 10px 0;
+      color: #35445b;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .history-editor-fields .history-edit-input {
+      display: block;
+      margin-top: 5px;
+      font-weight: 400;
     }
     .history-edit-toggle.saving {
       color: #fff;
@@ -1772,8 +1863,8 @@
   const callActions = createElement('div', '', callHeading, 'call-heading-actions')
   const callElapsed = createElement('span', '—', callActions, 'call-duration')
   const callMute = createElement('button', 'Mute', callActions)
-  const callHistoryButton = createElement('button', 'History', callActions)
-  callHistoryButton.title = 'Open Call History'
+  const callHistoryButton = createElement('button', 'Call Notes', callActions)
+  callHistoryButton.title = 'Open Call Notes'
   const callInformation = createElement('div', '', callView, 'call-information')
   function createCallDetail (parent, label, className) {
     const box = createElement('div', '', parent)
@@ -1798,11 +1889,19 @@
   callerInput.setAttribute('aria-describedby', 'its-caller-help')
   const callerHelp = createElement(
     'p',
-    'Saves to Call History when the call moves to Wrap up. Leave blank for Unknown.',
+    'Saves to Call Notes at Wrap up. Leave the name or ID blank for Unknown.',
     callView,
     'caller-help'
   )
   callerHelp.id = 'its-caller-help'
+  const notesLabel = createElement('label', 'Notes (optional)', callView, 'caller-label caller-notes-label')
+  notesLabel.setAttribute('for', 'its-caller-notes')
+  const notesInput = createElement('textarea', '', notesLabel)
+  notesInput.id = 'its-caller-notes'
+  notesInput.rows = 3
+  notesInput.maxLength = MAX_NOTES_LENGTH
+  notesInput.placeholder = 'What the caller needs and any useful details'
+  notesInput.setAttribute('aria-describedby', 'its-caller-help')
   const normalView = createElement('div', '', panel, 'main-view')
   const top = createElement('div', '', normalView, 'top')
   const titleBlock = createElement('div', '', top, 'title-block')
@@ -1865,7 +1964,7 @@
   const settingsPanel = createElement('section', '', panel, 'menu-view assistant-settings hidden')
   const historyPanel = createElement('section', '', panel, 'menu-view call-history hidden')
   const historyHeader = createElement('div', '', historyPanel, 'menu-header')
-  createElement('h3', 'Call History', historyHeader)
+  createElement('h3', 'Call Notes', historyHeader)
   const historyBack = createElement('button', 'Back', historyHeader)
   const historyStatistics = createElement('div', '', historyPanel, 'history-statistics')
   function createHistoryStatistic (label, className) {
@@ -1885,17 +1984,28 @@
     'history-session-count'
   )
   const historyResults = createElement('span', '', historySummary, 'small')
+  const historyTransfer = createElement('div', '', historyPanel, 'history-transfer')
+  const historyImport = createElement('button', 'Import TXT', historyTransfer)
+  const historyExport = createElement('button', 'Export TXT', historyTransfer)
+  const historyDownload = createElement('button', 'Download TXT', historyTransfer, 'hidden')
+  const historyFile = createElement('input', '', historyPanel, 'hidden')
+  historyFile.type = 'file'
+  historyFile.accept = '.txt,text/plain'
+  historyFile.setAttribute('aria-label', 'Import a Call Notes text file')
+  const historyTransferStatus = createElement('p', '', historyPanel, 'history-transfer-status hidden')
+  historyTransferStatus.setAttribute('role', 'status')
+  historyTransferStatus.setAttribute('aria-live', 'polite')
   const historySearch = createElement('input', '', historyPanel, 'history-search')
   historySearch.type = 'search'
-  historySearch.placeholder = 'Search name, student number, phone or queue'
-  historySearch.setAttribute('aria-label', 'Search Call History')
+  historySearch.placeholder = 'Search name, ID, notes, job number, phone or queue'
+  historySearch.setAttribute('aria-label', 'Search Call Notes')
   const historyList = createElement('div', '', historyPanel, 'history-list')
   historyList.setAttribute('role', 'region')
   historyList.setAttribute('aria-label', 'Calls saved this session, newest first')
   historyList.tabIndex = 0
   createElement(
     'p',
-    'Kept in this tab for this session. Use the pen to edit a name or ID; the tick saves. Back cancels unsaved changes.',
+    'Edit with the pen. The tick, clicking away or Back saves. Export TXT to keep a copy after this session.',
     historyPanel,
     'history-note'
   )
@@ -1928,7 +2038,7 @@
   createElement('span', VERSION, versionSection, 'footer-value')
   const controls = createElement('div', '', footer, 'controls')
   const muteButton = createElement('button', 'Mute', controls)
-  const historyButton = createElement('button', 'Call History', controls)
+  const historyButton = createElement('button', 'Call Notes', controls)
   const settingsButton = createElement('button', 'Settings', controls)
   doc.body.append(host)
   let destroyed = false
@@ -2177,16 +2287,33 @@
     nextId: 1,
     currentId: null,
     closedId: null,
+    closedCall: null,
+    completedTransactions: [],
     pending: [],
     records: []
   }
   let historyRevision = 0
   let historyRenderKey = ''
+  let historyRenderedQuery = ''
   let editingCallId = null
   let historyEdit = null
   const historyWidgets = new Map()
   const historyDays = new Map()
   let historyEmpty = null
+  let transferBusy = false
+  // Keep internal line breaks/indentation, normalise Windows endings and cap the editable size.
+  const cleanNotes = (value) =>
+    typeof value === 'string' ? value.replace(/\r\n?/g, '\n').trim().slice(0, MAX_NOTES_LENGTH) : ''
+  function cleanJobNumber (value) {
+    // The readable TXT placeholder represents an absent ticket, not a literal job number.
+    const text = normaliseText(value).slice(0, 80)
+    return /^no\s+(?:job|ticket)(?:\s+number)?\.?$/i.test(text) ? '' : text
+  }
+  function newNoteKey () {
+    // Exported keys identify records across tabs without relying on their local row numbers.
+    return root.crypto?.randomUUID?.() ||
+      `${Date.now()}-${callHistory.nextId}-${Math.random().toString(36).slice(2)}`
+  }
   function predictCaller (value) {
     const text = normaliseText(value)
     // Identifiers remain strings: leading zeros are significant for student numbers.
@@ -2204,17 +2331,24 @@
       !value ||
       !Number.isSafeInteger(value.id) ||
       value.id < 1 ||
-      !validCallTime(value.detectedAt)
+      !(validCallTime(value.detectedAt) || (!pending && value.detectedAt === null))
     ) {
       return null
     }
-    if (!pending && !validCallTime(value.completedAt)) return null
+    if (!pending && !(validCallTime(value.completedAt) || value.completedAt === null)) {
+      return null
+    }
     const text = (key, limit = 200) =>
       typeof value[key] === 'string' ? normaliseText(value[key]).slice(0, limit) || null : null
     const seconds = (key) =>
       Number.isSafeInteger(value[key]) && value[key] >= 0 ? value[key] : null
     const call = {
       id: value.id,
+      recordKey: text('recordKey', 180) || newNoteKey(),
+      originalId: Number.isSafeInteger(value.originalId) && value.originalId > 0
+        ? value.originalId
+        : value.id,
+      origin: value.origin === 'text' ? 'text' : '8x8',
       detectedAt: value.detectedAt,
       transactionId: text('transactionId', 160),
       number: readablePhone(text('number', 80)),
@@ -2228,9 +2362,14 @@
     if (pending) {
       call.callerInput =
         typeof value.callerInput === 'string' ? value.callerInput.slice(0, 160) : ''
+      call.notesInput = typeof value.notesInput === 'string'
+        ? value.notesInput.slice(0, MAX_NOTES_LENGTH)
+        : ''
     } else {
       call.caller = text('caller', 160) || 'Unknown'
       call.callerPrediction = predictCaller(call.caller)
+      call.notes = cleanNotes(value.notes)
+      call.jobNumber = cleanJobNumber(text('jobNumber', 80))
       call.completedAt = value.completedAt
       call.durationComplete = value.durationComplete === true
     }
@@ -2264,14 +2403,64 @@
       }
       if (callHistory.records.some((call) => call.id === saved.closedId)) {
         callHistory.closedId = saved.closedId
+        const record = callHistory.records.find((call) => call.id === saved.closedId)
+        callHistory.closedCall = {
+          id: record.id,
+          transactionId: record.transactionId,
+          number: record.number
+        }
+      }
+      // Deleting a note must not release its interaction guard or permit disposition duplicates.
+      if (Number.isSafeInteger(saved.closedCall?.id) && saved.closedCall.id > 0) {
+        callHistory.closedCall = {
+          id: saved.closedCall.id,
+          transactionId: typeof saved.closedCall.transactionId === 'string'
+            ? saved.closedCall.transactionId.slice(0, 160)
+            : null,
+          number: readablePhone(saved.closedCall.number)
+        }
+        callHistory.closedId = callHistory.closedCall.id
+      }
+      // Older sessions derive observed references once. Import never adds to this capture ledger.
+      const transactions = Array.isArray(saved.completedTransactions)
+        ? saved.completedTransactions
+        : callHistory.records.map((call) => call.transactionId)
+      callHistory.completedTransactions = [...new Set(transactions.filter(
+        (value) => typeof value === 'string' && value && value.length <= 160
+      ))]
+      if (
+        callHistory.closedCall?.transactionId &&
+        !callHistory.completedTransactions.includes(callHistory.closedCall.transactionId)
+      ) {
+        callHistory.completedTransactions.push(callHistory.closedCall.transactionId)
       }
     }
   } catch {
     // An in-memory snapshot preserves drafts on rerun when the browser blocks session storage.
-    if (resumedCallHistory) Object.assign(callHistory, resumedCallHistory)
+    if (resumedCallHistory) {
+      Object.assign(callHistory, resumedCallHistory)
+      if (!Array.isArray(resumedCallHistory.completedTransactions)) {
+        callHistory.completedTransactions = callHistory.records.map((call) => call.transactionId).filter(Boolean)
+      }
+    }
+  }
+  // A blocked-storage upgrade from an older running snippet still needs the new guard ledger.
+  if (!Array.isArray(callHistory.completedTransactions)) {
+    callHistory.completedTransactions = callHistory.records.map((call) => call.transactionId).filter(Boolean)
+  }
+  if (!callHistory.closedCall && callHistory.closedId !== null) {
+    const record = callHistory.records.find((call) => call.id === callHistory.closedId)
+    if (record) callHistory.closedCall = { id: record.id, transactionId: record.transactionId, number: record.number }
   }
   // Older records and blocked-storage rerun snapshots derive the prediction from the identifier.
-  for (const record of callHistory.records) record.callerPrediction = predictCaller(record.caller)
+  for (const record of callHistory.records) {
+    record.callerPrediction = predictCaller(record.caller)
+    record.notes ||= ''
+    record.jobNumber ||= ''
+    record.recordKey ||= newNoteKey()
+    record.originalId ||= record.id
+    record.origin ||= '8x8'
+  }
   function saveCallHistory () {
     try {
       // Caller details stay in this tab's session; never put them in durable shared preferences.
@@ -2286,11 +2475,11 @@
   function closedCallPage (page) {
     if (
       page.transactionId &&
-      callHistory.records.some((call) => call.transactionId === page.transactionId)
+      callHistory.completedTransactions.includes(page.transactionId)
     ) {
       return true
     }
-    const closed = callHistory.records.find((call) => call.id === callHistory.closedId)
+    const closed = callHistory.closedCall
     if (!closed) return false
     // A different known reference or caller proves a distinct interaction. Missing Info
     // during disposition cannot manufacture another call with an Unknown identifier.
@@ -2353,17 +2542,25 @@
       ...draft,
       caller: normaliseText(draft.callerInput) || 'Unknown',
       callerPrediction: predictCaller(draft.callerInput),
+      notes: cleanNotes(draft.notesInput),
+      jobNumber: '',
       completedAt: Math.max(Date.now(), draft.detectedAt),
       // Only a final native timer confirms the complete duration. Earlier samples are a lower bound.
       durationComplete: finalDurationReadable
     }
     delete record.callerInput
+    delete record.notesInput
     callHistory.records.push(record)
     callHistory.closedId = record.id
+    callHistory.closedCall = { id: record.id, transactionId: record.transactionId, number: record.number }
+    if (record.transactionId && !callHistory.completedTransactions.includes(record.transactionId)) {
+      callHistory.completedTransactions.push(record.transactionId)
+    }
     callHistory.pending = callHistory.pending.filter((call) => call.id !== draft.id)
     if (callHistory.currentId === draft.id) {
       callHistory.currentId = null
       callerInput.disabled = true
+      notesInput.disabled = true
     }
     historyRevision++
   }
@@ -2378,14 +2575,20 @@
       if (alreadySaved) {
         callHistory.currentId = null
         callerInput.disabled = true
+        notesInput.disabled = true
       } else {
         callHistory.closedId = null
+        callHistory.closedCall = null
         let draft = matchingCallDraft(page)
         if (!draft) {
           draft = {
             id: callHistory.nextId++,
+            recordKey: newNoteKey(),
+            originalId: callHistory.nextId - 1,
+            origin: '8x8',
             detectedAt: Date.now(),
             callerInput: '',
+            notesInput: '',
             number: null,
             queue: null,
             transactionId: null,
@@ -2410,7 +2613,16 @@
         const record = page.transactionId
           ? callHistory.records.find((call) => call.transactionId === page.transactionId)
           : callHistory.records.at(-1)
-        if (record && matchesCallNumber(record, page)) callHistory.closedId = record.id
+        if (page.transactionId && callHistory.completedTransactions.includes(page.transactionId)) {
+          // A deleted note still has an observed reference. Restore its guard from the
+          // native card without resurrecting the note or recording another call.
+          callHistory.closedId = record?.id || callHistory.closedCall?.id || callHistory.nextId
+          callHistory.closedCall = {
+            id: callHistory.closedId,
+            transactionId: page.transactionId,
+            number: page.number || record?.number || null
+          }
+        }
       }
     } else if (!page) {
       const me = readMyPresence(docs)
@@ -2432,6 +2644,7 @@
         for (const draft of [...callHistory.pending]) finishCall(draft)
         // A confirmed return to idle permits another call, including the same telephone number.
         callHistory.closedId = null
+        callHistory.closedCall = null
       }
     }
     if (JSON.stringify(callHistory) !== before) saveCallHistory()
@@ -2447,6 +2660,7 @@
     return hours ? `${hours}:${clock}` : clock
   }
   function historyTime (time) {
+    if (time === null) return 'Time unknown'
     return new Date(time).toLocaleTimeString('en-AU', {
       timeZone: STATISTICS_ZONE,
       hour: '2-digit',
@@ -2458,15 +2672,24 @@
     widget.card.classList.toggle('editing', editing)
     widget.caller.classList.toggle('hidden', editing)
     widget.input.classList.toggle('hidden', !editing)
+    widget.fields.classList.toggle('hidden', !editing)
+    widget.notes.classList.toggle('hidden', editing || !record.notes)
+    widget.job.classList.toggle('hidden', editing)
     widget.button.classList.toggle('saving', editing)
     setText(widget.caller, record.caller)
     setText(widget.button, editing ? '✓' : '✎')
-    const action = editing ? 'Save caller name or ID' : 'Edit caller name or ID'
+    const action = editing ? 'Save call note' : 'Edit call note'
     widget.button.title = action
     widget.button.setAttribute('aria-label', `${action} for call #${record.id}`)
     setText(widget.prediction, 'Caller type (prediction): ' + record.callerPrediction)
+    setText(widget.notes, record.notes || '')
+    setText(widget.job, record.jobNumber ? 'Job: ' + record.jobNumber : 'No job number')
     // Polling must leave the active editor's text, selection and caret untouched.
-    if (!editing) widget.input.value = record.caller === 'Unknown' ? '' : record.caller
+    if (!editing) {
+      widget.input.value = record.caller === 'Unknown' ? '' : record.caller
+      widget.notesInput.value = record.notes || ''
+      widget.jobInput.value = record.jobNumber || ''
+    }
   }
   function cancelHistoryEdit () {
     if (!historyEdit) return
@@ -2485,32 +2708,397 @@
     ) {
       return
     }
-    // Only one saved-call draft exists. Opening another editor discards the previous draft.
-    cancelHistoryEdit()
-    historyEdit = { id: record.id, value: record.caller === 'Unknown' ? '' : record.caller }
+    // Commit the previous record before opening another; only one editor owns a draft.
+    saveHistoryEdit()
+    historyEdit = {
+      id: record.id,
+      value: record.caller === 'Unknown' ? '' : record.caller,
+      notes: record.notes || '',
+      jobNumber: record.jobNumber || ''
+    }
     widget.input.value = historyEdit.value
+    widget.notesInput.value = historyEdit.notes
+    widget.jobInput.value = historyEdit.jobNumber
     syncHistoryEditor(record, widget)
     widget.input.focus?.({ preventScroll: true })
     widget.input.select?.()
   }
-  function saveHistoryEdit () {
-    if (
-      destroyed ||
-      !historyEdit ||
-      activeView !== 'history' ||
-      historyPanel.classList.contains('hidden')
-    ) {
-      return
-    }
+  function saveHistoryEdit (refresh = true) {
+    if (destroyed || !historyEdit) return
     const record = callHistory.records.find((call) => call.id === historyEdit.id)
     if (!record) return cancelHistoryEdit()
-    // Explicit confirmation changes only the identifier and prediction, never call timings or counts.
-    record.caller = normaliseText(historyEdit.value) || 'Unknown'
+    // Autosave changes user-entered fields and the prediction, never measured timings or counters.
+    record.caller = normaliseText(historyEdit.value).slice(0, 160) || 'Unknown'
     record.callerPrediction = predictCaller(record.caller)
+    record.notes = cleanNotes(historyEdit.notes)
+    record.jobNumber = cleanJobNumber(historyEdit.jobNumber)
     historyEdit = null
     historyRevision++
     saveCallHistory()
+    const widget = historyWidgets.get(record.id)
+    if (widget) syncHistoryEditor(record, widget)
+    // Filtering and personal-view changes already render; avoid recursive reconciliation.
+    if (refresh) renderHistory()
+  }
+  function saveHistoryOutside (event) {
+    if (!historyEdit || destroyed) return
+    const card = historyWidgets.get(historyEdit.id)?.card
+    // Shadow DOM retargets event.target to the host; its composed path retains the actual card.
+    const inside = event.composedPath?.().includes(card) || card?.contains?.(event.target)
+    if (!inside) saveHistoryEdit()
+  }
+  let lastDeletedNote = null
+  const historyUndo = createElement('button', 'Undo delete', historyTransfer, 'hidden')
+  function deleteHistoryRecord (record) {
+    if (destroyed || activeView !== 'history' || historyPanel.classList.contains('hidden')) return
+    saveHistoryEdit(false)
+    if (!callHistory.records.some((call) => call.id === record.id)) return
+    lastDeletedNote = record
+    callHistory.records = callHistory.records.filter((call) => call.id !== record.id)
+    historyWidgets.get(record.id)?.card.remove()
+    historyWidgets.delete(record.id)
+    historyRevision++
+    saveCallHistory()
     renderHistory()
+    historyUndo.classList.remove('hidden')
+    transferMessage('Call note deleted. Undo restores it. Your call counter is unchanged.')
+  }
+  historyUndo.onclick = () => {
+    if (destroyed || !lastDeletedNote) return
+    // Import may have already restored the same exported record while Undo was visible.
+    if (!callHistory.records.some((call) => call.recordKey === lastDeletedNote.recordKey)) {
+      callHistory.records.push(lastDeletedNote)
+    }
+    lastDeletedNote = null
+    historyUndo.classList.add('hidden')
+    historyRevision++
+    saveCallHistory()
+    renderHistory()
+    transferMessage('Call note restored.')
+  }
+  const NOTE_SEPARATOR = '--------------------'
+  const NOTE_DETAILS = '[Call details]'
+  // Every stored detail has a readable label and a type; unknown values remain unknown.
+  const NOTE_TEXT_FIELDS = [
+    ['Record key', 'recordKey', 'text'],
+    ['Original entry number', 'originalId', 'integer'],
+    ['Source', 'origin', 'source'],
+    ['First detected', 'detectedAt', 'date'],
+    ['Saved at', 'completedAt', 'date'],
+    ['Phone number', 'number', 'text'],
+    ['Queue', 'queue', 'text'],
+    ['Call reference', 'transactionId', 'text'],
+    ['Channel', 'channel', 'text'],
+    ['Channel number', 'channelNumber', 'text'],
+    ['Duration seconds', 'durationSeconds', 'seconds'],
+    ['Queue wait seconds', 'waitSeconds', 'seconds'],
+    ['Last hold segment seconds', 'holdSeconds', 'seconds'],
+    ['Full duration recorded', 'durationComplete', 'boolean']
+  ]
+  const isNoteSeparator = (line) => /^\s*-{20,}\s*$/.test(line)
+  function escapedNoteLine (line) {
+    // Protect delimiter-like notes and leading backslashes without flattening multiline text.
+    return line.startsWith('\\') || isNoteSeparator(line) || line === NOTE_DETAILS
+      ? '\\' + line
+      : line
+  }
+  function unescapedNoteLine (line) {
+    const remainder = line.slice(1)
+    const escaped = line.startsWith('\\') &&
+      (remainder.startsWith('\\') || isNoteSeparator(remainder) || remainder === NOTE_DETAILS)
+    return escaped
+      ? remainder
+      : line
+  }
+  function exportCallNotesText () {
+    // Export every saved record, regardless of the search filter; unfinished calls remain drafts.
+    const lines = [
+      'Service Desk 8x8 Assistant — Call Notes (TXT v1)',
+      'Exported: ' + new Date().toISOString(),
+      NOTE_SEPARATOR
+    ]
+    const records = [...callHistory.records].sort(
+      (a, b) => (a.detectedAt ?? -Infinity) - (b.detectedAt ?? -Infinity) || a.id - b.id
+    )
+    for (const record of records) {
+      lines.push(escapedNoteLine(record.caller || 'Unknown'))
+      if (record.notes) lines.push(...record.notes.split('\n').map(escapedNoteLine))
+      lines.push(escapedNoteLine(record.jobNumber || 'NO JOB NUMBER'), NOTE_DETAILS)
+      for (const [label, key, type] of NOTE_TEXT_FIELDS) {
+        const value = record[key]
+        let text = 'Not recorded'
+        if (value !== null && value !== undefined) {
+          if (type === 'date') text = new Date(value).toISOString()
+          else if (type === 'boolean') text = value ? 'Yes' : 'No'
+          else if (type === 'text') text = JSON.stringify(value)
+          else text = String(value)
+        }
+        lines.push(label + ': ' + text)
+      }
+      lines.push('Caller type (prediction): ' + record.callerPrediction, NOTE_SEPARATOR)
+    }
+    // CRLF works in Notepad and preserves the same logical lines when imported on other systems.
+    return lines.join('\r\n') + '\r\n'
+  }
+  function readNoteDetail (value, type) {
+    if (!value || /^(?:not recorded|unknown|unavailable|null|—)$/i.test(value)) return null
+    if (type === 'text') {
+      // Quoted strings distinguish a literal "Unknown" queue from an absent value.
+      if (!value.startsWith('"')) return value
+      const text = JSON.parse(value)
+      if (typeof text !== 'string') throw new Error('A call detail must contain text.')
+      return text
+    }
+    if (type === 'source') {
+      if (!['8x8', 'text'].includes(value.toLowerCase())) {
+        throw new Error('The record source is not recognised.')
+      }
+      return value.toLowerCase()
+    }
+    if (type === 'boolean') {
+      if (/^(?:yes|true)$/i.test(value)) return true
+      if (/^(?:no|false)$/i.test(value)) return false
+      throw new Error('Full duration recorded must be Yes or No.')
+    }
+    if (type === 'date') {
+      const time = Date.parse(value)
+      if (!validCallTime(time)) throw new Error('A recorded date is not recognised.')
+      return time
+    }
+    // Labelled timings accept whole seconds or the same clocks/units read from 8x8.
+    const number = /^\d+$/.test(value)
+      ? Number(value)
+      : type === 'seconds' ? parseDuration(value) : null
+    if (!Number.isSafeInteger(number) || number < (type === 'integer' ? 1 : 0)) {
+      throw new Error('An entry number or duration is not recognised.')
+    }
+    return number
+  }
+  function readTextNote (block) {
+    const lines = block.split('\n')
+    while (lines.length && !lines.at(-1).trim()) lines.pop()
+    if (!block.trim()) return null
+    const detailsAt = lines.indexOf(NOTE_DETAILS)
+    const body = (detailsAt < 0 ? lines : lines.slice(0, detailsAt)).map(unescapedNoteLine)
+    const fields = { origin: 'text', detectedAt: null, completedAt: null, durationComplete: false }
+    if (detailsAt >= 0) {
+      const seen = new Set()
+      for (const line of lines.slice(detailsAt + 1)) {
+        const colon = line.indexOf(':')
+        if (colon < 0) continue
+        const label = normaliseStatus(line.slice(0, colon))
+        const field = NOTE_TEXT_FIELDS.find(([name]) => normaliseStatus(name) === label)
+        if (!field) continue
+        const [, key, type] = field
+        if (seen.has(key)) throw new Error('A call detail appears twice in one record.')
+        seen.add(key)
+        fields[key] = readNoteDetail(line.slice(colon + 1).trim(), type)
+      }
+    }
+    while (body.length && !body.at(-1).trim()) body.pop()
+    // Legacy files have a name first, multiline notes in the middle and an optional ticket last.
+    const first = body.shift() || ''
+    const nameLabel = /^(?:name\s*\/\s*(?:sid|id)|name|caller(?: name)?|student (?:id|number))\s*:\s*/i
+    const caller = normaliseText(detailsAt >= 0 ? first : first.replace(nameLabel, '')) || 'Unknown'
+    let jobNumber = ''
+    const last = body.at(-1)?.trim() || ''
+    const noJob = /^no\s+(?:job|ticket)(?:\s+number)?\.?$/i.test(last)
+    const labelledJob = /^(?:job(?:\s+(?:number|no\.?))?|ticket(?:\s+(?:number|no\.?))?)\s*:\s*/i
+    const ticketLine = detailsAt >= 0 || noJob || labelledJob.test(last) ||
+      /^[a-z]{2,12}[- ]?\d{3,}$/i.test(last)
+    if (body.length && ticketLine) {
+      const lastLine = body.pop()
+      const value = (detailsAt >= 0 ? lastLine : lastLine.replace(labelledJob, '')).trim()
+      jobNumber = /^no\s+(?:job|ticket)(?:\s+number)?\.?$/i.test(value) ? '' : value
+    }
+    if (detailsAt < 0 && body[0]?.match(/^notes?\s*:/i)) {
+      body[0] = body[0].replace(/^notes?\s*:\s*/i, '')
+    }
+    const notes = body.join('\n').trim()
+    // Refuse oversized fields rather than silently losing caller information during a round trip.
+    const limits = { recordKey: 180, number: 80, queue: 200, transactionId: 160, channel: 200, channelNumber: 80 }
+    const oversizedDetail = Object.entries(limits).some(
+      ([key, limit]) => typeof fields[key] === 'string' && fields[key].length > limit
+    )
+    if (caller.length > 160 || notes.length > MAX_NOTES_LENGTH || jobNumber.length > 80 || oversizedDetail) {
+      throw new Error('A record contains more text than the assistant can keep.')
+    }
+    const record = savedCall({ ...fields, id: 1, caller, notes, jobNumber }, false)
+    if (!record) throw new Error('A record contains an invalid date or call detail.')
+    // Missing legacy identifiers/times are not invented. Row numbers are assigned only at import.
+    record.recordKey = fields.recordKey || null
+    record.originalId = fields.originalId || null
+    return record
+  }
+  function parseCallNotesText (text) {
+    if (typeof text !== 'string' || text.length > MAX_IMPORT_BYTES) {
+      throw new Error('Choose a text file no larger than 5 MB.')
+    }
+    const normalised = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+    // Reject binary control bytes while allowing Notepad's tabs and line breaks.
+    for (const character of normalised) {
+      const code = character.charCodeAt(0)
+      if (code < 32 && ![9, 10].includes(code)) {
+        throw new Error('The selected file is not readable plain text.')
+      }
+    }
+    // Consume the delimiter's own newline once. A second blank first line is a missing
+    // name, so retain it as Unknown rather than stealing the first line of notes.
+    const blocks = normalised
+      .split(/^[ \t]*-{20,}[ \t]*$/m)
+      .map((block, index) => index ? block.replace(/^\n/, '') : block)
+      .filter((block) => block.trim())
+    if (/^Service Desk 8x8 Assistant.*Call Notes \(TXT v/i.test(blocks[0]?.trim() || '')) {
+      if (!blocks[0].includes('(TXT v1)')) throw new Error('This Call Notes file uses a newer format.')
+      blocks.shift()
+    }
+    if (blocks.length > MAX_IMPORT_RECORDS) throw new Error('Import up to 2,000 records at a time.')
+    const records = blocks.map(readTextNote).filter(Boolean)
+    if (!records.length) throw new Error('No call notes were found in the selected file.')
+    return records
+  }
+  function legacyNoteSignature (record) {
+    // Compare full legacy content without hashing away differences or guessing call identities.
+    const details = NOTE_TEXT_FIELDS
+      .filter(([, key]) => !['recordKey', 'originalId'].includes(key))
+      .map(([, key]) => record[key])
+    return JSON.stringify([record.caller, record.notes, record.jobNumber, ...details])
+  }
+  function importCallNotesText (text) {
+    const records = parseCallNotesText(text)
+    saveHistoryEdit(false)
+    const knownKeys = new Set([...callHistory.records, ...callHistory.pending].map((call) => call.recordKey))
+    const legacyCounts = new Map()
+    for (const call of callHistory.records.filter((call) => call.origin === 'text')) {
+      const signature = legacyNoteSignature(call)
+      legacyCounts.set(signature, (legacyCounts.get(signature) || 0) + 1)
+    }
+    let added = 0
+    let skipped = 0
+    for (const record of records) {
+      const signature = legacyNoteSignature(record)
+      const duplicates = legacyCounts.get(signature) || 0
+      // Stable keys make assistant exports idempotent. Multiset matching preserves identical
+      // calls within one legacy file while avoiding extra copies when that file is reimported.
+      if ((record.recordKey && knownKeys.has(record.recordKey)) || (!record.recordKey && duplicates)) {
+        if (!record.recordKey) legacyCounts.set(signature, duplicates - 1)
+        skipped++
+        continue
+      }
+      record.id = callHistory.nextId++
+      record.originalId ||= record.id
+      record.recordKey ||= newNoteKey()
+      knownKeys.add(record.recordKey)
+      callHistory.records.push(record)
+      added++
+    }
+    // Imported references never enter the native capture ledger or the observed-call statistics.
+    historyRevision++
+    saveCallHistory()
+    renderHistory()
+    return { added, skipped }
+  }
+  function transferMessage (message, error = false) {
+    if (destroyed) return
+    setText(historyTransferStatus, message)
+    historyTransferStatus.setAttribute('data-error', String(error))
+    historyTransferStatus.classList.remove('hidden')
+  }
+  function setTransferBusy (busy) {
+    transferBusy = busy
+    if (destroyed) return
+    historyImport.disabled = busy
+    historyExport.disabled = historyDownload.disabled = busy || !callHistory.records.length
+  }
+  function downloadCallNotes () {
+    if (destroyed || transferBusy || !callHistory.records.length) return
+    saveHistoryEdit()
+    let url
+    try {
+      const file = new root.Blob([exportCallNotesText()], { type: 'text/plain;charset=utf-8' })
+      url = root.URL.createObjectURL(file)
+      const link = createElement('a', '', historyPanel, 'hidden')
+      link.href = url
+      link.download = `Call-Notes-${dayKey(Date.now())}.txt`
+      link.click()
+      link.remove()
+      // Give Edge time to consume the blob before releasing it; no caller data leaves the browser.
+      root.setTimeout(() => root.URL.revokeObjectURL(url), 30000)
+      transferMessage('TXT download started. Edge’s download settings control the save location.')
+    } catch {
+      if (url) root.URL.revokeObjectURL(url)
+      transferMessage('The TXT download could not start. Check Edge’s download permissions and try again.', true)
+    }
+  }
+  historyDownload.onclick = downloadCallNotes
+  historyExport.onclick = async () => {
+    if (destroyed || transferBusy || !callHistory.records.length) return
+    saveHistoryEdit()
+    if (typeof root.showSaveFilePicker !== 'function') return downloadCallNotes()
+    setTransferBusy(true)
+    let writable
+    try {
+      // Open directly in the click handler, before any async work consumes user activation.
+      const handle = await root.showSaveFilePicker({
+        id: 'assistant-call-notes',
+        suggestedName: `Call-Notes-${dayKey(Date.now())}.txt`,
+        types: [{ description: 'Notepad text file', accept: { 'text/plain': ['.txt'] } }]
+      })
+      if (destroyed) return
+      const text = exportCallNotesText()
+      writable = await handle.createWritable()
+      if (destroyed) {
+        await writable.abort()
+        return
+      }
+      await writable.write(text)
+      // File System Access commits the selected file only when its stream is closed.
+      await writable.close()
+      writable = null
+      transferMessage('Call Notes exported to your selected location.')
+    } catch (error) {
+      if (writable) await writable.abort().catch(() => {})
+      if (error.name === 'AbortError') transferMessage('Export cancelled.')
+      else {
+        historyDownload.classList.remove('hidden')
+        transferMessage('Edge could not save to a selected location. Try Download TXT, or check your browser permissions.', true)
+      }
+    } finally {
+      setTransferBusy(false)
+    }
+  }
+  historyImport.onclick = () => {
+    if (destroyed || transferBusy) return
+    saveHistoryEdit()
+    // A file input works without installation and can reselect the same file after a failed import.
+    historyFile.value = ''
+    historyFile.click()
+  }
+  historyFile.onchange = async () => {
+    const file = historyFile.files?.[0]
+    if (!file || destroyed || transferBusy) return
+    setTransferBusy(true)
+    try {
+      if (file.size > MAX_IMPORT_BYTES) throw new Error('Choose a text file no larger than 5 MB.')
+      let text
+      if (root.TextDecoder && file.arrayBuffer) {
+        // Notepad also writes UTF-16. A BOM selects its encoding; ordinary files use UTF-8.
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        let encoding = 'utf-8'
+        if (bytes[0] === 255 && bytes[1] === 254) encoding = 'utf-16le'
+        else if (bytes[0] === 254 && bytes[1] === 255) encoding = 'utf-16be'
+        text = new root.TextDecoder(encoding, { fatal: true }).decode(bytes)
+      } else text = await file.text()
+      // A closed/replaced assistant must not accept a late file-read result.
+      if (destroyed) return
+      const { added, skipped } = importCallNotesText(text)
+      transferMessage(`${added} ${added === 1 ? 'call note' : 'call notes'} imported.${skipped ? ` ${skipped} already present.` : ''}`)
+    } catch (error) {
+      transferMessage(error instanceof TypeError ? 'The file could not be read as a Notepad text file.' : error.message || 'The file could not be imported. Try selecting it again.', true)
+    } finally {
+      setTransferBusy(false)
+      historyFile.value = ''
+    }
   }
   function createHistoryWidget (record) {
     const card = createElement('article', '', historyList, 'history-card')
@@ -2533,6 +3121,24 @@
     )
     time.title = 'Call first detected at ' + historyTime(record.detectedAt)
     const button = createElement('button', '✎', actions, 'history-edit-toggle')
+    const deleteButton = createElement('button', '🗑', actions, 'history-delete')
+    deleteButton.title = 'Delete call note'
+    deleteButton.setAttribute('aria-label', `Delete call note #${record.id}`)
+    const notes = createElement('p', '', card, 'history-notes')
+    const job = createElement('p', '', card, 'history-job')
+    const fields = createElement('div', '', card, 'history-editor-fields hidden')
+    const noteLabel = createElement('label', 'Notes', fields)
+    const notesInput = createElement('textarea', '', noteLabel, 'history-edit-input history-notes-input')
+    notesInput.rows = 3
+    notesInput.maxLength = MAX_NOTES_LENGTH
+    notesInput.setAttribute('aria-label', `Notes for call #${record.id}`)
+    const jobLabel = createElement('label', 'Job Number', fields)
+    const jobInput = createElement('input', '', jobLabel, 'history-edit-input history-job-input')
+    jobInput.type = 'text'
+    jobInput.maxLength = 80
+    jobInput.autocomplete = 'off'
+    jobInput.placeholder = 'e.g. INC1234567 or REQ123456'
+    jobInput.setAttribute('aria-label', `Job number for call #${record.id}`)
     const information = createElement('div', '', card, 'history-information')
     setText(
       createCallDetail(information, 'Phone number', 'history-number'),
@@ -2563,6 +3169,7 @@
       createElement('p', 'Hold time last read: ' + callClock(record.holdSeconds), details)
     }
     createElement('p', 'Saved at: ' + historyTime(record.completedAt), details)
+    if (record.origin === 'text') createElement('p', 'Imported from a text file. Missing details remain unknown.', details)
     if (!record.durationComplete) {
       createElement(
         'p',
@@ -2570,21 +3177,29 @@
         details
       )
     }
-    const widget = { card, caller, input, button, prediction }
+    const widget = { card, caller, input, button, prediction, notes, job, fields, notesInput, jobInput }
     button.onclick = () =>
       historyEdit?.id === record.id ? saveHistoryEdit() : beginHistoryEdit(record, widget)
     input.oninput = () => {
       if (!destroyed && historyEdit?.id === record.id) historyEdit.value = input.value.slice(0, 160)
     }
-    // Keep editing keystrokes inside the assistant instead of invoking 8x8 shortcuts.
-    for (const event of ['keydown', 'keypress', 'keyup']) {
-      input.addEventListener(event, (e) => e.stopPropagation())
+    notesInput.oninput = () => {
+      if (!destroyed && historyEdit?.id === record.id) historyEdit.notes = notesInput.value.slice(0, MAX_NOTES_LENGTH)
     }
-    input.onkeydown = (event) => {
-      if (event.key === 'Enter' || event.key === 'Escape') {
-        event.preventDefault()
-        if (event.key === 'Enter') saveHistoryEdit()
-        else cancelHistoryEdit()
+    jobInput.oninput = () => {
+      if (!destroyed && historyEdit?.id === record.id) historyEdit.jobNumber = jobInput.value.slice(0, 80)
+    }
+    deleteButton.onclick = () => deleteHistoryRecord(record)
+    // Keep editing keystrokes inside the assistant instead of invoking 8x8 shortcuts.
+    for (const field of [input, notesInput, jobInput]) {
+      for (const event of ['keydown', 'keypress', 'keyup']) field.addEventListener(event, (e) => e.stopPropagation())
+      field.onkeydown = (event) => {
+        // Notes keep normal multiline Enter; Ctrl+Enter confirms from any field.
+        if (event.key === 'Escape' || (event.key === 'Enter' && (field !== notesInput || event.ctrlKey || event.metaKey))) {
+          event.preventDefault()
+          if (event.key === 'Escape') cancelHistoryEdit()
+          else saveHistoryEdit()
+        }
       }
     }
     syncHistoryEditor(record, widget)
@@ -2592,17 +3207,20 @@
   }
   function renderHistory () {
     const query = normaliseStatus(historySearch.value)
+    // A new search leaves the current record; save before evaluating its edited contents.
+    if (historyEdit && historyRenderedQuery !== query) saveHistoryEdit(false)
+    historyRenderedQuery = query
     const today = dayKey(Date.now())
     const key = `${historyRevision}|${query}|${today}`
     // Polling updates statistics without rebuilding the scrollable cards or resetting expanded details.
     if (historyRenderKey === key) return
     historyRenderKey = key
     const records = [...callHistory.records].sort(
-      (a, b) => b.detectedAt - a.detectedAt || b.id - a.id
+      (a, b) => (b.detectedAt ?? -Infinity) - (a.detectedAt ?? -Infinity) || b.id - a.id
     )
     const filtered = records.filter((call) => {
       const text = normaliseStatus(
-        [call.caller, call.number, call.queue, call.transactionId].join(' ')
+        [call.caller, call.notes, call.jobNumber, call.number, call.queue, call.transactionId].join(' ')
       )
       // Telephone searches accept the user's spaces and punctuation as well as native formatting.
       const numberMatch =
@@ -2614,32 +3232,34 @@
       `${records.length} ${records.length === 1 ? 'call' : 'calls'} saved this session`
     )
     setText(historyResults, query ? `${filtered.length} found` : 'Newest first')
-    // Filtering an edited row away cancels its unsaved changes, just like leaving the menu.
-    if (historyEdit && !filtered.some((record) => record.id === historyEdit.id)) cancelHistoryEdit()
+    historyExport.disabled = transferBusy || !records.length
+    historyDownload.disabled = transferBusy || !records.length
     const desired = []
     if (!filtered.length) {
       if (!historyEmpty) historyEmpty = createElement('div', '', historyList, 'history-empty')
       setText(
         historyEmpty,
         query
-          ? 'No matching calls. Try another name, number or queue.'
-          : 'No calls saved yet. Completed calls will appear here after Wrap up.'
+          ? 'No matching call notes. Try another name, note or job number.'
+          : 'No call notes yet. Calls appear after Wrap up, or use Import TXT.'
       )
       desired.push(historyEmpty)
     }
     let previousDay = ''
     for (const record of filtered) {
-      const recordDay = dayKey(record.detectedAt)
+      const recordDay = record.detectedAt === null ? 'unknown' : dayKey(record.detectedAt)
       if (recordDay !== previousDay) {
         const label =
-          recordDay === today
-            ? 'Today'
-            : new Date(record.detectedAt).toLocaleDateString('en-AU', {
-              timeZone: STATISTICS_ZONE,
-              day: 'numeric',
-              month: 'short',
-              year: 'numeric'
-            })
+          recordDay === 'unknown'
+            ? 'Call date unknown'
+            : recordDay === today
+              ? 'Today'
+              : new Date(record.detectedAt).toLocaleDateString('en-AU', {
+                timeZone: STATISTICS_ZONE,
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric'
+              })
         let heading = historyDays.get(recordDay)
         if (!heading) {
           heading = createElement('div', '', historyList, 'history-day')
@@ -2676,15 +3296,17 @@
     setText(callNumber, page.number || draft?.number || 'Unavailable')
     setText(callQueue, page.queue || draft?.queue || 'Unavailable')
     callerInput.disabled = !draft || page.identityConflict
+    notesInput.disabled = callerInput.disabled
     if (editingCallId !== draft?.id || callerInput.value !== (draft?.callerInput || '')) {
       // Ordinary accepted input already matches the draft: polling leaves its caret alone.
       // Caller changes or rejected late edits restore the correct saved value.
       callerInput.value = draft?.callerInput || ''
       editingCallId = draft?.id || null
     }
+    if (notesInput.value !== (draft?.notesInput || '')) notesInput.value = draft?.notesInput || ''
     syncViews()
   }
-  callerInput.oninput = () => {
+  function saveOnCallInput (input, key, limit) {
     const draft = currentCallDraft()
     const page = readCallPage(getReadableDocuments())
     // Ignore a delayed input event after Wrap up or after the selected interaction changed.
@@ -2696,10 +3318,12 @@
     ) {
       return
     }
-    draft.callerInput = callerInput.value.slice(0, 160)
+    draft[key] = input.value.slice(0, limit)
     saveCallHistory()
   }
-  for (const input of [callerInput, historySearch]) {
+  callerInput.oninput = () => saveOnCallInput(callerInput, 'callerInput', 160)
+  notesInput.oninput = () => saveOnCallInput(notesInput, 'notesInput', MAX_NOTES_LENGTH)
+  for (const input of [callerInput, notesInput, historySearch]) {
     // Keep typing in assistant fields from bubbling into 8x8 keyboard shortcuts.
     for (const event of ['keydown', 'keypress', 'keyup']) {
       input.addEventListener(event, (e) => e.stopPropagation())
@@ -2925,7 +3549,7 @@
     const callHistoryOpen = compactKind === 'call' && historyDuringCall && activeView === 'history'
     const compact = !!compactKind && !unavailable && !callHistoryOpen
     const onCall = compactKind === 'call' && compact
-    if (historyEdit && (unavailable || compact || activeView !== 'history')) cancelHistoryEdit()
+    if (historyEdit && (unavailable || compact || activeView !== 'history')) saveHistoryEdit(false)
     panel.classList.toggle('compact', compact && !onCall)
     panel.classList.toggle('call-panel', onCall)
     panel.classList.toggle('history-panel', !unavailable && !compact && activeView === 'history')
@@ -3012,7 +3636,7 @@
     syncViews()
   }
   function openView (view) {
-    if (activeView === 'history' && view !== 'history') cancelHistoryEdit()
+    if (activeView === 'history' && view !== 'history') saveHistoryEdit()
     // Leaving Sound Settings cancels the sample sound, while actual reminders continue.
     if (activeView === 'sounds' && view !== 'sounds') stopSound('preview')
     activeView = view
@@ -3064,6 +3688,7 @@
   function enableAlerts (event) {
     // Only real keyboard or pointer actions can satisfy browser audio restrictions.
     if (!event?.isTrusted || destroyed) return
+    if (event.type === 'pointerdown') saveHistoryOutside(event)
     prepareSound()
   }
   // All sounds are generated locally: no downloaded audio or network requests.
@@ -4436,10 +5061,11 @@
     // Set the shutdown flag before async output changes can resume sounds or save devices.
     saveStatistics()
     saveShortBreaks()
+    saveHistoryEdit(false)
     saveCallHistory()
     root.removeEventListener?.('pagehide', saveStatistics)
     root.removeEventListener?.('pagehide', saveShortBreaks)
-    root.removeEventListener?.('pagehide', saveCallHistory)
+    root.removeEventListener?.('pagehide', finaliseCallNotes)
     destroyed = true
     root.clearInterval(interval)
     mediaDevices?.removeEventListener?.('devicechange', audioDeviceChanged)
@@ -4460,6 +5086,11 @@
   const interval = root.setInterval(safeScan, SCAN_INTERVAL_MS)
   root.__itsCallAssist = { destroy, inspect: () => lastSample }
   root.__itsCallAssist.version = VERSION
+  function finaliseCallNotes () {
+    saveHistoryEdit(false)
+    saveCallHistory()
+  }
+  root.__itsCallAssist.finaliseCallNotes = finaliseCallNotes
   // Return copies so restart support and inspection cannot mutate internal state.
   root.__itsCallAssist.wrapUpSession = () => (wrapUpSession ? { ...wrapUpSession } : null)
   root.__itsCallAssist.statistics = () => ({
@@ -4478,7 +5109,7 @@
   // Preserve the latest observed call count when the page closes or navigates away.
   root.addEventListener?.('pagehide', saveStatistics)
   root.addEventListener?.('pagehide', saveShortBreaks)
-  root.addEventListener?.('pagehide', saveCallHistory)
+  root.addEventListener?.('pagehide', finaliseCallNotes)
   prepareSound()
   safeScan()
   refreshAudioDevices()
