@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.6 — 2026-10-13
+
+- Fit the main panel without an outer scrollbar. Tighten spacing, let the agent table adjust to the available height, and keep the footer and active reminders visible. Use a compact arrangement in shorter windows; Settings and Sound Settings keep their own scrolling.
+- Read the explicit Lunch or Short Break reason beside the dedicated break timer. Short Break never uses Lunch Break Length or its alarm. Missing or conflicting reasons show a generic break view without a guessed lunch reminder.
+- Add a separate animated Short Break view showing today's total and the current break in completed minutes. Preserve measured seconds across breaks and snippet restarts so partial minutes accumulate. Save totals locally and reset at Brisbane midnight, assigning only today's portion of an ongoing break to the new day. Do not advance totals from unreadable or unchanged clocks.
+- Display lunch elapsed, remaining, allowance and overdue time in minutes, including accessible progress values. Keep disposition in seconds. Clarify the lunch sound and setting descriptions.
+- Keep the assistant open when scrolling unmounts configured queue rows. Continue roster updates, call statistics and available controls. Clearly label cached counts as last-read, stop queue-dependent cover alerts and require fresh native data on recovery. Retained offscreen DOM rows remain readable; never advance cached caller waiting times or alter 8x8's scrolling/rendering.
+- Preserve saved G1 roles, sound choices, notification options, mute behaviour and all prior release snapshots. Expand behavioural checks to 118 scenarios and verify layouts in Chromium with long fictional rosters, active alerts, queue-scroll recovery and the supplied minimal Lunch/Short Break markup.
+
 ## 1.0.5 — 2026-10-13
 
 - Make Lunch Break Finished and Complete Disposition work in G1 and G2, including when no G1 agents or queue names are configured. Update their sound explanations and timing-setting help. Keep the configured strict greater-than boundaries and notification options.

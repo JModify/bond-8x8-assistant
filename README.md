@@ -2,7 +2,7 @@
 
 Assistant for the Bond IT Service Desk 8x8 customer call center interface.
 
-Author: **Joshua Lavagna-Slater** | Current version: **1.0.5**.
+Author: **Joshua Lavagna-Slater** | Current version: **1.0.6**.
 
 The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
@@ -17,7 +17,7 @@ The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistan
 7. Select the agents covering phones in the assistant's **G1** column. Tick **Me** when you are covering phones.
 8. Click **Settings** to adjust reminder timing, lunch length and desktop notifications. Open **Sound Settings** from that menu to customise audio and choose the assistant's output device.
 
-If the assistant says **Unable to Assist: Open 8x8 agent queue information**, complete steps 4–6 so the required queue and agent information is visible. Keep the three inbound rows and the full agent list in view while monitoring the phone group.
+If the assistant says **Unable to Assist: Open 8x8 agent queue information**, complete steps 4–6 so your own status and required agent information are readable. Keep the full agent list rendered when monitoring the phone group. If Monitoring says **Queue data unavailable**, scroll back to the three configured inbound queues for live counts and phone-cover alerts.
 
 The snippet starts monitoring immediately. The page can remain in the background, but it must stay open. A page refresh or browser restart requires running the saved snippet again. Browser audio may need a click in the page before it can play. Background tab throttling or freezing can delay detection.
 
@@ -45,11 +45,15 @@ The delay uses each inbound queue's **Longest waiting time**, not an agent's tim
 | Info: G1 On Break | You are in G2 and a selected, signed-in G1 member is On Break. Includes someone already on break when monitoring starts; suppressed during a phone-cover alert. |
 | Alert: Change Status To Available | The appropriate G1 or G2 phone-cover condition above is met. |
 | Alert: Complete Disposition | Your disposition time exceeds Disposition Reminder Delay, in G1 or G2. Stops when you leave disposition. |
-| Alert: Lunch Break Finished | Your On Break time exceeds Lunch Break Length, in G1 or G2. Stops when you leave On Break. |
+| Alert: Lunch Break Finished | Your break is labelled Lunch and exceeds Lunch Break Length, in G1 or G2. Stops when you leave Lunch. Never plays for Short Break. |
 
 Waiting-call monitoring uses the three inbound queues configured locally. Outbound queues are excluded.
 
 Monitoring shows one combined **Callers waiting** total. Statistics appear as three cards in a horizontal row. **Last updated** at the bottom records the latest assistant update, alongside **Version**. The author stays under the title. Working Offline appears in orange.
+
+The main panel fits the available height without an outer scrollbar. Its agent table can scroll when there are many agents, and long lists of names can scroll inside their reminder card; the footer and controls stay visible. Settings and Sound Settings retain their separate scrollable menus.
+
+8x8 uses a virtualised queue list: scrolling can remove offscreen rows from the rendered HTML. Rows outside the viewport are still readable if they remain in the DOM, but unmounted rows provide no live data. The assistant stays open when queue rows disappear, continues roster updates and call counting, and marks the displayed count **Last read callers waiting**. Queue-dependent cover alerts stop until all three queue counts and fresh waiting times return. A cached count never supplies a caller's current waiting time. The assistant does not change 8x8's scrolling, inspect private application state or make additional requests to recover missing rows.
 
 Current reminders appear in prominent Info or Alert cards directly above the footer. Each card names the sound, explains the actual trigger and shows whether its sound is playing, finished or muted. Cards remain visible when the assistant is minimised or Settings is open. Sound previews have a separate temporary card and never send a desktop notification.
 
@@ -67,9 +71,11 @@ Lunch Break Length is recorded in whole minutes. Reminder delays and sound durat
 
 Lunch length has a slider and an exact minutes field; its current value appears only in the editable field, without printed slider bounds. Existing second-based lunch settings convert to the nearest whole minute, within the supported range. The former Extra Phone Cover Delay becomes Caller Waiting Alert Delay with its saved duration retained. The old 10-second disposition default upgrades once to 20 seconds; other saved delays are preserved, and newly chosen values remain unchanged on later runs.
 
-While you are on break or completing disposition, the assistant shows a compact progress bar with elapsed time, time left, the allowance and a small Mute/Unmute button. Any active reminder's explanation appears below the bar. Its colours match the main panel; a gentle shimmer becomes an orange pulse when overdue. Reduced-motion preferences are respected. The main menu returns when you leave that state. These reminders work in **G1 and G2**, without needing queue information. Changing group membership does not cancel a reminder for an ongoing personal state.
+While you are on **Lunch** or completing disposition, the assistant shows a compact progress bar with elapsed time, time left, the allowance and a small Mute/Unmute button. Lunch labels use minutes, including overdue and accessible progress text; disposition uses seconds. Any active reminder's explanation appears below the bar. Its colours match the main panel; a gentle shimmer becomes an orange pulse when overdue. Reduced-motion preferences are respected. The main menu returns when you leave that state. These reminders work in **G1 and G2**, without needing queue information. Changing group membership does not cancel a reminder for an ongoing personal state.
 
-The break reader uses 8x8's `on-break-timer`, including `MM:SS` and `H:MM:SS` values, so reminders work while all queue and agent rows are hidden.
+The break reader uses 8x8's `on-break-timer`, including `MM:SS` and `H:MM:SS` values, and checks the reason label beside it. **Lunch** uses the lunch allowance; **Short Break** never does. An unknown or conflicting reason shows a generic break timer without a lunch alarm.
+
+**Short Break** opens a separate teal view showing **Short breaks today** and **This short break**, both in completed minutes. A gently animated bar shows progress toward the next minute. Measured seconds carry across breaks, so two partial minutes can make one full minute; totals survive snippet reruns and are saved in this browser when storage is permitted. The daily total resets at Brisbane midnight and splits an ongoing break at that boundary. An already-running short break contributes its readable native elapsed time for today. Earlier breaks that were never observed cannot be reconstructed, and an unreadable or unchanged clock never adds guessed wall time. Mute does not stop counting. No short-break alarm is added.
 
 The disposition reader requires the actual **Wrap up** state and its `progress-timer`. Merely opening the Disposition tab during a call does not start a reminder. [8x8's post-processing clock counts down](https://docs.8x8.com/8x8WebHelp/contact-center/agent-workspace/Content/aw/answer-incoming-calls.htm), and its other interaction timer describes the completed call. The assistant therefore measures its own disposition interval from the first observed Wrap up page, using decreases in the native countdown to catch up. Re-running the snippet retains an observed ongoing interval; starting it after disposition has already begun cannot recover the unseen start time. An expired native countdown does not silence a reminder while the Wrap up page is still open.
 
@@ -137,4 +143,4 @@ npm test
 
 The code separates page parsing, pure alert conditions, persistent settings, roster reconciliation, freshness checks, UI rendering and audio/notification delivery into focused helpers. Comments explain complex selectors, elapsed/countdown conversion, migration rules, asynchronous routing and lifecycle cleanup. Styles are expanded into readable CSS and remain isolated inside the panel's shadow root.
 
-Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Regression scenarios include filtered and virtualised rosters, transient row removal, reruns while selected agents are absent, and group-independent personal reminders. They do not verify live Edge notifications, physical audio delivery or the real 8x8 page layout.
+Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Regression scenarios include filtered and virtualised rosters, transient row removal, reruns while selected agents are absent, group-independent personal reminders, separate break reasons, accumulated partial minutes, midnight rollover and queue-scroll recovery. Layout is also checked separately in Chromium with fictional agents and the supplied minimal break markup. These checks do not verify live Edge notifications or physical audio delivery.

@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — v1.0.5
+/* Service Desk 8x8 Assistant — v1.0.6
  * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
@@ -10,19 +10,21 @@
  * Browser audio may require a click in the page; normal interactions enable it.
  * No downloads, external requests, credentials, or second login are used.
  * Reads rendered queue/agent HTML; never changes your availability or answers calls.
- * Keep the three inbound queue rows and selected agents rendered in the sidebar.
+ * Keep selected agents rendered; scroll back to the inbound queues for live counts.
  * Background browser throttling, page freezing, logout, closure and refresh
  * can delay/stop monitoring. Rerun after a refresh. Not a guaranteed alarm service.
  * In G2, assistance uses the break, waiting and coverage rules.
  * In G1, Me gets queue-based Working Offline, disposition and lunch reminders.
  * Timings are configurable in Assistant Settings. Only one personal alarm runs.
  * G1 selections, assistant settings and sounds persist when storage is permitted.
- * Break and disposition pages use compact personal timers without queue information.
- * Other missing queue/group information hides the controls until it returns.
+ * Lunch, Short Break and disposition pages have separate compact personal views.
+ * Short breaks accumulate today's minutes and never use the lunch reminder.
+ * Missing queue rows keep controls open but suspend queue-based cover alerts.
+ * Missing own status or required group information hides regular controls.
  * Muting keeps monitoring, timers, notifications and statistics running.
  * Statistics record observed Busy starts, not 8x8's complete historical call totals.
  */
-(() => {
+;(() => {
   'use strict'
   let root = window
   // Reuse the same-origin top page so rerunning inside an iframe cannot create
@@ -40,7 +42,7 @@
   const resumedWrapUp = root.__itsCallAssist?.wrapUpSession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = '1.0.5'
+  const VERSION = '1.0.6'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -48,17 +50,17 @@
   const MILLISECONDS_PER_SECOND = 1000
   let wrapUpSession = resumedWrapUp || null
   // Page labels may contain repeated whitespace or missing text nodes.
-  const normaliseText = value =>
+  const normaliseText = (value) =>
     String(value ?? '')
       .replace(/\s+/g, ' ')
       .trim()
   // Status comparisons ignore letter case, while displayed labels stay intact.
-  const normaliseStatus = value => normaliseText(value).toLowerCase()
+  const normaliseStatus = (value) => normaliseText(value).toLowerCase()
   const QUEUE_CONFIG_KEY = 'service-desk-8x8-inbound-queues-v1'
   function validQueueNames (value) {
     if (!Array.isArray(value) || value.length !== 3) return false
     // Blank labels cannot identify a queue, and duplicate labels double-count it.
-    const allNamesPresent = value.every(name => typeof name === 'string' && normaliseText(name))
+    const allNamesPresent = value.every((name) => typeof name === 'string' && normaliseText(name))
     const allNamesUnique = new Set(value.map(normaliseText)).size === 3
     return allNamesPresent && allNamesUnique
   }
@@ -81,7 +83,7 @@
     if (/^\d+:\d{2}(?::\d{2})?$/.test(value)) {
       const clock = value.split(':').map(Number)
       // Only the first component may exceed 59; later components are base 60.
-      if (clock.slice(1).some(part => part >= SECONDS_PER_MINUTE)) return null
+      if (clock.slice(1).some((part) => part >= SECONDS_PER_MINUTE)) return null
       const seconds = clock.reduce((total, part) => total * SECONDS_PER_MINUTE + part, 0)
       return Number.isSafeInteger(seconds) ? seconds : null
     }
@@ -92,7 +94,10 @@
     if (!parts.length || normaliseText(value.replace(unitPattern, ''))) return null
     const unitSeconds = { h: 3600, m: SECONDS_PER_MINUTE, s: 1 }
     // The first unit letter identifies hours, minutes or seconds for each match.
-    const seconds = parts.reduce((total, match) => total + Number(match[1]) * unitSeconds[match[2][0]], 0)
+    const seconds = parts.reduce(
+      (total, match) => total + Number(match[1]) * unitSeconds[match[2][0]],
+      0
+    )
     return Number.isSafeInteger(seconds) ? seconds : null
   }
   function isVisible (node) {
@@ -129,24 +134,50 @@
   }
   function agentRows (docs) {
     // Collect live rows across readable frames and skip hidden duplicate panels.
-    return docs.flatMap(d => [...d.querySelectorAll('[data-test-id="agent-item"]')].filter(isVisible))
+    return docs.flatMap((d) =>
+      [...d.querySelectorAll('[data-test-id="agent-item"]')].filter(isVisible)
+    )
+  }
+  function breakLabelKind (label) {
+    // The reason, rather than the shared On Break status, distinguishes the two timers.
+    const value = normaliseStatusLabel(label)
+    if (value === 'short break') return 'shortBreak'
+    if (value === 'lunch' || value === 'lunch break') return 'break'
+    return ''
+  }
+  function readBreakKind (wrapper, status = '') {
+    // Both supplied break pages put their reason beside the timer's immediate wrapper.
+    const labels = [...(wrapper?.querySelectorAll('span[title]') || [])].filter(
+      (node) =>
+        isVisible(node) &&
+        (breakLabelKind(node.getAttribute('title')) || breakLabelKind(node.textContent))
+    )
+    if (labels.length === 1) {
+      const labelled = breakLabelKind(labels[0].getAttribute('title'))
+      const displayed = breakLabelKind(labels[0].textContent)
+      // Conflicting title/text is a partial page update, not evidence of a lunch break.
+      return labelled && labelled === displayed ? labelled : 'otherBreak'
+    }
+    if (labels.length > 1) return 'otherBreak'
+    // Explicit header labels are also usable; an unspecified On Break is never assumed to be lunch.
+    return breakLabelKind(status) || 'otherBreak'
   }
   // Only inspect the supplied status markers. Never read caller names or details.
   function readPersonalPage (docs) {
     // Dedicated personal markers remain visible while queue and roster panels vanish.
     const breaks = docs
-      .flatMap(d => [...d.querySelectorAll('[data-test-id="on-break-timer"]')])
+      .flatMap((d) => [...d.querySelectorAll('[data-test-id="on-break-timer"]')])
       .filter(isVisible)
     const wraps = docs
-      .flatMap(d => [...d.querySelectorAll('[data-test-id="wrap-up-label"]')])
-      .filter(node => isVisible(node) && dispositionStatus(node.textContent))
+      .flatMap((d) => [...d.querySelectorAll('[data-test-id="wrap-up-label"]')])
+      .filter((node) => isVisible(node) && dispositionStatus(node.textContent))
     if (breaks.length === 1 && !wraps.length) {
       const timer = breaks[0]
       const text = normaliseText(timer.textContent)
       const seconds = parseDuration(text)
       if (seconds === null) return null
-      // Break length is enough for this reminder; no other page details are read.
-      return { kind: 'break', status: 'On Break', timer: text, seconds, liveTimer: text }
+      const kind = readBreakKind(timer.parentElement?.parentElement)
+      return { kind, status: 'On Break', timer: text, seconds, liveTimer: text }
     }
     if (wraps.length === 1 && !breaks.length) {
       // Scope the countdown to the active phone card, not another interaction tab.
@@ -163,7 +194,7 @@
     return null
   }
   function pagePresence (page) {
-    if (page.kind === 'break') {
+    if (page.kind !== 'disposition') {
       wrapUpSession = null
       return { name: 'Me', ...page }
     }
@@ -177,16 +208,11 @@
     // after browser throttling. Taking the maximum prevents either clock rewinding.
     const wallElapsed = Math.floor((now - wrapUpSession.startedAt) / MILLISECONDS_PER_SECOND)
     const countdownElapsed = wrapUpSession.initialRemaining - page.remaining
-    const seconds = Math.max(
-      0,
-      wrapUpSession.elapsed || 0,
-      wallElapsed,
-      countdownElapsed
-    )
+    const seconds = Math.max(0, wrapUpSession.elapsed || 0, wallElapsed, countdownElapsed)
     wrapUpSession.elapsed = seconds
     return { name: 'Me', ...page, seconds, timer: seconds + 's' }
   }
-  const agentName = row =>
+  const agentName = (row) =>
     // The name label's title is reliable even when its visible text is truncated.
     normaliseText(
       row.querySelector('[data-test-id="agent-name-label"]')?.getAttribute('title') ||
@@ -195,7 +221,7 @@
   function readAgentAndQueues (docs, name) {
     const errors = []
     // A unique name match is required; duplicate rows must not choose an agent at random.
-    const candidates = agentRows(docs).filter(r => agentName(r) === name)
+    const candidates = agentRows(docs).filter((r) => agentName(r) === name)
     let agent = null
     if (name === 'Me') {
       agent = readMyPresence(docs)
@@ -209,27 +235,34 @@
       const status = normaliseText(
         row.querySelector('[data-status-value]')?.getAttribute('data-status-value')
       )
-      const timer = normaliseText(row.querySelector('[data-test-id="user-presence-timer"]')?.textContent)
+      const timer = normaliseText(
+        row.querySelector('[data-test-id="user-presence-timer"]')?.textContent
+      )
       const seconds = parseDuration(timer)
       if (!status || seconds === null) errors.push('Agent status or timer unreadable')
       else agent = { name, status, timer, seconds }
     }
+    // Separate roster errors from queue errors: scrolling queues must not conceal the controls.
+    const agentErrors = [...errors]
+    const queueErrors = []
     // Only the three exact configured inbound names are read; outbound rows are ignored.
-    const rows = docs.flatMap(d =>
+    const rows = docs.flatMap((d) =>
       [...d.querySelectorAll('[data-test-id="queue-item"]')].filter(isVisible)
     )
-    const queues = QUEUES.map(name => {
+    const queues = QUEUES.map((name) => {
       // Queue names come from the label title, preserving the user's exact spelling.
       const matches = rows.filter(
-        r => normaliseText(r.querySelector('[data-test-id="queue-name"]')?.getAttribute('title')) === name
+        (r) =>
+          normaliseText(r.querySelector('[data-test-id="queue-name"]')?.getAttribute('title')) ===
+          name
       )
       if (matches.length !== 1) {
-        errors.push(`Queue row ${matches.length ? 'ambiguous' : 'missing'}: ${name}`)
+        queueErrors.push(`Queue row ${matches.length ? 'ambiguous' : 'missing'}: ${name}`)
         return { name, waiting: null }
       }
       // Accessible cell titles identify the waiting count without assuming column order.
       const cells = [...matches[0].querySelectorAll('[role="gridcell"][title]')]
-      const cellsWaiting = cells.filter(c =>
+      const cellsWaiting = cells.filter((c) =>
         /^\d+\s+Interactions? waiting$/i.test(normaliseText(c.getAttribute('title')))
       )
       // Read only a single numeric waiting-count cell, then cross-check its title.
@@ -243,11 +276,11 @@
           : null
       // Mismatched text and title can occur midway through a page update.
       if (waiting === null || waiting !== titleCount || !Number.isSafeInteger(waiting)) {
-        errors.push(`Waiting count unreadable: ${name}`)
+        queueErrors.push(`Waiting count unreadable: ${name}`)
         return { name, waiting: null }
       }
       // The real caller age is 8x8's Longest waiting time, not an agent's Busy timer.
-      const waits = cells.filter(c =>
+      const waits = cells.filter((c) =>
         /\sLongest waiting time$/i.test(normaliseText(c.getAttribute('title')))
       )
       // No waiting caller has zero age; a waiting caller with unreadable age stays unknown.
@@ -264,7 +297,7 @@
       }
       return { name, waiting, waitSeconds }
     })
-    return { agent, queues, errors }
+    return { agent, queues, agentErrors, queueErrors, errors: [...agentErrors, ...queueErrors] }
   }
   function readMyPresence (docs) {
     const page = readPersonalPage(docs)
@@ -285,7 +318,11 @@
             const text = normaliseText(timer.textContent)
             const seconds = parseDuration(text)
             if (status && seconds !== null) {
-              candidates.push({ name: 'Me', status, timer: text, seconds })
+              const isBreak = ['on break', 'break', 'lunch', 'lunch break', 'short break'].includes(
+                normaliseStatusLabel(status)
+              )
+              const kind = isBreak ? readBreakKind(wrapper, status) : ''
+              candidates.push({ name: 'Me', status, timer: text, seconds, kind })
             }
             break
           }
@@ -309,8 +346,8 @@
     if (page) return { status: page.status }
     // Statistics need a status transition, even if queues or the status timer are hidden.
     const states = docs
-      .flatMap(d => [...d.querySelectorAll('[data-test-id="user-status"][data-status-value]')])
-      .filter(node => !node.closest('[data-test-id="agent-item"]') && isVisible(node))
+      .flatMap((d) => [...d.querySelectorAll('[data-test-id="user-status"][data-status-value]')])
+      .filter((node) => !node.closest('[data-test-id="agent-item"]') && isVisible(node))
     if (states.length !== 1) {
       // An open status picker can add icons. The header's own timer identifies
       // the actual presence in that case; no queue or group counts are read.
@@ -321,10 +358,27 @@
     return status ? { status } : null
   }
   // 8x8 uses several spellings for the same state across its header and phone card.
-  const normaliseStatusLabel = status => normaliseText(normaliseStatus(status).replace(/[-_]/g, ' '))
+  const normaliseStatusLabel = (status) =>
+    normaliseText(normaliseStatus(status).replace(/[-_]/g, ' '))
   const offlineStatuses = new Set(['work offline', 'working offline'])
-  const dispositionStatuses = new Set(['wrap up', 'wrapup', 'post processing', 'postprocessing', 'disposition'])
-  const unavailableStatuses = new Set(['busy', 'on break', 'break', 'other work', ...offlineStatuses, ...dispositionStatuses])
+  const dispositionStatuses = new Set([
+    'wrap up',
+    'wrapup',
+    'post processing',
+    'postprocessing',
+    'disposition'
+  ])
+  const unavailableStatuses = new Set([
+    'busy',
+    'on break',
+    'break',
+    'lunch',
+    'lunch break',
+    'short break',
+    'other work',
+    ...offlineStatuses,
+    ...dispositionStatuses
+  ])
 
   function workingOffline (status) {
     return offlineStatuses.has(normaliseStatusLabel(status))
@@ -336,7 +390,14 @@
 
   function personalPageKind (me) {
     if (!me) return ''
-    if (['on break', 'break'].includes(normaliseStatus(me.status))) return 'break'
+    if (['break', 'shortBreak', 'otherBreak'].includes(me.kind)) return me.kind
+    if (
+      ['on break', 'break', 'lunch', 'lunch break', 'short break'].includes(
+        normaliseStatusLabel(me.status)
+      )
+    ) {
+      return breakLabelKind(me.status) || 'otherBreak'
+    }
     if (dispositionStatus(me.status)) return 'disposition'
     return ''
   }
@@ -350,22 +411,31 @@
 
   function groupRules (agents, queues, me = null, waitingAlertSeconds = 180, selfInG1 = false) {
     // Check every configured queue before interpreting any waiting caller's age.
-    const queueCountsReadable = queues.length === QUEUES.length && queues.every(queue => queue.waiting !== null)
-    const callerNeedsCover = queueCountsReadable && queues.some(queue => callerWaitReached(queue, waitingAlertSeconds, selfInG1))
+    const queueCountsReadable =
+      queues.length === QUEUES.length && queues.every((queue) => queue.waiting !== null)
+    const callerNeedsCover =
+      queueCountsReadable &&
+      queues.some((queue) => callerWaitReached(queue, waitingAlertSeconds, selfInG1))
 
     // Me cannot count as another G1 agent available to cover their own offline state.
-    const covering = selfInG1 ? agents.filter(agent => agent.name !== 'Me') : agents
-    const ownStatusEligible = !!me?.status && (selfInG1 ? workingOffline(me.status) : normaliseStatus(me.status) !== 'available')
+    const covering = selfInG1 ? agents.filter((agent) => agent.name !== 'Me') : agents
+    const ownStatusEligible =
+      !!me?.status &&
+      (selfInG1 ? workingOffline(me.status) : normaliseStatus(me.status) !== 'available')
     // In G1, Me is sufficient to make a group; G2 needs another signed-in G1 agent.
     const hasPhoneGroup = selfInG1 || covering.length > 0
     // G1 needs no other Available agent; G2 accepts only recognised unavailable states.
-    const nobodyCanTakeCall = covering.every(agent => selfInG1
-      ? normaliseStatus(agent.status) !== 'available'
-      : unavailableStatuses.has(normaliseStatusLabel(agent.status)))
+    const nobodyCanTakeCall = covering.every((agent) =>
+      selfInG1
+        ? normaliseStatus(agent.status) !== 'available'
+        : unavailableStatuses.has(normaliseStatusLabel(agent.status))
+    )
 
     return {
       // Break information is separate from the phone-cover alarm and is G2-only.
-      lunch: agents.filter(agent => normaliseStatus(agent.status) === 'on break').map(agent => agent.name),
+      lunch: agents
+        .filter((agent) => normaliseStatus(agent.status) === 'on break')
+        .map((agent) => agent.name),
       critical: ownStatusEligible && callerNeedsCover && hasPhoneGroup && nobodyCanTakeCall
     }
   }
@@ -383,14 +453,14 @@
         body: `You have been in disposition for more than ${dispositionSeconds} seconds. Complete the fields and click Wrap up.`
       }
     }
-    if (status === 'on break' || status === 'break') {
+    if (personalPageKind(me) === 'break') {
       // Lunch settings use minutes; the page clock and comparison use seconds.
       const lunchSeconds = lunchMinutes * SECONDS_PER_MINUTE
       if (me.seconds <= lunchSeconds) return null
       return {
         kind: 'lunchOverdue',
         title: 'Alert: Lunch Break Finished',
-        body: `You have been "On Break" for longer than your ${lunchMinutes}-minute lunch break. Change your status to "Available".`
+        body: `You have been on Lunch for longer than your ${lunchMinutes}-minute lunch break. Change your status to "Available".`
       }
     }
     // Other Work and Working Offline are permitted. Only the queue-based
@@ -424,6 +494,89 @@
       border-radius: 12px;
       box-shadow: 0 8px 35px #0004;
       padding: 16px;
+    }
+    .panel.main-panel {
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100dvh - 36px);
+      overflow: hidden;
+      padding: 12px;
+    }
+    .main-view,
+    .main-content {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .main-view {
+      flex: 0 1 auto;
+    }
+    .main-content {
+      flex: 0 1 auto;
+    }
+    .main-content > :not(.agents),
+    .main-view > .top,
+    .main-panel > .assistant-bottom {
+      flex-shrink: 0;
+    }
+    .main-panel .agents {
+      max-height: 200px;
+      min-height: 58px;
+      flex: 0 1 auto;
+    }
+    .main-panel .section-heading {
+      margin: 8px 0 4px;
+    }
+    .main-panel .agents {
+      margin: 6px 0;
+    }
+    .main-panel .agent-help {
+      margin: 4px 0 0;
+      font-size: 10px;
+      line-height: 1.4;
+    }
+    .main-panel .monitoring-summary {
+      padding: 8px 12px;
+    }
+    .main-panel .stat {
+      padding: 8px 10px;
+    }
+    .main-panel .stat-label {
+      font-size: 10px;
+      line-height: 1.3;
+    }
+    .main-panel .stat-value {
+      margin-top: 3px;
+      font-size: 18px;
+      line-height: 1.1;
+    }
+    .main-panel .statistics-note {
+      margin-top: 5px;
+      line-height: 1.35;
+    }
+    .main-panel .footer {
+      margin-top: 8px;
+      padding-top: 8px;
+    }
+    .main-panel .current-reminders {
+      margin-top: 10px;
+    }
+    .main-panel .current-reminder {
+      padding: 9px 11px;
+    }
+    .main-panel .reminder-reason {
+      line-height: 1.4;
+      margin-top: 5px;
+      /* Long lists remain readable inside their card without displacing the footer. */
+      max-height: 5.6em;
+      overflow: auto;
+      scrollbar-width: thin;
+    }
+    .main-panel .reminder-state {
+      margin-top: 5px;
+    }
+    .main-panel .assistant-bottom {
+      position: static;
     }
     h3 {
       margin: 0 0 10px;
@@ -901,6 +1054,9 @@
     .monitoring-state[data-state="live"] {
       color: #17633a;
     }
+    .monitoring-state[data-state="unavailable"] {
+      color: #a95005;
+    }
     .statistics {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -951,6 +1107,34 @@
     .compact-view[data-kind="disposition"] {
       --progress-colour: #7650a5;
       --progress-soft: #f2edfb;
+    }
+    .compact-view[data-kind="shortBreak"] {
+      --progress-colour: #147e78;
+      --progress-soft: #e5f5f1;
+    }
+    .short-break-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .short-break-summary > div {
+      padding: 11px 12px;
+      border-radius: 8px;
+      background: var(--progress-soft);
+    }
+    .short-value {
+      display: block;
+      font-size: 24px;
+      font-weight: 650;
+      color: var(--progress-colour);
+      font-variant-numeric: tabular-nums;
+    }
+    .short-label {
+      display: block;
+      margin-top: 3px;
+      color: #526176;
+      font-size: 10px;
     }
     .compact-view[data-overdue="true"] {
       --progress-colour: #b85809;
@@ -1042,6 +1226,104 @@
       opacity: 0.45;
       cursor: not-allowed;
     }
+    @media (max-height: 640px) {
+      .panel.main-panel {
+        padding: 10px;
+      }
+      .main-panel .section-heading {
+        margin: 6px 0 3px;
+        font-size: 12px;
+        line-height: 1.3;
+      }
+      .main-panel .agents {
+        min-height: 56px;
+        margin: 4px 0;
+      }
+      .main-panel th,
+      .main-panel td {
+        padding: 4px 6px;
+      }
+      .main-panel .agent-help {
+        font-size: 9.5px;
+        line-height: 1.3;
+      }
+      .main-panel .monitoring-summary {
+        padding: 6px 10px;
+      }
+      .main-panel .queue-total {
+        font-size: 24px;
+      }
+      .main-panel .stat {
+        padding: 6px 8px;
+      }
+      .main-panel .statistics-note {
+        font-size: 9.5px;
+        line-height: 1.3;
+        margin-top: 4px;
+      }
+      .main-panel .current-reminder {
+        padding: 7px 9px;
+      }
+      .main-panel .reminder-title,
+      .main-panel .reminder-reason {
+        font-size: 11px;
+        line-height: 1.3;
+      }
+      .main-panel .reminder-mark {
+        flex-basis: 18px;
+        height: 18px;
+        font-size: 11px;
+      }
+      .main-panel .reminder-state {
+        font-size: 9px;
+        line-height: 1.3;
+        margin-top: 4px;
+      }
+    }
+    @media (max-height: 520px) {
+      .panel.main-panel {
+        padding: 9px;
+      }
+      .main-panel .monitor-grid {
+        grid-template-columns: minmax(115px, 1fr) minmax(0, 2fr);
+        gap: 10px;
+      }
+      .main-panel .monitoring-summary {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+      }
+      .main-panel .queue-count {
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .main-panel .queue-count .small {
+        font-size: 9px;
+      }
+      .main-panel .monitoring-state {
+        max-width: 100%;
+        text-align: left;
+      }
+      .main-panel .statistics {
+        gap: 4px;
+      }
+      .main-panel .stat {
+        padding: 4px 5px;
+      }
+      .main-panel .stat-label {
+        font-size: 9px;
+      }
+      .main-panel .stat-value {
+        font-size: 16px;
+      }
+      .main-panel .current-reminders {
+        margin-top: 8px;
+      }
+      .main-panel .footer {
+        margin-top: 7px;
+        padding-top: 7px;
+      }
+    }
     @media (max-width: 380px) {
       .stat {
         padding: 9px 7px;
@@ -1076,6 +1358,13 @@
   const compactActions = createElement('span', '', compactHeading, 'compact-actions')
   const compactCountdown = createElement('span', '', compactActions, 'compact-countdown')
   const compactMute = createElement('button', 'Mute', compactActions)
+  const shortSummary = createElement('div', '', compactView, 'short-break-summary hidden')
+  const shortTodayBox = createElement('div', '', shortSummary)
+  const shortToday = createElement('span', '0 min', shortTodayBox, 'short-value short-today')
+  createElement('span', 'Short breaks today', shortTodayBox, 'short-label')
+  const shortCurrentBox = createElement('div', '', shortSummary)
+  const shortCurrent = createElement('span', '0 min', shortCurrentBox, 'short-value short-current')
+  createElement('span', 'This short break', shortCurrentBox, 'short-label')
   const progressTrack = createElement('div', '', compactView, 'progress-track')
   progressTrack.setAttribute('role', 'progressbar')
   progressTrack.setAttribute('aria-valuemin', '0')
@@ -1095,7 +1384,7 @@
   const remove = createElement('button', 'x', windowActions)
   remove.title = 'Close assistant'
   remove.setAttribute('aria-label', 'Close assistant')
-  const content = createElement('div', '', normalView)
+  const content = createElement('div', '', normalView, 'main-content')
   createElement('h4', 'Agents', content, 'section-heading')
   const agentContainer = createElement('div', '', content, 'agents')
   const table = createElement('table', '', agentContainer, 'agent-table')
@@ -1117,7 +1406,12 @@
   const statusBox = createElement('div', '', monitoringSection, 'monitoring-summary')
   const queueCount = createElement('div', '', statusBox, 'queue-count')
   const queueTotal = createElement('span', '—', queueCount, 'queue-total')
-  createElement('span', 'Callers waiting', queueCount, 'small')
+  const queueCountLabel = createElement(
+    'span',
+    'Callers waiting',
+    queueCount,
+    'small queue-count-label'
+  )
   const monitorState = createElement('span', 'Inspecting page…', statusBox, 'monitoring-state')
   const statisticsSection = createElement('section', '', monitorGrid)
   createElement('h4', 'Statistics', statisticsSection, 'section-heading')
@@ -1151,9 +1445,19 @@
   banner.setAttribute('aria-live', 'polite')
   const footer = createElement('div', '', bottom, 'footer')
   const footerDetails = createElement('div', '', footer, 'footer-details')
-  const updateSection = createElement('div', 'Last updated', footerDetails, 'footer-detail last-updated')
+  const updateSection = createElement(
+    'div',
+    'Last updated',
+    footerDetails,
+    'footer-detail last-updated'
+  )
   const lastUpdated = createElement('time', '—', updateSection)
-  const versionSection = createElement('div', 'Version', footerDetails, 'footer-detail release-version')
+  const versionSection = createElement(
+    'div',
+    'Version',
+    footerDetails,
+    'footer-detail release-version'
+  )
   createElement('span', VERSION, versionSection, 'footer-value')
   const controls = createElement('div', '', footer, 'controls')
   const muteButton = createElement('button', 'Mute', controls)
@@ -1183,7 +1487,9 @@
   // only an explicit checkbox change may alter the user's saved choices.
   const selected = new Set(
     Array.isArray(preferences.g1)
-      ? preferences.g1.filter(name => typeof name === 'string' && normaliseText(name)).map(normaliseText)
+      ? preferences.g1
+        .filter((name) => typeof name === 'string' && normaliseText(name))
+        .map(normaliseText)
       : []
   )
   // Numeric settings are whole values bounded by their corresponding UI controls.
@@ -1204,7 +1510,8 @@
   }
   let lunchMinutes = settingNumber(storedLunchMinutes, 30, 1, 120)
   // Upgrade the old default once; a deliberately chosen 10-second delay stays 10.
-  const oldDispositionDefault = preferences.settingsVersion !== 3 && preferences.dispositionSeconds === 10
+  const oldDispositionDefault =
+    preferences.settingsVersion !== 3 && preferences.dispositionSeconds === 10
   const dispositionValue = oldDispositionDefault ? 20 : preferences.dispositionSeconds
   let dispositionSeconds = settingNumber(dispositionValue, 20, 1, 120)
   // Preserve the former Extra Phone Cover Delay under its current setting name.
@@ -1237,7 +1544,7 @@
     queuesCard,
     'settings-description'
   )
-  const queueInputs = [0, 1, 2].map(index => {
+  const queueInputs = [0, 1, 2].map((index) => {
     const label = createElement('label', `Queue ${index + 1}`, queuesCard, 'sound-field')
     const input = createElement('input', '', label)
     input.type = 'text'
@@ -1254,12 +1561,14 @@
   for (const input of queueInputs) {
     input.onchange = () => {
       // Apply all three fields together so an incomplete edit never changes monitoring.
-      const names = queueInputs.map(field => normaliseText(field.value))
+      const names = queueInputs.map((field) => normaliseText(field.value))
       if (!validQueueNames(names)) {
         queueError.textContent = 'Enter three different queue names.'
         return
       }
       QUEUES = names
+      // A count read from the old queue selection must not describe the newly chosen queues.
+      lastReadableQueues = null
       root.__serviceDesk8x8Queues = [...names]
       try {
         root.localStorage.setItem(QUEUE_CONFIG_KEY, JSON.stringify(names))
@@ -1273,7 +1582,12 @@
   }
   const lunchPanel = createElement('div', '', settingsPanel, 'settings-card lunch-settings')
   createElement('h4', 'Lunch Break Length', lunchPanel)
-  createElement('p', 'Length of my lunch break. Used in both G1 and G2.', lunchPanel, 'settings-description')
+  createElement(
+    'p',
+    'Length of my lunch break. Used in both G1 and G2. Short breaks are counted separately.',
+    lunchPanel,
+    'settings-description'
+  )
   const lunchLabel = createElement('label', '', lunchPanel)
   lunchLabel.setAttribute('aria-label', 'Lunch break length in minutes')
   const lunchRow = createElement('span', '', lunchLabel, 'volume-control')
@@ -1327,7 +1641,7 @@
       day: '2-digit'
     }).formatToParts(new Date(time))
     // Read named date parts rather than relying on locale-specific separator order.
-    const part = name => parts.find(p => p.type === name).value
+    const part = (name) => parts.find((p) => p.type === name).value
     return `${part('year')}-${part('month')}-${part('day')}`
   }
   const statistics = { day: dayKey(Date.now()), calls: [], hadGaps: false, lastPresence: null }
@@ -1337,7 +1651,7 @@
       if (value.day === statistics.day && Array.isArray(value.calls)) {
         // Retain only real timestamps from today; future or invalid entries cannot count as calls.
         statistics.calls = value.calls.filter(
-          time => Number.isFinite(time) && time <= Date.now() && dayKey(time) === statistics.day
+          (time) => Number.isFinite(time) && time <= Date.now() && dayKey(time) === statistics.day
         )
         statistics.hadGaps = value.hadGaps === true
       }
@@ -1364,7 +1678,10 @@
     const now = Date.now()
     // A rolling hour differs from the Brisbane calendar-day total.
     const hourMilliseconds = SECONDS_PER_MINUTE * SECONDS_PER_MINUTE * MILLISECONDS_PER_SECOND
-    setText(callsHour, String(statistics.calls.filter(time => time >= now - hourMilliseconds).length))
+    setText(
+      callsHour,
+      String(statistics.calls.filter((time) => time >= now - hourMilliseconds).length)
+    )
     const latest = statistics.calls.at(-1)
     setText(
       lastCall,
@@ -1414,6 +1731,71 @@
     if (changed || now - lastStatisticsSave >= 15000) saveStatistics()
     renderStatistics()
   }
+  const SHORT_BREAK_KEY = 'service-desk-8x8-short-breaks-v1'
+  const shortBreaks = { day: dayKey(Date.now()), seconds: 0, active: null }
+  try {
+    const saved = JSON.parse(root.localStorage.getItem(SHORT_BREAK_KEY) || '{}')
+    if (saved && typeof saved === 'object') {
+      // Store seconds so two partial minutes can contribute to the same completed minute.
+      if (
+        saved.day === shortBreaks.day &&
+        Number.isSafeInteger(saved.seconds) &&
+        saved.seconds >= 0
+      ) {
+        shortBreaks.seconds = saved.seconds
+      }
+      const active = saved.active
+      // Retain the last native clock across restarts and midnight without counting it twice.
+      if (
+        active &&
+        Number.isSafeInteger(active.elapsed) &&
+        active.elapsed >= 0 &&
+        Number.isFinite(active.seenAt) &&
+        active.seenAt <= Date.now()
+      ) {
+        shortBreaks.active = { elapsed: active.elapsed, seenAt: active.seenAt }
+      }
+    }
+  } catch {
+    // Broken or blocked storage cannot interrupt the current break view.
+  }
+  function saveShortBreaks () {
+    try {
+      root.localStorage.setItem(SHORT_BREAK_KEY, JSON.stringify(shortBreaks))
+    } catch {
+      // In-memory totals still work when site storage is unavailable.
+    }
+  }
+  function countShortBreaks (docs) {
+    const now = Date.now()
+    const today = dayKey(now)
+    const before = JSON.stringify(shortBreaks)
+    if (shortBreaks.day !== today) {
+      shortBreaks.day = today
+      shortBreaks.seconds = 0
+    }
+    const me = readMyPresence(docs)
+    const kind = personalPageKind(me)
+    if (kind === 'shortBreak' && Number.isSafeInteger(me.seconds)) {
+      const active = shortBreaks.active
+      // A lower native clock starts a new break; otherwise add only its measured increase.
+      const continuing = active && me.seconds >= active.elapsed
+      const added = continuing ? me.seconds - active.elapsed : me.seconds
+      // Brisbane is UTC+10 year-round. An ongoing break may span midnight, so
+      // only its measured portion belonging to the current day contributes today.
+      const midnight = Date.parse(`${today}T00:00:00+10:00`)
+      const secondsToday = Math.max(0, Math.floor((now - midnight) / MILLISECONDS_PER_SECOND))
+      shortBreaks.seconds += Math.min(added, secondsToday)
+      shortBreaks.active = { elapsed: me.seconds, seenAt: now }
+    } else if (kind === 'otherBreak' && shortBreaks.active) {
+      // A temporarily unknown reason cannot add time or cause a later double count.
+      shortBreaks.active = { elapsed: me.seconds, seenAt: now }
+    } else if (me && kind !== 'otherBreak') {
+      // A readable different state ends this short break; missing data proves nothing.
+      shortBreaks.active = null
+    }
+    if (JSON.stringify(shortBreaks) !== before) saveShortBreaks()
+  }
   const agentWidgets = new Map()
   const freshness = new Map()
   const previous = new Map()
@@ -1427,6 +1809,8 @@
   const observers = new Map()
   const interactionDocs = new Set()
   let lastSample = null
+  // Last-read counts are display-only; caller ages and cover decisions always use fresh DOM data.
+  let lastReadableQueues = null
   const setText = (n, text) => {
     if (n.textContent !== text) n.textContent = text
   }
@@ -1446,8 +1830,8 @@
     if (padding('Top') > 0 || padding('Bottom') > 0) return false
     // Virtuoso stores each rendered row's original index on its surrounding item.
     const indexes = rows
-      .map(row => row.closest('[data-item-index]')?.getAttribute('data-item-index'))
-      .filter(value => value !== null && value !== undefined)
+      .map((row) => row.closest('[data-item-index]')?.getAttribute('data-item-index'))
+      .filter((value) => value !== null && value !== undefined)
       .map(Number)
       .sort((a, b) => a - b)
     // A nonzero first index or an index gap also identifies a partial window.
@@ -1482,7 +1866,9 @@
       const status = normaliseText(
         row.querySelector('[data-status-value]')?.getAttribute('data-status-value')
       )
-      const timer = normaliseText(row.querySelector('[data-test-id="user-presence-timer"]')?.textContent)
+      const timer = normaliseText(
+        row.querySelector('[data-test-id="user-presence-timer"]')?.textContent
+      )
       // Build a fresh readable-presence map independently of saved G1 membership.
       current.set(name, { name, status, timer, seconds: parseDuration(timer) })
     }
@@ -1558,6 +1944,7 @@
     // Personal timers take priority over menus; missing data hides all regular controls.
     const compact = !!compactKind && !unavailable
     panel.classList.toggle('compact', compact)
+    panel.classList.toggle('main-panel', !unavailable && !compact && activeView === 'main')
     compactView.classList.toggle('hidden', !compact)
     normalView.classList.toggle('hidden', unavailable || compact || activeView !== 'main')
     soundPanel.classList.toggle('hidden', unavailable || compact || activeView !== 'sounds')
@@ -1565,29 +1952,75 @@
     bottom.classList.toggle('hidden', unavailable)
     footer.classList.toggle('hidden', compact || activeView !== 'main')
   }
+  function minuteValue (seconds) {
+    // Keep the lunch view in minutes, including small overruns and time left near zero.
+    if (seconds > 0 && seconds < 6) return '<0.1'
+    return String(Number((seconds / SECONDS_PER_MINUTE).toFixed(1)))
+  }
   function renderCompact (me, kind) {
+    compactKind = kind
+    compactView.setAttribute('data-kind', kind)
+    shortSummary.classList.toggle('hidden', kind !== 'shortBreak')
+    compactCountdown.classList.toggle('hidden', kind === 'shortBreak' || kind === 'otherBreak')
+    if (kind === 'shortBreak' || kind === 'otherBreak') {
+      const short = kind === 'shortBreak'
+      const elapsedMinutes = Math.floor(me.seconds / SECONDS_PER_MINUTE)
+      const todayMinutes = Math.floor(shortBreaks.seconds / SECONDS_PER_MINUTE)
+      compactView.setAttribute('data-overdue', 'false')
+      setText(compactTitle, short ? 'Short break' : 'On break')
+      setText(shortToday, `${todayMinutes} min`)
+      setText(shortCurrent, `${elapsedMinutes} min`)
+      setText(
+        compactElapsed,
+        short ? 'Total updates each completed minute' : `${minuteValue(me.seconds)} min elapsed`
+      )
+      setText(compactAllowance, short ? 'Next minute →' : 'Lunch timer is not used')
+      // This small cycle shows progress toward another minute, never toward a lunch limit.
+      const minuteProgress = (me.seconds % SECONDS_PER_MINUTE) / SECONDS_PER_MINUTE
+      progressFill.style.width = `${minuteProgress * 100}%`
+      progressTrack.setAttribute('aria-label', 'Progress toward the next break minute')
+      progressTrack.setAttribute('aria-valuemax', '1')
+      progressTrack.setAttribute('aria-valuenow', String(Number(minuteProgress.toFixed(2))))
+      progressTrack.setAttribute(
+        'aria-valuetext',
+        short
+          ? `${todayMinutes} minutes of short breaks today; ${elapsedMinutes} minutes this short break`
+          : `${minuteValue(me.seconds)} minutes on break; lunch reminder disabled because the break reason is unknown`
+      )
+      syncViews()
+      return
+    }
     // Both personal states use seconds internally, regardless of the lunch UI's minutes.
     const allowance = kind === 'break' ? lunchMinutes * SECONDS_PER_MINUTE : dispositionSeconds
     const elapsed = me.seconds
     // Once overdue, show elapsed overrun instead of a negative countdown.
     const remaining = Math.max(0, allowance - elapsed)
     const overdue = elapsed > allowance
-    compactKind = kind
-    compactView.setAttribute('data-kind', kind)
     compactView.setAttribute('data-overdue', String(overdue))
     const label = kind === 'break' ? 'Lunch break' : 'Complete disposition'
     setText(compactTitle, label)
-    setText(compactCountdown, overdue ? `${elapsed - allowance}s overdue` : `${remaining}s left`)
-    setText(compactElapsed, `${elapsed}s elapsed`)
-    setText(compactAllowance, `${allowance}s allowance`)
+    const lunch = kind === 'break'
+    const display = (seconds) => (lunch ? `${minuteValue(seconds)} min` : `${seconds}s`)
+    setText(
+      compactCountdown,
+      overdue ? `${display(elapsed - allowance)} overdue` : `${display(remaining)} left`
+    )
+    setText(compactElapsed, `${display(elapsed)} elapsed`)
+    setText(compactAllowance, `${display(allowance)} allowance`)
     // Clamp the fill to the track while the overdue label can continue counting upward.
     progressFill.style.width = `${Math.min(100, (elapsed / allowance) * 100)}%`
     progressTrack.setAttribute('aria-label', label)
-    progressTrack.setAttribute('aria-valuemax', String(allowance))
-    progressTrack.setAttribute('aria-valuenow', String(Math.min(allowance, elapsed)))
+    // Accessible values use the same units as the visible timer.
+    const unit = lunch ? SECONDS_PER_MINUTE : 1
+    progressTrack.setAttribute('aria-valuemax', String(allowance / unit))
+    progressTrack.setAttribute(
+      'aria-valuenow',
+      String(Number((Math.min(allowance, elapsed) / unit).toFixed(2)))
+    )
+    const words = (seconds) => (lunch ? `${minuteValue(seconds)} minutes` : `${seconds} seconds`)
     progressTrack.setAttribute(
       'aria-valuetext',
-      `${elapsed} seconds elapsed, ${overdue ? elapsed - allowance + ' seconds overdue' : remaining + ' seconds left'}`
+      `${words(elapsed)} elapsed, ${overdue ? words(elapsed - allowance) + ' overdue' : words(remaining) + ' left'}`
     )
     syncViews()
   }
@@ -1685,7 +2118,7 @@
     lunchOverdue: {
       label: 'Alert: Lunch Break Finished',
       description: () => [
-        `Plays when your "On Break" time is longer than your lunch length in Assistant Settings (currently ${timeWords(lunchMinutes, 'minute')}). Applies whether you are in G1 or G2.`,
+        `Plays when your break is labelled "Lunch" and lasts longer than your lunch length in Assistant Settings (currently ${timeWords(lunchMinutes, 'minute')}). Applies in G1 and G2. Never plays for "Short Break".`,
         'Reminds you to return to "Available". Stops when you leave "On Break".'
       ],
       preset: 'Digital ring',
@@ -1712,10 +2145,15 @@
     // Validate each saved field independently so adding an option preserves old choices.
     soundSettings[kind] = {
       preset: PRESETS[configured.preset] ? configured.preset : definition.preset,
-      volume: Number.isFinite(configured.volume) ? Math.max(0, Math.min(100, configured.volume)) : definition.volume,
-      seconds: Number.isFinite(configured.seconds) ? Math.max(1, Math.min(120, configured.seconds)) : definition.seconds,
+      volume: Number.isFinite(configured.volume)
+        ? Math.max(0, Math.min(100, configured.volume))
+        : definition.volume,
+      seconds: Number.isFinite(configured.seconds)
+        ? Math.max(1, Math.min(120, configured.seconds))
+        : definition.seconds,
       repeat: typeof configured.repeat === 'boolean' ? configured.repeat : definition.repeat,
-      desktopNotification: typeof configured.desktopNotification === 'boolean' ? configured.desktopNotification : true
+      desktopNotification:
+        typeof configured.desktopNotification === 'boolean' ? configured.desktopNotification : true
     }
   }
   const sounds = new Map()
@@ -1841,7 +2279,10 @@
         // Brief attack and release ramps avoid abrupt waveform clicks.
         gain.gain.setValueAtTime(0, noteStart)
         // Leave gain headroom, apply the volume percentage, and cap attack at 15 ms.
-        gain.gain.linearRampToValueAtTime((0.3 * configuration.volume) / 100, noteStart + Math.min(0.015, noteLength / 3))
+        gain.gain.linearRampToValueAtTime(
+          (0.3 * configuration.volume) / 100,
+          noteStart + Math.min(0.015, noteLength / 3)
+        )
         gain.gain.linearRampToValueAtTime(0, noteStart + noteLength)
         oscillator.connect(gain)
         // Only this assistant's audio destination is affected by its output selection.
@@ -1862,7 +2303,9 @@
     const cycleInterval = Math.max(250, preset.notes.length * preset.pace * MILLISECONDS_PER_SECOND)
     job.interval = root.setInterval(cycle, cycleInterval)
     // A finite sound also has a hard stop independent of its repeating cycle timer.
-    if (!endless) job.timeout = root.setTimeout(() => stopSound(key), total * MILLISECONDS_PER_SECOND)
+    if (!endless) {
+      job.timeout = root.setTimeout(() => stopSound(key), total * MILLISECONDS_PER_SECOND)
+    }
   }
   const saveSounds = () => {
     try {
@@ -1892,7 +2335,11 @@
     const section = createElement('fieldset', '', soundPanel, 'sound-category')
     createElement('legend', definition.label, section)
     soundDescriptions.set(kind, createElement('div', '', section, 'small sound-description'))
-    const choice = createElement('select', '', createElement('label', 'Sound type', section, 'sound-field'))
+    const choice = createElement(
+      'select',
+      '',
+      createElement('label', 'Sound type', section, 'sound-field')
+    )
     for (const name of Object.keys(PRESETS)) {
       const option = createElement('option', name, choice)
       option.value = name
@@ -1906,7 +2353,12 @@
     volume.max = 100
     volume.value = soundSettings[kind].volume
     const value = createElement('span', volume.value + '%', volumeRow, 'volume-value')
-    const durationLabel = createElement('label', 'Duration (seconds, 1–120)', section, 'sound-field')
+    const durationLabel = createElement(
+      'label',
+      'Duration (seconds, 1–120)',
+      section,
+      'sound-field'
+    )
     const seconds = createElement('input', '', durationLabel)
     seconds.type = 'number'
     seconds.min = 1
@@ -2010,7 +2462,7 @@
     1,
     120,
     'seconds',
-    number => {
+    (number) => {
       dispositionSeconds = number
     }
   )
@@ -2022,7 +2474,7 @@
     1,
     3600,
     'seconds',
-    number => {
+    (number) => {
       waitingAlertSeconds = number
     }
   )
@@ -2033,7 +2485,11 @@
     devicesCard,
     'settings-description'
   )
-  const outputChoice = createElement('select', '', createElement('label', 'Output Device', devicesCard, 'sound-field'))
+  const outputChoice = createElement(
+    'select',
+    '',
+    createElement('label', 'Output Device', devicesCard, 'sound-field')
+  )
   outputChoice.setAttribute('aria-label', 'Assistant output device')
   const defaultOutput = createElement('option', 'System default (Default)', outputChoice)
   defaultOutput.value = ''
@@ -2135,10 +2591,10 @@
       if (destroyed) return
       // Exclude inputs and the duplicate default alias from the selectable output list.
       const available = devices.filter(
-        d => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default'
+        (d) => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default'
       )
-      const defaultLabel = kind => {
-        const label = devices.find(d => d.kind === kind && d.deviceId === 'default')?.label
+      const defaultLabel = (kind) => {
+        const label = devices.find((d) => d.kind === kind && d.deviceId === 'default')?.label
         // Remove the browser's prefix while retaining the device name and clear default label.
         return (label ? label.replace(/^default\s*[-–—]\s*/i, '') : 'System default') + ' (Default)'
       }
@@ -2149,7 +2605,7 @@
           device.deviceId
       }
       // A removed or no-longer-permitted speaker falls back to the system default.
-      if (outputDeviceId && !available.some(d => d.deviceId === outputDeviceId)) {
+      if (outputDeviceId && !available.some((d) => d.deviceId === outputDeviceId)) {
         await setAssistantOutput(
           '',
           'Selected output is unavailable. Assistant sounds now use the system default.'
@@ -2208,7 +2664,12 @@
     desktopCard,
     'settings-description'
   )
-  const notificationInstructions = createElement('div', '', desktopCard, 'small notification-instructions')
+  const notificationInstructions = createElement(
+    'div',
+    '',
+    desktopCard,
+    'small notification-instructions'
+  )
   createElement('p', 'Allow notifications manually in Microsoft Edge:', notificationInstructions)
   const notificationSteps = createElement('ol', '', notificationInstructions)
   createElement(
@@ -2281,7 +2742,7 @@
     }
   }
   syncNotificationTest()
-  desktopToggle.onchange = event => {
+  desktopToggle.onchange = (event) => {
     desktopNotifications = desktopToggle.checked
     savePreferences()
     if (!desktopNotifications) {
@@ -2390,7 +2851,9 @@
       reminders.set(reminder.kind, reminder)
       syncReminderBox()
       // Finite sounds stay finished; repeating sounds recover after audio/output interruptions.
-      if (!sounds.has(reminder.kind) && soundSettings[reminder.kind].repeat) playSound(reminder.kind)
+      if (!sounds.has(reminder.kind) && soundSettings[reminder.kind].repeat) {
+        playSound(reminder.kind)
+      }
     }
   }
   function updateLunch (input) {
@@ -2460,7 +2923,9 @@
     if (offline) return 'Waiting for connection'
     if (!fresh) return 'Waiting for live updates'
     // Counts may remain readable while 8x8 has not yet exposed a caller's age.
-    if (queues.some(queue => queue.waiting > 0 && queue.waitSeconds === null)) return 'Waiting for caller time'
+    if (queues.some((queue) => queue.waiting > 0 && queue.waitSeconds === null)) {
+      return 'Waiting for caller time'
+    }
     return 'Live'
   }
 
@@ -2512,22 +2977,23 @@
     compactKind = ''
     freshness.delete('personal')
     // Remember all choices, but read only G1 agents present in this live roster.
-    const presentG1 = [...selected].filter(name => current.has(name))
+    const presentG1 = [...selected].filter((name) => current.has(name))
     const sample = readAgentAndQueues(
       docs,
-      presentG1[0] || [...current.keys()].find(name => name !== 'Me') || 'Me'
+      presentG1[0] || [...current.keys()].find((name) => name !== 'Me') || 'Me'
     )
     // Validate each live selected agent; a missing saved name remains a preference only.
-    const samples = presentG1.map(name => readAgentAndQueues(docs, name))
-    const agents = samples.map(s => s.agent).filter(Boolean)
+    const samples = presentG1.map((name) => readAgentAndQueues(docs, name))
+    const agents = samples.map((s) => s.agent).filter(Boolean)
     // An incomplete or virtualised list cannot prove an absent selected member signed out.
-    const missingG1 = [...selected].some(name => name !== 'Me' && !current.has(name))
+    const missingG1 = [...selected].some((name) => name !== 'Me' && !current.has(name))
     const missing =
       !current.has('Me') ||
       (!rosterVisible && agentWidgets.size > 1) ||
       (missingG1 && !rosterComplete) ||
-      sample.errors.length > 0 ||
-      samples.some(s => s.errors.length)
+      sample.agentErrors.length > 0 ||
+      samples.some((s) => s.agentErrors.length)
+    const queuesReadable = sample.queueErrors.length === 0
     lastSample = {
       me: current.get('Me') || null,
       agents,
@@ -2540,6 +3006,7 @@
       desktopNotifications,
       muted,
       unavailable: !!missing,
+      queuesReadable,
       view: 'main'
     }
     if (missing) {
@@ -2556,11 +3023,27 @@
       if (!observeFreshSample(agent.name, signature, now)) fresh = false
     }
     const offline = root.navigator.onLine === false
-    const heading = monitoringMessage(offline, fresh, sample.queues)
+    const heading = queuesReadable
+      ? monitoringMessage(offline, fresh, sample.queues)
+      : 'Queue data unavailable. Scroll back to your queues.'
     setText(monitorState, heading)
-    monitorState.setAttribute('data-state', heading === 'Live' ? 'live' : 'waiting')
+    monitorState.setAttribute(
+      'data-state',
+      !queuesReadable ? 'unavailable' : heading === 'Live' ? 'live' : 'waiting'
+    )
     // The end user sees one total even though three inbound queues supply it.
-    setText(queueTotal, String(sample.queues.reduce((total, queue) => total + queue.waiting, 0)))
+    if (queuesReadable) {
+      lastReadableQueues = {
+        total: sample.queues.reduce((total, queue) => total + queue.waiting, 0)
+      }
+    }
+    setText(queueTotal, lastReadableQueues ? String(lastReadableQueues.total) : '—')
+    setText(queueCountLabel, queuesReadable ? 'Callers waiting' : 'Last read callers waiting')
+    if (!queuesReadable) {
+      // Unmounted queue rows invalidate their freshness; recovery needs a new live update.
+      for (const queue of sample.queues) freshness.delete('queue:' + queue.name)
+      syncReminder(null)
+    }
     setText(lastUpdated, new Date().toLocaleTimeString('en-AU', { hour12: false }))
     if (!fresh || offline) {
       clearAlert('lunch')
@@ -2570,7 +3053,11 @@
     for (const agent of agents) {
       const old = previous.get(agent.name)
       // A state change or reset elapsed timer marks a new status episode.
-      if (old && (normaliseStatus(old.status) !== normaliseStatus(agent.status) || agent.seconds < old.seconds)) {
+      if (
+        old &&
+        (normaliseStatus(old.status) !== normaliseStatus(agent.status) ||
+          agent.seconds < old.seconds)
+      ) {
         lunchLatched.delete(agent.name)
         if (agent.name === 'Me') syncReminder(null)
       }
@@ -2585,7 +3072,7 @@
       }
     }
     // Only selected, signed-in G1 members determine whether phone cover is needed.
-    const covering = selfInG1 ? agents.filter(agent => agent.name !== 'Me') : agents
+    const covering = selfInG1 ? agents.filter((agent) => agent.name !== 'Me') : agents
     // Missing saved members may have signed out, but not during a list remount.
     let coverageFresh = (selfInG1 || covering.length > 0) && (!missingG1 || rosterSettled)
     // Keep cover checks separate from personal/header freshness observations.
@@ -2595,7 +3082,7 @@
       if (!observeFreshSample(key, signature, now)) coverageFresh = false
     }
     let waitingFresh = false
-    for (const queue of sample.queues) {
+    for (const queue of queuesReadable ? sample.queues : []) {
       const key = 'queue:' + queue.name
       // Caller count and age together detect both queue updates and replacement calls.
       const signature = queue.waiting + '|' + queue.waitSeconds
@@ -2604,14 +3091,14 @@
     }
     const decision = groupRules(agents, sample.queues, me, waitingAlertSeconds, selfInG1)
     // An otherwise eligible condition stays silent unless both roster and queue are live.
-    decision.critical = decision.critical && coverageFresh && waitingFresh
+    decision.critical = decision.critical && queuesReadable && coverageFresh && waitingFresh
     if (decision.critical) {
       clearAlert('lunch')
       syncReminder(coverReminder(me, covering, selfInG1))
     } else syncReminder(null)
     if (selfInG1) return
     // Informational break sounds occur once per observed break episode, only in G2.
-    const newBreaks = decision.lunch.filter(name => !lunchLatched.has(name))
+    const newBreaks = decision.lunch.filter((name) => !lunchLatched.has(name))
     for (const name of [...lunchLatched]) {
       if (!decision.lunch.includes(name)) lunchLatched.delete(name)
     }
@@ -2622,7 +3109,7 @@
         'Info: G1 On Break',
         `${newBreaks.join(', ')} (G1) ${newBreaks.length === 1 ? 'is' : 'are'} "On Break".`
       )
-      newBreaks.forEach(name => lunchLatched.add(name))
+      newBreaks.forEach((name) => lunchLatched.add(name))
     }
   }
   function safeScan () {
@@ -2631,6 +3118,8 @@
       const docs = getReadableDocuments()
       // Statistics are independent of the queue view and continue even while muted.
       countCalls(docs)
+      // Short-break totals use only the user's own native clock, independently of queue visibility.
+      countShortBreaks(docs)
       if (!QUEUES.length && !readPersonalPage(docs)) {
         compactKind = ''
         showUnavailable(false)
@@ -2696,7 +3185,9 @@
   function destroy () {
     // Set the shutdown flag before async output changes can resume sounds or save devices.
     saveStatistics()
+    saveShortBreaks()
     root.removeEventListener?.('pagehide', saveStatistics)
+    root.removeEventListener?.('pagehide', saveShortBreaks)
     destroyed = true
     root.clearInterval(interval)
     mediaDevices?.removeEventListener?.('devicechange', audioDeviceChanged)
@@ -2724,8 +3215,14 @@
     calls: [...statistics.calls],
     hadGaps: statistics.hadGaps
   })
+  root.__itsCallAssist.shortBreakStatistics = () => ({
+    day: shortBreaks.day,
+    seconds: shortBreaks.seconds,
+    minutes: Math.floor(shortBreaks.seconds / SECONDS_PER_MINUTE)
+  })
   // Preserve the latest observed call count when the page closes or navigates away.
   root.addEventListener?.('pagehide', saveStatistics)
+  root.addEventListener?.('pagehide', saveShortBreaks)
   prepareSound()
   safeScan()
   refreshAudioDevices()

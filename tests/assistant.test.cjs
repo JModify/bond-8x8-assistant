@@ -31,6 +31,9 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     ],
     ['service-desk-8x8-sounds-v4', JSON.stringify(sounds)]
   ])
+  if (options.shortBreaks) {
+    storage.set('service-desk-8x8-short-breaks-v1', JSON.stringify(options.shortBreaks))
+  }
   class Node {
     constructor (tag, text = '') {
       this.tagName = tag.toUpperCase()
@@ -46,9 +49,9 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       this.checked = false
       this.disabled = false
       this.classList = {
-        contains: c => this.className.split(/\s+/).includes(c),
-        add: c => this.classList.toggle(c, true),
-        remove: c => this.classList.toggle(c, false),
+        contains: (c) => this.className.split(/\s+/).includes(c),
+        add: (c) => this.classList.toggle(c, true),
+        remove: (c) => this.classList.toggle(c, false),
         toggle: (c, force) => {
           // Match DOMTokenList toggling without duplicating class tokens.
           const set = new Set(this.className.split(/\s+/).filter(Boolean))
@@ -67,14 +70,14 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     }
 
     get textContent () {
-      return this._text + this.children.map(c => c.textContent).join('')
+      return this._text + this.children.map((c) => c.textContent).join('')
     }
 
     append (...nodes) {
       for (const n of nodes) {
         // append moves an existing node instead of cloning it or keeping two parents.
         if (n.parentElement) {
-          n.parentElement.children = n.parentElement.children.filter(c => c !== n)
+          n.parentElement.children = n.parentElement.children.filter((c) => c !== n)
         }
         this.children.push(n)
         n.parentElement = this
@@ -100,7 +103,11 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       // Capture an attribute name and optional quoted value for presence/equality checks.
       for (const match of selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)) {
         const value = this.getAttribute(match[1])
-        if (value === null || value === undefined || (match[2] !== undefined && value !== match[2])) {
+        if (
+          value === null ||
+          value === undefined ||
+          (match[2] !== undefined && value !== match[2])
+        ) {
           return false
         }
       }
@@ -109,10 +116,12 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
 
     querySelectorAll (selector) {
       const found = []
-      const visit = node => {
+      const visit = (node) => {
         for (const c of node.children) {
           // Descend through every child, collecting elements that match any selector alternative.
-          if (c.nodeType === 1 && selector.split(',').some(s => c.matches(s.trim()))) found.push(c)
+          if (c.nodeType === 1 && selector.split(',').some((s) => c.matches(s.trim()))) {
+            found.push(c)
+          }
           visit(c)
         }
       }
@@ -145,15 +154,15 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
 
     remove () {
       if (this.parentElement) {
-        this.parentElement.children = this.parentElement.children.filter(node => node !== this)
+        this.parentElement.children = this.parentElement.children.filter((node) => node !== this)
       }
     }
   }
   // Node construction begins after its document exists; the class retains this same owner.
   const document = {
-    createElement: tag => new Node(tag),
-    createTextNode: t => new Node('#text', t),
-    querySelectorAll: s => document.body.querySelectorAll(s),
+    createElement: (tag) => new Node(tag),
+    createTextNode: (t) => new Node('#text', t),
+    querySelectorAll: (s) => document.body.querySelectorAll(s),
     addEventListener () {},
     removeEventListener () {}
   }
@@ -172,6 +181,8 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
   })
   const timerWrapper = add('span', header)
   const meTimer = add('div', timerWrapper, { 'data-test-id': 'user-presence-timer' }, '0s')
+  const meReason = add('span', header, { title: 'Lunch' }, 'Lunch')
+  meReason.hidden = true
   const group = add('div', document.body, { 'data-test-id': 'virtuoso-item-list' })
   const agents = {}
   function login (name, statusLabel = 'Available', seconds = 0) {
@@ -218,7 +229,9 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     async setSinkId (id) {
       if (options.beforeSink) await options.beforeSink(id)
       if (options.rejectOutput === id) throw Error('NotAllowedError')
-      if (id && !devices.some(d => d.kind === 'audiooutput' && d.deviceId === id)) { throw Error('NotFoundError') }
+      if (id && !devices.some((d) => d.kind === 'audiooutput' && d.deviceId === id)) {
+        throw Error('NotFoundError')
+      }
       this.sinkId = id
     }
 
@@ -295,12 +308,12 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     navigator: { onLine: true, mediaDevices },
     AudioContext,
     Notification,
-    localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) },
+    localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) },
     setInterval: schedule,
     setTimeout: schedule,
-    clearInterval: id => jobs.delete(id),
-    clearTimeout: id => jobs.delete(id),
-    getComputedStyle: n => ({
+    clearInterval: (id) => jobs.delete(id),
+    clearTimeout: (id) => jobs.delete(id),
+    getComputedStyle: (n) => ({
       display: n.classList.contains('hidden') ? 'none' : 'block',
       visibility: 'visible'
     }),
@@ -356,16 +369,19 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     now += 2000
     window.__itsCallAssist.rescan()
   }
-  const setMe = (status, seconds) => {
+  const setMe = (status, seconds, reason = 'Lunch') => {
     meStatus.setAttribute('data-status-value', status)
     meTimer.textContent = seconds + 's'
+    meReason.hidden = !['On Break', 'Break'].includes(status)
+    meReason.setAttribute('title', reason)
+    meReason.textContent = reason
     scan()
   }
   const other = (name, status, seconds) => {
     agents[name].status.setAttribute('data-status-value', status)
     agents[name].timer.textContent = seconds + 's'
   }
-  const clock = seconds => {
+  const clock = (seconds) => {
     const s = String(seconds % 60).padStart(2, '0')
     const m = Math.floor(seconds / 60)
     return m >= 60
@@ -381,7 +397,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     for (const q of queues) q.row.hidden = true
     personalPage?.remove()
   }
-  function showBreak (seconds) {
+  function showBreak (seconds, reason = 'Lunch') {
     hideMain()
     personalPage = add('div', document.body)
     add('h1', personalPage, { 'aria-describedby': 'timeCounter' }, 'On Break for:')
@@ -392,7 +408,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       { id: 'timeCounter', role: 'timer', 'data-test-id': 'on-break-timer' },
       clock(seconds)
     )
-    add('span', personalPage, { title: 'Lunch' }, 'Lunch')
+    add('span', personalPage, { title: reason }, reason)
     scan()
   }
   function showWrapUp (remaining) {
@@ -449,8 +465,9 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     header,
     meTimer,
     meStatus,
+    meReason,
     login,
-    logout: name => agents[name].row.remove(),
+    logout: (name) => agents[name].row.remove(),
     agents,
     audioContexts,
     devices,
@@ -460,21 +477,28 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       for (const fn of deviceListeners) fn()
     },
     showBreak,
+    showShortBreak: (seconds) => showBreak(seconds, 'Short Break'),
+    breakReason: (reason) => {
+      const label = personalPage.querySelector('span[title]')
+      label.setAttribute('title', reason)
+      label.textContent = reason
+      scan()
+    },
     showWrapUp,
     restoreMain,
-    breakTime: seconds => {
+    breakTime: (seconds) => {
       breakTimer.textContent = clock(seconds)
       scan()
     },
-    wrapTime: remaining => {
+    wrapTime: (remaining) => {
       wrapTimer.textContent = clock(remaining)
       scan()
     },
     personalPage: () => personalPage,
-    setTime: time => {
+    setTime: (time) => {
       now = time
     },
-    advance: ms => {
+    advance: (ms) => {
       now += ms
       window.__itsCallAssist.rescan()
     },
@@ -485,18 +509,18 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
         { timeout: 1000 }
       ),
     debug: () => window.__itsCallAssist.debug(),
-    checkbox: name => ui().querySelector(`[aria-label="G1: ${name}"]`),
-    button: name =>
+    checkbox: (name) => ui().querySelector(`[aria-label="G1: ${name}"]`),
+    button: (name) =>
       ui()
         .querySelectorAll('button')
-        .find(n => n.textContent === name),
+        .find((n) => n.textContent === name),
     waiting,
     tick: (name, value) => {
       const b = ui().querySelector(`[aria-label="G1: ${name}"]`)
       b.checked = value
       b.onchange()
     },
-    lunch: minutes => {
+    lunch: (minutes) => {
       const input = ui().querySelector('#its-my-lunch-minutes')
       input.value = String(minutes)
       input.oninput()
@@ -614,7 +638,7 @@ check('New sound settings have separate defaults and disabled repeat durations',
     ['Alert: Complete Disposition', 'Urgent pulse', '80'],
     ['Alert: Lunch Break Finished', 'Digital ring', '85']
   ]) {
-    const card = cards.find(n => n.querySelector('legend').textContent === label)
+    const card = cards.find((n) => n.querySelector('legend').textContent === label)
     assert.equal(card.querySelector('select').value, preset)
     assert.equal(String(card.querySelector('[type="range"]').value), volume)
     assert(card.querySelector('[type="number"]').disabled)
@@ -653,7 +677,7 @@ check('G2 still reports another selected agent going on break', () => {
   e.setMe('Available', 2)
   e.other('Alex Agent', 'On Break', 1)
   e.setMe('Available', 4)
-  assert(e.notifications.some(n => n.title === 'Info: G1 On Break'))
+  assert(e.notifications.some((n) => n.title === 'Info: G1 On Break'))
 })
 check('A finite custom reminder does not restart within the same condition', () => {
   const e = environment(
@@ -675,7 +699,7 @@ check('Agents uses separate Name / Status / Time / G1 columns', () => {
     table
       .querySelector('thead')
       .querySelectorAll('th')
-      .map(c => c.textContent),
+      .map((c) => c.textContent),
     ['Name', 'Status', 'Time', 'G1']
   )
   const rows = table.querySelector('tbody').querySelectorAll('tr')
@@ -683,7 +707,7 @@ check('Agents uses separate Name / Status / Time / G1 columns', () => {
   const cells = rows[0].querySelectorAll('td')
   assert.equal(cells.length, 4)
   assert.deepEqual(
-    cells.map(c => c.textContent),
+    cells.map((c) => c.textContent),
     ['Me', 'Available', '5s', '']
   )
   assert.equal(cells[3].querySelector('input').getAttribute('aria-label'), 'G1: Me')
@@ -691,7 +715,7 @@ check('Agents uses separate Name / Status / Time / G1 columns', () => {
     e
       .ui()
       .querySelectorAll('h4')
-      .some(n => n.textContent === 'Agents')
+      .some((n) => n.textContent === 'Agents')
   )
 })
 check('Sounds and Settings replace main content and have top Back buttons', () => {
@@ -708,7 +732,7 @@ check('Sounds and Settings replace main content and have top Back buttons', () =
   assert(settings.classList.contains('hidden'))
   assert.equal(sounds.children[0].querySelector('h3').textContent, 'Sound Settings')
   assert.equal(sounds.children[0].querySelector('button').textContent, 'Back')
-  assert.equal(sounds.querySelectorAll('button').filter(n => n.textContent === 'Back').length, 1)
+  assert.equal(sounds.querySelectorAll('button').filter((n) => n.textContent === 'Back').length, 1)
   sounds.children[0].querySelector('button').onclick()
   assert(!settings.classList.contains('hidden'))
   assert(sounds.classList.contains('hidden'))
@@ -731,7 +755,7 @@ check('Monitoring continues in submenus; Back stops previews only', () => {
   const sounds = e.ui().querySelector('.sound-settings')
   sounds
     .querySelectorAll('button')
-    .find(n => n.textContent === 'Preview')
+    .find((n) => n.textContent === 'Preview')
     .onclick()
   assert(e.debug().playing.includes('preview'))
   sounds.children[0].querySelector('button').onclick()
@@ -752,7 +776,7 @@ check('Disposition delay and descriptions update immediately', () => {
   const card = e
     .ui()
     .querySelectorAll('fieldset')
-    .find(n => n.querySelector('legend').textContent === 'Alert: Complete Disposition')
+    .find((n) => n.querySelector('legend').textContent === 'Alert: Complete Disposition')
   assert(card.querySelector('.sound-description').textContent.includes('more than 5 seconds'))
   input.value = '20'
   input.onchange()
@@ -778,10 +802,10 @@ check('Desktop notifications can be disabled without silencing alerts', () => {
   assert(e.notifications[0].closed)
   assert(e.debug().playing.includes('disposition'))
 })
-check('Hidden data conceals all menu contents, then restores the open menu', () => {
+check('Hidden roster conceals all menu contents, then restores the open menu', () => {
   const e = environment()
   e.button('Settings').onclick()
-  e.queues[0].row.hidden = true
+  e.group.hidden = true
   e.scan()
   assert(e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
   assert(e.ui().querySelector('.sound-settings').classList.contains('hidden'))
@@ -790,22 +814,22 @@ check('Hidden data conceals all menu contents, then restores the open menu', () 
     e.ui().querySelector('.unavailable').textContent,
     'Unable to Assist: Open 8x8 agent queue information.'
   )
-  e.queues[0].row.hidden = false
+  e.group.hidden = false
   e.scan()
   assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
 })
 
 check(
-  'Release reports version 1.0.5 in the footer and bottom controls are only Mute / Settings',
+  'Release reports version 1.0.6 in the footer and bottom controls are only Mute / Settings',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.0.5')
+    assert.equal(e.window.__itsCallAssist.version, '1.0.6')
     assert.deepEqual(
       e
         .ui()
         .querySelector('.controls')
         .querySelectorAll('button')
-        .map(b => b.textContent),
+        .map((b) => b.textContent),
       ['Mute', 'Settings']
     )
     assert.deepEqual(
@@ -813,15 +837,15 @@ check(
         .ui()
         .querySelector('.window-actions')
         .querySelectorAll('button')
-        .map(b => b.textContent),
+        .map((b) => b.textContent),
       ['-', 'x']
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.0.5'
+      '1.0.6'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.0.5'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.0.6'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -841,7 +865,7 @@ check('G2 explanation appears below Agents and the two finite-sound stop lines a
     const card = e
       .ui()
       .querySelectorAll('fieldset')
-      .find(n => n.querySelector('legend').textContent === label)
+      .find((n) => n.querySelector('legend').textContent === label)
     assert(!card.querySelector('.sound-description').textContent.includes('Stops when'))
     assert(card.querySelector('.sound-description').textContent.includes('G2'))
   }
@@ -933,7 +957,7 @@ check('Missing queue configuration opens Settings and can be configured locally'
   const inputs = e
     .ui()
     .querySelectorAll('input')
-    .filter(n => (n.getAttribute('aria-label') || '').startsWith('Inbound queue '))
+    .filter((n) => (n.getAttribute('aria-label') || '').startsWith('Inbound queue '))
   assert.equal(inputs.length, 3)
   ;['Demo Academic Queue', 'Demo Transfer Queue', 'Demo Service Queue'].forEach((name, i) => {
     inputs[i].value = name
@@ -953,10 +977,16 @@ check('Captured break page stays visible with only its status bar and no queue i
   assert.equal(e.window.__itsCallAssist.inspect().me.seconds, 421)
   assert.equal(e.window.__itsCallAssist.inspect().view, 'break')
   assert(!e.ui().querySelector('.compact-view').classList.contains('hidden'))
-  for (const cls of ['.main-view', '.sound-settings', '.assistant-settings', '.unavailable']) { assert(e.ui().querySelector(cls).classList.contains('hidden')) }
-  assert.equal(e.ui().querySelector('.compact-elapsed').textContent, '421s elapsed')
-  assert.equal(e.ui().querySelector('.compact-countdown').textContent, '1379s left')
-  assert.equal(e.ui().querySelector('.progress-track').getAttribute('aria-valuenow'), '421')
+  for (const cls of ['.main-view', '.sound-settings', '.assistant-settings', '.unavailable']) {
+    assert(e.ui().querySelector(cls).classList.contains('hidden'))
+  }
+  assert.equal(e.ui().querySelector('.compact-elapsed').textContent, '7 min elapsed')
+  assert.equal(e.ui().querySelector('.compact-countdown').textContent, '23 min left')
+  assert.equal(e.ui().querySelector('.progress-track').getAttribute('aria-valuenow'), '7.02')
+  assert.equal(e.ui().querySelector('.progress-track').getAttribute('aria-valuemax'), '30')
+  assert(
+    !e.ui().querySelector('.progress-track').getAttribute('aria-valuetext').includes('seconds')
+  )
   assert.equal(e.notifications.length, 0)
 })
 check(
@@ -968,7 +998,7 @@ check(
     assert.equal(e.debug().activeReminder, null)
     e.breakTime(61)
     assert.equal(e.debug().activeReminder.kind, 'lunchOverdue')
-    assert.equal(e.ui().querySelector('.compact-countdown').textContent, '1s overdue')
+    assert.equal(e.ui().querySelector('.compact-countdown').textContent, '<0.1 min overdue')
     e.breakTime(65)
     assert.equal(e.notifications.length, 1)
     e.restoreMain()
@@ -1265,7 +1295,7 @@ check('Minute lunch input and slider agree, while delay settings and sound choic
   const card = e
     .ui()
     .querySelectorAll('fieldset')
-    .find(n => n.querySelector('legend').textContent === 'Alert: Change Status To Available')
+    .find((n) => n.querySelector('legend').textContent === 'Alert: Change Status To Available')
   assert.equal(card.querySelector('select').value, 'Soft bell')
   assert(card.querySelector('.sound-description').textContent.includes('at least 7 seconds'))
   assert(!e.ui().querySelector('#its-call-seconds'))
@@ -1274,7 +1304,7 @@ check('Minute lunch input and slider agree, while delay settings and sound choic
     !e
       .ui()
       .querySelectorAll('fieldset')
-      .some(n => n.querySelector('legend').textContent === 'Info: Caller Waiting')
+      .some((n) => n.querySelector('legend').textContent === 'Info: Caller Waiting')
   )
 })
 check(
@@ -1519,7 +1549,7 @@ check(
       [
         'lunch',
         { g1: ['Alex Agent'] },
-        e => {
+        (e) => {
           e.setMe('Available', 1)
           e.other('Alex Agent', 'On Break', 1)
           e.setMe('Available', 2)
@@ -1528,15 +1558,15 @@ check(
       [
         'critical',
         { g1: ['Me'], waitingAlertSeconds: 5 },
-        e => {
+        (e) => {
           e.waiting(1, 6)
           e.setMe('Working Offline', 1)
           e.waiting(1, 7)
           e.setMe('Working Offline', 2)
         }
       ],
-      ['disposition', { g1: ['Me'] }, e => e.setMe('Wrap Up', 11)],
-      ['lunchOverdue', { g1: ['Me'], lunchMinutes: 1 }, e => e.setMe('On Break', 61)]
+      ['disposition', { g1: ['Me'] }, (e) => e.setMe('Wrap Up', 11)],
+      ['lunchOverdue', { g1: ['Me'], lunchMinutes: 1 }, (e) => e.setMe('On Break', 61)]
     ]
     for (const [kind, prefs, trigger] of cases) {
       const e = environment(prefs, { [kind]: { desktopNotification: false } })
@@ -1639,7 +1669,7 @@ check(
     e.ui()
       .querySelector('fieldset')
       .querySelectorAll('button')
-      .find(b => b.textContent === 'Preview')
+      .find((b) => b.textContent === 'Preview')
       .onclick()
     const banner = e.ui().querySelector('.current-reminders')
     assert.equal(banner.querySelectorAll('.current-reminder').length, 2)
@@ -1749,9 +1779,8 @@ check('Personal sound and timing descriptions explicitly apply in both G1 and G2
   for (const kind of ['disposition', 'lunchOverdue']) {
     const card = e.ui().querySelector(`#its-sound-${kind}-desktop-notification`).closest('fieldset')
     assert(
-      card
-        .querySelector('.sound-description')
-        .textContent.includes('Applies whether you are in G1 or G2')
+      card.querySelector('.sound-description').textContent.includes('G1 or G2') ||
+        card.querySelector('.sound-description').textContent.includes('in G1 and G2')
     )
     assert(!card.querySelector('.sound-description').textContent.includes('ticked "Me"'))
   }
@@ -1884,8 +1913,8 @@ check(
       e
         .ui()
         .querySelectorAll('button')
-        .filter(b => b.textContent === 'Preview')
-        .every(b => b.disabled)
+        .filter((b) => b.textContent === 'Preview')
+        .every((b) => b.disabled)
     )
     e.setMe('Available', 1)
     e.setMe('Wrap Up', 11)
@@ -1922,7 +1951,7 @@ check(
         .ui()
         .querySelector('.controls')
         .querySelectorAll('button')
-        .map(b => b.textContent),
+        .map((b) => b.textContent),
       ['Unmute', 'Settings']
     )
   }
@@ -1935,7 +1964,7 @@ check(
     e.ui().querySelector('.compact-actions').querySelector('button').onclick()
     const width = e.ui().querySelector('.progress-fill').style.width
     e.breakTime(70)
-    assert.equal(e.ui().querySelector('.compact-elapsed').textContent, '70s elapsed')
+    assert.equal(e.ui().querySelector('.compact-elapsed').textContent, '1.2 min elapsed')
     assert.notEqual(e.ui().querySelector('.progress-fill').style.width, width)
     assert.equal(e.debug().activeReminder.kind, 'lunchOverdue')
     assert.equal(e.debug().playing.length, 0)
@@ -2001,7 +2030,9 @@ asyncCheck(
       'Allowed to send notifications',
       'Add site',
       'https://vcc-au2.8x8.com'
-    ]) { assert(instructions.includes(text)) }
+    ]) {
+      assert(instructions.includes(text))
+    }
     let requests = 0
     e.window.Notification.requestPermission = async () => {
       requests++
@@ -2087,11 +2118,11 @@ asyncCheck(
     await e.button('Refresh devices').onclick()
     assert.equal(e.debug().audioOutput, 'headset')
     e.devices.splice(
-      e.devices.findIndex(d => d.deviceId === 'headset'),
+      e.devices.findIndex((d) => d.deviceId === 'headset'),
       1
     )
     e.deviceChanged()
-    await new Promise(resolve => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
     assert.equal(e.debug().audioOutput, '')
     assert.equal(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).outputDeviceId, '')
     e.button('x').onclick()
@@ -2113,7 +2144,7 @@ asyncCheck(
       {},
       { noOutputSelection: true }
     )
-    await new Promise(resolve => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
     assert(old.ui().querySelector('[aria-label="Assistant output device"]').disabled)
     assert.equal(old.debug().audioOutput, '')
     old.setMe('Wrap Up', 11)
@@ -2150,7 +2181,7 @@ asyncCheck(
   'Closing during an output switch prevents a late preference write or sound restart',
   async () => {
     let finish
-    const pending = new Promise(resolve => {
+    const pending = new Promise((resolve) => {
       finish = resolve
     })
     const e = environment({}, {}, { beforeSink: () => pending })
@@ -2168,6 +2199,290 @@ asyncCheck(
     assert.equal(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).outputDeviceId, '')
   }
 )
+check(
+  'Captured Short Break label selects a separate view and never triggers the lunch sound',
+  () => {
+    for (const g1 of [['Me'], []]) {
+      const e = environment({ g1, lunchMinutes: 1 })
+      e.showShortBreak(339)
+      e.breakTime(340)
+      assert.equal(e.window.__itsCallAssist.inspect().view, 'shortBreak')
+      assert.equal(e.ui().querySelector('.compact-title').textContent, 'Short break')
+      assert.equal(e.ui().querySelector('.short-today').textContent, '5 min')
+      assert.equal(e.ui().querySelector('.short-current').textContent, '5 min')
+      assert(e.ui().querySelector('.compact-countdown').classList.contains('hidden'))
+      assert.equal(e.debug().activeReminder, null)
+      assert.equal(e.notifications.length, 0)
+      assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 340)
+    }
+  }
+)
+check(
+  'Completed minutes accumulate across short breaks without losing their partial minutes',
+  () => {
+    const e = environment({ g1: [], lunchMinutes: 1 })
+    e.showShortBreak(35)
+    assert.equal(e.ui().querySelector('.short-today').textContent, '0 min')
+    e.restoreMain()
+    e.showShortBreak(30)
+    assert.equal(e.ui().querySelector('.short-current').textContent, '0 min')
+    assert.equal(e.ui().querySelector('.short-today').textContent, '1 min')
+    assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 65)
+    e.breakTime(85)
+    assert.equal(e.ui().querySelector('.short-today').textContent, '2 min')
+  }
+)
+check('An unchanged short-break clock cannot accumulate guessed wall time', () => {
+  const e = environment()
+  e.showShortBreak(60)
+  e.advance(120000)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 60)
+  assert.equal(e.ui().querySelector('.short-today').textContent, '1 min')
+  e.breakTime(120)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 120)
+})
+check('Native short-break timer resets start a new measured break', () => {
+  const e = environment()
+  e.showShortBreak(75)
+  e.breakTime(10)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 85)
+  assert.equal(e.ui().querySelector('.short-current').textContent, '0 min')
+})
+check('Short-break totals and the current clock survive reruns without double counting', () => {
+  const e = environment()
+  e.showShortBreak(65)
+  e.rerun()
+  e.rerun()
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 65)
+  e.breakTime(125)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 125)
+  e.button('Mute').onclick()
+  e.breakTime(185)
+  assert.equal(e.ui().querySelector('.short-today').textContent, '3 min')
+  assert.equal(e.debug().playing.length, 0)
+})
+check('Saved partial short-break minutes survive closing and a later run', () => {
+  const e = environment({}, {}, { shortBreaks: { day: '1970-01-01', seconds: 35, active: null } })
+  e.showShortBreak(30)
+  assert.equal(e.ui().querySelector('.short-today').textContent, '1 min')
+  e.button('x').onclick()
+  const saved = JSON.parse(e.storage.get('service-desk-8x8-short-breaks-v1'))
+  assert.equal(saved.seconds, 65)
+  assert.equal(saved.active.elapsed, 30)
+})
+check(
+  'Switching between Lunch and Short Break stops the correct reminder without mixing totals',
+  () => {
+    const e = environment({ g1: [], lunchMinutes: 1 })
+    e.showBreak(61)
+    e.breakTime(62)
+    assert.equal(e.debug().activeReminder.kind, 'lunchOverdue')
+    e.showShortBreak(75)
+    assert.equal(e.debug().activeReminder, null)
+    assert(!e.debug().playing.includes('lunchOverdue'))
+    assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 75)
+    e.showBreak(100)
+    e.breakTime(101)
+    assert.equal(e.debug().activeReminder.kind, 'lunchOverdue')
+    assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 75)
+  }
+)
+check('Missing, conflicting or ambiguous break reasons never assume Lunch', () => {
+  for (const reason of ['', 'Other break', 'Short Break']) {
+    const e = environment({ g1: [], lunchMinutes: 1 })
+    e.showBreak(100, reason)
+    if (reason === 'Short Break') {
+      e.personalPage().querySelector('span[title]').textContent = 'Lunch'
+    }
+    e.breakTime(101)
+    assert.equal(e.window.__itsCallAssist.inspect().view, 'otherBreak')
+    assert.equal(e.debug().activeReminder, null)
+    assert.equal(e.ui().querySelector('.compact-allowance').textContent, 'Lunch timer is not used')
+  }
+  const e = environment({ g1: [], lunchMinutes: 1 })
+  e.showBreak(100)
+  const duplicate = e.window.document.createElement('span')
+  duplicate.setAttribute('title', 'Short Break')
+  duplicate.textContent = 'Short Break'
+  e.personalPage().append(duplicate)
+  e.breakTime(101)
+  assert.equal(e.window.__itsCallAssist.inspect().view, 'otherBreak')
+  assert.equal(e.debug().activeReminder, null)
+})
+check('An unknown reason does not count uncertain time twice when Short Break returns', () => {
+  const e = environment()
+  e.showShortBreak(30)
+  e.breakReason('')
+  e.breakTime(50)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 30)
+  e.breakReason('Short Break')
+  e.breakTime(60)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 40)
+})
+check(
+  'Hidden or invalid short-break clocks stop counting without inventing an elapsed interval',
+  () => {
+    const e = environment()
+    e.showShortBreak(30)
+    const timer = e.personalPage().querySelector('[data-test-id="on-break-timer"]')
+    timer.textContent = 'timer unavailable'
+    e.advance(120000)
+    assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 30)
+    assert.equal(e.debug().activeReminder, null)
+    e.breakTime(45)
+    assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 45)
+  }
+)
+check('Brisbane midnight splits an ongoing Short Break and resets only the daily total', () => {
+  const e = environment()
+  e.setTime(Date.parse('2026-10-13T23:59:56+10:00'))
+  e.showShortBreak(58)
+  assert.equal(e.ui().querySelector('.short-today').textContent, '0 min')
+  e.setTime(Date.parse('2026-10-14T00:00:01+10:00'))
+  e.breakTime(63)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().day, '2026-10-14')
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 3)
+  e.setTime(Date.parse('2026-10-14T00:01:00+10:00'))
+  e.breakTime(122)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 62)
+  assert.equal(e.ui().querySelector('.short-today').textContent, '1 min')
+})
+check('Starting after midnight counts only today from a break that began yesterday', () => {
+  const e = environment()
+  e.setTime(Date.parse('2026-10-14T00:00:03+10:00'))
+  e.showShortBreak(600)
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 5)
+})
+check(
+  'Short-break totals discard corrupt storage and old totals without losing a current break',
+  () => {
+    for (const saved of [
+      null,
+      { day: '1970-01-01', seconds: -60 },
+      { day: '1969-12-31', seconds: 100 }
+    ]) {
+      const e = environment({}, {}, { shortBreaks: saved })
+      e.showShortBreak(60)
+      assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 60)
+    }
+  }
+)
+check('Short-break view works without queue settings and survives group changes', () => {
+  const e = environment({ g1: [], lunchMinutes: 1 })
+  e.showShortBreak(60)
+  e.storage.delete('service-desk-8x8-inbound-queues-v1')
+  e.rerun()
+  e.tick('Me', true)
+  e.tick('Me', false)
+  e.breakTime(120)
+  assert.equal(e.window.__itsCallAssist.inspect().view, 'shortBreak')
+  assert.equal(e.ui().querySelector('.short-today').textContent, '2 min')
+  assert.equal(e.debug().activeReminder, null)
+})
+check('Header break reasons also distinguish Short Break, Lunch and an unspecified break', () => {
+  const e = environment({ g1: [], lunchMinutes: 1 })
+  e.setMe('On Break', 100, 'Short Break')
+  assert.equal(e.window.__itsCallAssist.inspect().view, 'shortBreak')
+  assert.equal(e.window.__itsCallAssist.shortBreakStatistics().seconds, 100)
+  e.setMe('On Break', 110, '')
+  assert.equal(e.window.__itsCallAssist.inspect().view, 'otherBreak')
+  assert.equal(e.debug().activeReminder, null)
+  e.setMe('On Break', 120, 'Lunch')
+  e.setMe('On Break', 121, 'Lunch')
+  assert.equal(e.debug().activeReminder.kind, 'lunchOverdue')
+})
+check('Lunch displays and accessible progress stay in minutes at both timing boundaries', () => {
+  const e = environment({ g1: [], lunchMinutes: 1 })
+  e.showBreak(59)
+  assert.equal(e.ui().querySelector('.compact-countdown').textContent, '<0.1 min left')
+  assert.equal(e.ui().querySelector('.compact-allowance').textContent, '1 min allowance')
+  e.breakTime(60)
+  assert.equal(e.ui().querySelector('.compact-countdown').textContent, '0 min left')
+  e.breakTime(61)
+  assert.equal(e.ui().querySelector('.compact-countdown').textContent, '<0.1 min overdue')
+  assert(
+    !e.ui().querySelector('.progress-track').getAttribute('aria-valuetext').includes('seconds')
+  )
+  const card = e
+    .ui()
+    .querySelector('#its-sound-lunchOverdue-desktop-notification')
+    .closest('fieldset')
+  assert(card.textContent.includes('Never plays for "Short Break"'))
+})
+check(
+  'Virtual queue scrolling keeps controls, roster updates and counters open with a labelled last-read total',
+  () => {
+    const e = environment()
+    e.waiting(2, 10)
+    e.scan()
+    e.queues[3].row.remove()
+    e.setMe('Busy', 0)
+    const sample = e.window.__itsCallAssist.inspect()
+    assert.equal(sample.unavailable, false)
+    assert.equal(sample.queuesReadable, false)
+    assert.equal(e.ui().querySelector('.queue-total').textContent, '2')
+    assert.equal(
+      e.ui().querySelector('.queue-count-label').textContent,
+      'Last read callers waiting'
+    )
+    assert(e.ui().querySelector('.monitoring-state').textContent.includes('Scroll back'))
+    assert(!e.ui().querySelector('.main-view').classList.contains('hidden'))
+    assert.equal(e.window.__itsCallAssist.statistics().total, 1)
+    e.button('Settings').onclick()
+    e.scan()
+    assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
+  }
+)
+check(
+  'Missing queue rows stop an active cover alarm and require fresh data again on recovery',
+  () => {
+    const e = environment({ g1: ['Alex Agent'], waitingAlertSeconds: 10 })
+    coveragePulse(e, 11, 1)
+    coveragePulse(e, 12, 2)
+    assert.equal(e.debug().activeReminder.kind, 'critical')
+    e.queues[0].row.hidden = true
+    coveragePulse(e, 13, 3)
+    assert.equal(e.debug().activeReminder, null)
+    assert.equal(e.window.__itsCallAssist.inspect().unavailable, false)
+    e.queues[0].row.hidden = false
+    coveragePulse(e, 14, 4)
+    assert.equal(e.debug().activeReminder, null)
+    coveragePulse(e, 15, 5)
+    assert.equal(e.debug().activeReminder.kind, 'critical')
+  }
+)
+check('Missing or inconsistent queue counts never show a guessed live total', () => {
+  const e = environment()
+  e.queues[0].cell.setAttribute('title', '9 Interactions waiting')
+  e.scan()
+  assert.equal(e.window.__itsCallAssist.inspect().queuesReadable, false)
+  assert.equal(e.ui().querySelector('.queue-total').textContent, '0')
+  assert.equal(e.ui().querySelector('.queue-count-label').textContent, 'Last read callers waiting')
+  assert.equal(e.debug().activeReminder, null)
+})
+check('G1 break information still works when queue rows are unmounted', () => {
+  const e = environment({ g1: ['Alex Agent'] })
+  e.queues[0].row.remove()
+  e.setMe('Available', 1)
+  e.other('Alex Agent', 'On Break', 1)
+  e.setMe('Available', 2)
+  assert(e.debug().playing.includes('lunch'))
+  assert.equal(e.window.__itsCallAssist.inspect().unavailable, false)
+})
+check(
+  'Main panel has its fitting layout while settings and personal views retain their own layout',
+  () => {
+    const e = environment()
+    assert(e.ui().querySelector('.panel').classList.contains('main-panel'))
+    e.button('Settings').onclick()
+    assert(!e.ui().querySelector('.panel').classList.contains('main-panel'))
+    e.ui().querySelector('.assistant-settings').querySelector('button').onclick()
+    assert(e.ui().querySelector('.panel').classList.contains('main-panel'))
+    e.showShortBreak(60)
+    assert(!e.ui().querySelector('.panel').classList.contains('main-panel'))
+    assert(e.ui().querySelector('.panel').classList.contains('compact'))
+  }
+)
 ;(async () => {
   for (const { name, fn } of asyncChecks) {
     await fn()
@@ -2175,7 +2490,7 @@ asyncCheck(
     console.log('PASS:', name)
   }
   console.log(`${passed} scenarios passed.`)
-})().catch(error => {
+})().catch((error) => {
   console.error(error)
   process.exitCode = 1
 })
