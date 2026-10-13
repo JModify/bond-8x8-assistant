@@ -2,7 +2,7 @@
 
 Assistant for the Bond IT Service Desk 8x8 customer call center interface.
 
-Author: **Joshua Lavagna-Slater** | Current version: **1.1.0**.
+Author: **Joshua Lavagna-Slater** | Current version: **1.1.1**.
 
 The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js).
 
@@ -12,10 +12,10 @@ The current snippet is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistan
 2. Open Developer Tools → Sources → Snippets.
 3. Paste the complete script into a saved snippet and press Ctrl + Enter.
 4. Open 8x8's queue information using the button immediately to the right of your status at the top of the page, next to the bell icon.
-5. In **Assistant → Settings → Inbound Queue Names**, enter or confirm the three inbound names listed at the top of your configured download. A configured snippet supplies them automatically when no valid names are already saved. The public script requires you to supply the correct names for your service desk.
+5. Queue monitoring automatically uses **ITS Academic Hotline**, **ITS Internal TRNFR** and **ITS Service Desk**. Keep these queues rendered for live waiting counts.
 6. In 8x8, open **Groups → Filter icon**, select your service desk group, then tick **every status under User status**. This allows the assistant to see agents in all states, rather than treating a filtered list as the whole phone group.
 7. Select the agents covering phones in the assistant's **G1** column. Tick **Me** when you are covering phones.
-8. Click **Settings** to adjust reminder timing, lunch length and desktop notifications. Open **Sound Settings** from that menu to customise audio and choose the assistant's output device.
+8. Click **Settings** to adjust reminder timing, lunch length and desktop notifications. Open **Sound Settings** from that menu to customise audio, choose the assistant's output device and optionally enable **Secondary Ringer**.
 9. During a call, optionally enter the caller's staff name or student number in the assistant's **On call** view. Open **Call History** between Mute and Settings to review completed calls; **History** in the on-call view lets you review earlier calls and return to your draft.
 
 If the assistant says **Unable to Assist: Open 8x8 agent queue information**, complete steps 4–6 so your own status and required agent information are readable. Keep the full agent list rendered when monitoring the phone group. If Monitoring says **Queue data unavailable**, scroll back to the three configured inbound queues for live counts and phone-cover alerts.
@@ -48,7 +48,7 @@ The delay uses each inbound queue's **Longest waiting time**, not an agent's tim
 | Alert: Complete Disposition | Your disposition time exceeds Disposition Reminder Delay, in G1 or G2. Stops when you leave disposition. |
 | Alert: Lunch Break Finished | Your break is labelled Lunch and exceeds Lunch Break Length, in G1 or G2. Stops when you leave Lunch. Never plays for Short Break. |
 
-Waiting-call monitoring uses the three inbound queues configured locally. Outbound queues are excluded.
+Waiting-call monitoring uses the built-in **ITS Academic Hotline**, **ITS Internal TRNFR** and **ITS Service Desk** queues. Outbound queues are excluded. Queue names cannot be edited in Settings; older saved queue preferences and configuration snippets cannot change the monitored queues.
 
 Monitoring shows one combined **Callers waiting** total. Statistics appear as three cards in a horizontal row. **Last updated** at the bottom records the latest assistant update, alongside **Version**. The author stays under the title. Working Offline appears in orange.
 
@@ -122,9 +122,11 @@ Each sound in **Sound Settings** has its own **Send desktop notification** check
 
 **Settings → Sound Settings → Audio Devices → Output Device** routes only the assistant's generated sounds. It does not change 8x8's call audio or system-wide devices. The default entry is labelled **(Default)**; browser-exposed device names appear after Refresh devices. Choose output device can request an output selection where that browser API is available.
 
-Output selection uses the assistant's own [AudioContext.setSinkId](https://developer.chrome.com/blog/audiocontext-setsinkid/). Availability and visible devices depend on browser support and permission. The assistant never opens a microphone to discover speakers. Unsupported browsers keep system-default output. A removed selected device falls back to the system default, and a failed switch keeps the previous output. Desktop notification audio remains controlled by the browser and operating system.
+**Secondary Ringer** defaults off. Turn it on in the same Audio Devices section to reveal **Secondary Ringer Device**, then select the second speaker or headset. All assistant reminders and previews play through both outputs, using the same sound, volume, duration and repeat setting. **Mute** silences both. Turning Secondary Ringer off leaves the main output playing and remembers the second device for next time. Both device choices and the toggle are saved with the other assistant settings.
 
-Input Device is removed because this assistant does not use a microphone.
+Selecting the same device for both outputs plays each tone once. The assistant also recognises Default and Communications aliases when the browser supplies their matching device group. If the browser does not expose this relationship, choose two visibly different devices. Enabling or changing the secondary output during a sound keeps the original sound deadline and does not restart the main output or resend a desktop notification. Both selectors remain usable while muted.
+
+Output selection uses [AudioContext.setSinkId](https://developer.chrome.com/blog/audiocontext-setsinkid/) on separate assistant-owned contexts. Availability and visible devices depend on browser support and permission. The assistant never opens a microphone to discover speakers. Unsupported browsers keep system-default output and disable Secondary Ringer. A removed selected device falls back to the system default, and a failed switch keeps the previous output. A secondary routing failure leaves the main output usable. Where supported, **Choose secondary ringer device** requests permission for that output only. Desktop notification audio remains controlled by the browser and operating system.
 
 ## Statistics
 
@@ -150,7 +152,7 @@ Settings remain usable while muted. Preview buttons are disabled until sounds ar
 
 The previous assistant's behavior is recorded as **1.0.0**, with organisation-specific defaults extracted into local configuration. Release snapshots are kept in [releases](releases), and changes are described in [CHANGELOG.md](CHANGELOG.md). Future releases increment the patch version unless the user requests another versioning change.
 
-Public release files contain no organisation queue names or staff defaults. A configured local snippet can seed the queue settings before the public core runs; that private configuration is not published to this repository. Archived 1.0.0 reads the same local queue configuration.
+Starting with **1.1.1**, public release files include the three ITS queue names expressly approved by the author. Queue configuration and its editor are removed. Older release snapshots keep their original local-configuration behaviour and are not changed. Caller details, live staff information and staff defaults are never published.
 
 The script's version, VERSION file, package.json and release snapshot must agree. GitHub is the source for subsequent releases.
 
@@ -169,3 +171,5 @@ npm test
 The code separates page parsing, pure alert conditions, persistent settings, roster reconciliation, freshness checks, UI rendering and audio/notification delivery into focused helpers. Comments explain complex selectors, elapsed/countdown conversion, migration rules, asynchronous routing and lifecycle cleanup. Styles are expanded into readable CSS and remain isolated inside the panel's shadow root.
 
 Tests use a simulated 8x8 DOM, notifications and audio devices to verify roster updates, timing boundaries, queue waiting times, mute behavior, device routing, persistence and statistics. Call-history checks cover real Wrap up versus tabs/offers, repeated and switched references, student numbers, safe text rendering, missing/ambiguous fields, session-only persistence, reruns/refreshes, search, shared statistics and immutable completed entries. Layout is also checked separately in Chromium with fictional agents, both supplied minimal break pages, and the supplied on-call structure with fictionalised caller details. Checks include caret preservation, an 81-record scrolling history, four viewport sizes and active alerts. These checks do not verify live Edge notifications or physical audio delivery.
+
+Secondary-ringer checks compare note patterns, volume envelopes, clock offsets and destinations across both contexts. They cover Default/Communications aliases, device loss, routing errors, muted startup, pending choices and shutdown. The 1.1.1 menu is checked at five viewport sizes using native Chromium audio graphs with simulated device choices; physical playback through two speakers must be checked on a computer with those devices.

@@ -199,10 +199,10 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
   for (const name of ['Alex Agent', 'Casey Agent']) login(name)
   const queues = []
   for (const name of [
-    'Demo Academic Queue',
-    'Demo Transfer Queue',
-    'Demo Outbound Queue',
-    'Demo Service Queue'
+    'ITS Academic Hotline',
+    'ITS Internal TRNFR',
+    'ITS Outbound',
+    'ITS Service Desk'
   ]) {
     const row = add('div', document.body, { 'data-test-id': 'queue-item' })
     add('span', row, { 'data-test-id': 'queue-name', title: name }, name)
@@ -227,12 +227,17 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       this.currentTime = 0
       this.destination = {}
       this.sinkId = ''
+      this.notes = []
+      this.gains = []
+      this.resumeCount = 0
       audioContexts.push(this)
     }
 
     async setSinkId (id) {
-      if (options.beforeSink) await options.beforeSink(id)
-      if (options.rejectOutput === id) throw Error('NotAllowedError')
+      if (options.beforeSink) await options.beforeSink(id, this)
+      if (options.rejectOutput === id || options.rejectSink?.(id, this)) {
+        throw Error('NotAllowedError')
+      }
       if (id && !devices.some((d) => d.kind === 'audiooutput' && d.deviceId === id)) {
         throw Error('NotFoundError')
       }
@@ -240,6 +245,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     }
 
     resume () {
+      this.resumeCount++
       this.state = 'running'
       return Promise.resolve()
     }
@@ -250,15 +256,43 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     }
 
     createOscillator () {
-      return { frequency: { value: 0 }, connect () {}, disconnect () {}, start () {}, stop () {} }
+      // Record scheduling and routing per context so tests can detect duplicated or leaked tones.
+      const oscillator = {
+        frequency: { value: 0 },
+        stops: [],
+        connect: (gain) => {
+          oscillator.gain = gain
+        },
+        disconnect: () => {
+          oscillator.disconnected = true
+        },
+        start: (time) => {
+          oscillator.startTime = time
+        },
+        stop: (time) => {
+          oscillator.stops.push(time)
+        }
+      }
+      this.notes.push(oscillator)
+      return oscillator
     }
 
     createGain () {
-      return {
-        gain: { setValueAtTime () {}, linearRampToValueAtTime () {} },
-        connect () {},
-        disconnect () {}
+      const gain = {
+        values: [],
+        gain: {
+          setValueAtTime: (value, time) => gain.values.push({ value, time }),
+          linearRampToValueAtTime: (value, time) => gain.values.push({ value, time })
+        },
+        connect: (destination) => {
+          gain.destination = destination
+        },
+        disconnect: () => {
+          gain.disconnected = true
+        }
       }
+      this.gains.push(gain)
+      return gain
     }
   }
   class Notification {
@@ -276,9 +310,19 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
   }
   if (options.noOutputSelection) delete AudioContext.prototype.setSinkId
   const devices = options.devices || [
-    { kind: 'audiooutput', deviceId: 'default', label: 'Default - Desk Speakers' },
-    { kind: 'audiooutput', deviceId: 'speakers', label: 'Desk Speakers' },
-    { kind: 'audiooutput', deviceId: 'headset', label: 'Support Headset' },
+    {
+      kind: 'audiooutput',
+      deviceId: 'default',
+      label: 'Default - Desk Speakers',
+      groupId: 'desk-speakers'
+    },
+    { kind: 'audiooutput', deviceId: 'speakers', label: 'Desk Speakers', groupId: 'desk-speakers' },
+    {
+      kind: 'audiooutput',
+      deviceId: 'headset',
+      label: 'Support Headset',
+      groupId: 'support-headset'
+    },
     { kind: 'audioinput', deviceId: 'default', label: 'Default - Desk Microphone' }
   ]
   const deviceListeners = new Set()
@@ -300,11 +344,14 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     }
   }
   if (options.outputPicker) {
-    mediaDevices.selectAudioOutput = async () => ({
-      kind: 'audiooutput',
-      deviceId: 'headset',
-      label: 'Support Headset'
-    })
+    mediaDevices.selectAudioOutput = async (request) =>
+      options.beforePicker
+        ? options.beforePicker(request)
+        : {
+            kind: 'audiooutput',
+            deviceId: 'headset',
+            label: 'Support Headset'
+          }
   }
   const window = {
     document,
@@ -362,7 +409,10 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
         activeReminder,
         playing: [...sounds.keys()],
         muted,
-        audioOutput: audio?.sinkId
+        audioOutput: audio?.sinkId,
+        secondaryOutput: secondaryAudio?.sinkId,
+        secondaryEnabled: secondaryRingerEnabled,
+        secondaryReady: secondaryOutputReady
       }),
       groupRules,
       rescan: safeScan
@@ -936,10 +986,10 @@ check('Hidden roster conceals all menu contents, then restores the open menu', (
 })
 
 check(
-  'Release reports version 1.1.0 and bottom controls are Mute, Call History and Settings',
+  'Release reports version 1.1.1 and bottom controls are Mute, Call History and Settings',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.1.0')
+    assert.equal(e.window.__itsCallAssist.version, '1.1.1')
     assert.deepEqual(
       e
         .ui()
@@ -958,10 +1008,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.1.0'
+      '1.1.1'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.0'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.1'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -1065,27 +1115,55 @@ check('Daily rollover uses Brisbane midnight and does not count an ongoing call 
   e.setMe('Busy', 0)
   assert.equal(e.window.__itsCallAssist.statistics().total, 1)
 })
-check('Missing queue configuration opens Settings and can be configured locally', () => {
-  const e = environment()
-  e.storage.delete('service-desk-8x8-inbound-queues-v1')
-  e.rerun()
-  assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
-  const inputs = e
-    .ui()
-    .querySelectorAll('input')
-    .filter((n) => (n.getAttribute('aria-label') || '').startsWith('Inbound queue '))
-  assert.equal(inputs.length, 3)
-  ;['Demo Academic Queue', 'Demo Transfer Queue', 'Demo Service Queue'].forEach((name, i) => {
-    inputs[i].value = name
-    inputs[i].onchange()
-  })
-  assert.deepEqual(JSON.parse(e.storage.get('service-desk-8x8-inbound-queues-v1')), [
-    'Demo Academic Queue',
-    'Demo Transfer Queue',
-    'Demo Service Queue'
-  ])
-  assert.equal(e.window.__itsCallAssist.inspect().unavailable, false)
-})
+check(
+  'ITS queues are built in, start without stored configuration and have no queue editor',
+  () => {
+    const e = environment()
+    e.storage.delete('service-desk-8x8-inbound-queues-v1')
+    e.rerun()
+    assert(!e.ui().querySelector('.main-view').classList.contains('hidden'))
+    const inputs = e
+      .ui()
+      .querySelectorAll('input')
+      .filter((n) => (n.getAttribute('aria-label') || '').startsWith('Inbound queue '))
+    assert.equal(inputs.length, 0)
+    assert(!e.ui().textContent.includes('Inbound Queue Names'))
+    assert.equal(e.storage.has('service-desk-8x8-inbound-queues-v1'), false)
+    assert.deepEqual(
+      Array.from(e.window.__itsCallAssist.inspect().queues, (q) => q.name),
+      ['ITS Academic Hotline', 'ITS Internal TRNFR', 'ITS Service Desk']
+    )
+    assert.equal(e.window.__itsCallAssist.inspect().unavailable, false)
+  }
+)
+check(
+  'Old queue preferences and bootstrap globals cannot redirect the three fixed ITS queues',
+  () => {
+    const e = environment({ g1: ['Alex Agent'] })
+    e.storage.set(
+      'service-desk-8x8-inbound-queues-v1',
+      JSON.stringify(['ITS Outbound', 'Other Queue', 'Old Queue'])
+    )
+    e.window.__serviceDesk8x8Queues = ['ITS Outbound', 'Other Queue', 'Old Queue']
+    e.rerun()
+    e.other('Alex Agent', 'Busy', 200)
+    e.setMe('Work Offline', 200)
+    e.waiting(10, 400, 2)
+    e.scan()
+    assert.equal(
+      e.window.__itsCallAssist.inspect().queues.reduce((total, q) => total + q.waiting, 0),
+      0
+    )
+    assert.equal(e.debug().activeReminder, null)
+    coveragePulse(e, 200, 201)
+    coveragePulse(e, 201, 202)
+    assert.equal(
+      e.window.__itsCallAssist.inspect().queues.reduce((total, q) => total + q.waiting, 0),
+      1
+    )
+    assert.equal(e.debug().activeReminder.kind, 'critical')
+  }
+)
 
 check('Captured break page stays visible with only its status bar and no queue information', () => {
   const e = environment()
@@ -1828,7 +1906,7 @@ check(
       'How long a caller must be waiting before the "Change Status to Available" sound plays. Only used when you are in G2, are not available, and every signed-in G1 member is busy.'
     )
     const text = e.ui().querySelector('.assistant-settings').textContent
-    assert(text.includes('Do not touch unless you know what you are doing.'))
+    assert(!text.includes('Inbound Queue Names'))
     assert(!text.includes('These names are stored only in this browser'))
     assert(!text.includes('Do not include an outbound queue'))
   }
@@ -2313,6 +2391,477 @@ asyncCheck(
     assert.equal(e.jobs.size, 0)
     assert.equal(e.deviceListeners.size, 0)
     assert.equal(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).outputDeviceId, '')
+  }
+)
+function ringerControls (e) {
+  return {
+    primary: e.ui().querySelector('[aria-label="Assistant output device"]'),
+    toggle: e.ui().querySelector('#its-secondary-ringer'),
+    secondary: e.ui().querySelector('[aria-label="Assistant secondary ringer device"]')
+  }
+}
+async function configureRinger (e, primaryId = 'headset', secondaryId = 'speakers') {
+  await e.button('Refresh devices').onclick()
+  const controls = ringerControls(e)
+  controls.primary.value = primaryId
+  await controls.primary.onchange()
+  controls.toggle.checked = true
+  await controls.toggle.onchange()
+  controls.secondary.value = secondaryId
+  await controls.secondary.onchange()
+  return controls
+}
+function assertStopped (context) {
+  // Scheduled end times alone do not prove an immediate mute; stop() without a time must be present.
+  for (const note of context.notes) {
+    assert(note.stops.includes(undefined))
+    assert(note.disconnected)
+    assert(note.gain.disconnected)
+  }
+}
+asyncCheck(
+  'Secondary Ringer defaults off, reveals its own selector when enabled and lists outputs only',
+  async () => {
+    const e = environment()
+    await e.button('Refresh devices').onclick()
+    const { toggle, secondary } = ringerControls(e)
+    assert(toggle.closest('.audio-devices').closest('.sound-settings'))
+    assert.equal(toggle.checked, false)
+    assert(secondary.closest('.secondary-options').classList.contains('hidden'))
+    assert(secondary.disabled)
+    assert.equal(e.audioContexts.length, 1)
+    toggle.checked = true
+    await toggle.onchange()
+    assert(!secondary.closest('.secondary-options').classList.contains('hidden'))
+    assert(!secondary.disabled)
+    assert.equal(secondary.querySelector('option').textContent, 'Desk Speakers (Default)')
+    assert.equal(secondary.querySelectorAll('option').length, 3)
+    assert(!secondary.textContent.includes('Microphone'))
+    assert.equal(e.microphoneRequests(), 0)
+  }
+)
+asyncCheck(
+  'Alerts duplicate their exact pattern and volume using each output clock without touching 8x8 audio',
+  async () => {
+    const e = environment({ g1: ['Me'] }, { disposition: { volume: 63 } })
+    const phoneAudio = new e.window.AudioContext()
+    await configureRinger(e)
+    const primary = e.audioContexts[0]
+    const secondary = e.audioContexts[2]
+    primary.currentTime = 50
+    secondary.currentTime = 123
+    e.setMe('Wrap Up', 11)
+    assert(primary.notes.length > 0)
+    assert.equal(primary.notes.length, secondary.notes.length)
+    // Compare relative times, rather than assuming the two independent audio clocks are equal.
+    const pattern = (context) =>
+      context.notes.map((n) => ({
+        frequency: n.frequency.value,
+        wave: n.type,
+        offset: Number((n.startTime - context.currentTime).toFixed(4)),
+        peak: n.gain.values[1].value
+      }))
+    assert.deepEqual(pattern(primary), pattern(secondary))
+    assert.equal(primary.notes[0].gain.values[1].value, (0.3 * 63) / 100)
+    for (const context of [primary, secondary]) {
+      assert(context.gains.every((gain) => gain.destination === context.destination))
+    }
+    assert.equal(phoneAudio.sinkId, '')
+    assert.equal(phoneAudio.notes.length, 0)
+    assert.equal(phoneAudio.state, 'running')
+    assert.equal(e.notifications.length, 1)
+    e.window.__itsCallAssist.destroy()
+    assert.equal(phoneAudio.state, 'running')
+    assert.equal(primary.state, 'closed')
+    assert.equal(secondary.state, 'closed')
+  }
+)
+asyncCheck(
+  'Selecting the same output twice, including its Default alias, plays each tone only once',
+  async () => {
+    for (const [primaryId, secondaryId] of [
+      ['headset', 'headset'],
+      ['', ''],
+      ['', 'speakers'],
+      ['speakers', '']
+    ]) {
+      const e = environment()
+      await configureRinger(e, primaryId, secondaryId)
+      e.setMe('Wrap Up', 11)
+      assert(e.audioContexts[0].notes.length > 0)
+      assert.equal(e.audioContexts[1].notes.length, 0)
+      assert(e.ui().querySelector('.secondary-feedback').textContent.includes('Sounds play once'))
+    }
+  }
+)
+asyncCheck('A Communications alias for the primary headset cannot double its volume', async () => {
+  const e = environment()
+  e.devices.push({
+    kind: 'audiooutput',
+    deviceId: 'communications',
+    label: 'Communications - Support Headset',
+    groupId: 'support-headset'
+  })
+  await configureRinger(e, 'headset', 'communications')
+  e.setMe('Wrap Up', 11)
+  assert(e.audioContexts[0].notes.length > 0)
+  assert.equal(e.audioContexts[1].notes.length, 0)
+  assert(e.ui().querySelector('.secondary-feedback').textContent.includes('Sounds play once'))
+})
+asyncCheck(
+  'Repeating alarms reach both outputs; Mute and a cleared condition stop all scheduled notes',
+  async () => {
+    const e = environment()
+    await configureRinger(e)
+    e.setMe('Wrap Up', 11)
+    const [primary, secondary] = e.audioContexts
+    const cycle = [...e.jobs.values()].find(({ ms }) => Math.round(ms) === 900)
+    const firstCount = primary.notes.length
+    cycle.fn()
+    assert.equal(primary.notes.length, firstCount * 2)
+    assert.equal(secondary.notes.length, firstCount * 2)
+    e.button('Mute').onclick()
+    assertStopped(primary)
+    assertStopped(secondary)
+    assert.equal(e.debug().playing.length, 0)
+    const popups = e.notifications.length
+    e.button('Unmute').onclick()
+    assert(e.debug().playing.includes('disposition'))
+    assert.equal(e.notifications.length, popups)
+    e.setMe('Available', 0)
+    assertStopped(primary)
+    assertStopped(secondary)
+    assert.equal(e.debug().playing.length, 0)
+  }
+)
+asyncCheck(
+  'Enabling the ringer during a finite preview preserves its original deadline and primary notes',
+  async () => {
+    const e = environment({ secondaryDeviceId: 'headset' })
+    await e.button('Refresh devices').onclick()
+    e.ui()
+      .querySelector('fieldset')
+      .querySelectorAll('button')
+      .find((b) => b.textContent === 'Preview')
+      .onclick()
+    const deadline = [...e.jobs.entries()].find(([, job]) => job.ms === 2000)
+    const primary = e.audioContexts[0]
+    const originalCount = primary.notes.length
+    e.advance(1000)
+    const { toggle } = ringerControls(e)
+    toggle.checked = true
+    await toggle.onchange()
+    assert.equal(primary.notes.length, originalCount)
+    assert(primary.notes.every((n) => !n.disconnected))
+    assert(e.audioContexts[1].notes.length > 0)
+    assert.equal(e.jobs.get(deadline[0]), deadline[1])
+    deadline[1].fn()
+    assertStopped(primary)
+    assertStopped(e.audioContexts[1])
+    assert(!e.debug().playing.includes('preview'))
+    assert.equal(e.notifications.length, 0)
+  }
+)
+asyncCheck(
+  'Turning the ringer off closes only its context and preserves its choice when turned on again',
+  async () => {
+    const e = environment()
+    const controls = await configureRinger(e)
+    e.setMe('Wrap Up', 11)
+    const [primary, oldSecondary] = e.audioContexts
+    const originalCount = primary.notes.length
+    const originalJobs = [...e.jobs.keys()]
+    controls.toggle.checked = false
+    await controls.toggle.onchange()
+    assert.equal(oldSecondary.state, 'closed')
+    assertStopped(oldSecondary)
+    assert.equal(primary.state, 'running')
+    assert.equal(primary.notes.length, originalCount)
+    assert(primary.notes.every((n) => !n.disconnected))
+    assert.deepEqual([...e.jobs.keys()], originalJobs)
+    assert.equal(
+      JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).secondaryDeviceId,
+      'speakers'
+    )
+    controls.toggle.checked = true
+    await controls.toggle.onchange()
+    assert.equal(e.audioContexts[2].sinkId, 'speakers')
+    assert(e.audioContexts[2].notes.length > 0)
+    assert.equal(primary.notes.length, originalCount)
+    assert.equal(e.notifications.length, 1)
+  }
+)
+asyncCheck(
+  'Saved secondary-ringer preferences survive reruns and both old contexts are closed',
+  async () => {
+    const e = environment({
+      g1: ['Me'],
+      outputDeviceId: 'headset',
+      secondaryRingerEnabled: true,
+      secondaryDeviceId: 'speakers'
+    })
+    await e.button('Refresh devices').onclick()
+    assert.equal(e.debug().audioOutput, 'headset')
+    assert.equal(e.debug().secondaryOutput, 'speakers')
+    const previous = [...e.audioContexts]
+    e.rerun()
+    await e.button('Refresh devices').onclick()
+    assert(previous.every((context) => context.state === 'closed'))
+    assert(ringerControls(e).toggle.checked)
+    assert.equal(ringerControls(e).secondary.value, 'speakers')
+    assert.equal(e.debug().secondaryOutput, 'speakers')
+    e.setMe('Wrap Up', 11)
+    assert(e.audioContexts.slice(-2).every((context) => context.notes.length > 0))
+  }
+)
+asyncCheck(
+  'A denied secondary switch keeps both previous outputs and does not restart the primary alert',
+  async () => {
+    let secondContext = null
+    const e = environment(
+      { g1: ['Me'] },
+      {},
+      { rejectSink: (id, context) => id === 'headset' && context === secondContext }
+    )
+    const { secondary } = await configureRinger(e)
+    secondContext = e.audioContexts[1]
+    e.setMe('Wrap Up', 11)
+    const primaryCount = e.audioContexts[0].notes.length
+    secondary.value = 'headset'
+    assert.equal(await secondary.onchange(), false)
+    assert.equal(e.debug().audioOutput, 'headset')
+    assert.equal(e.debug().secondaryOutput, 'speakers')
+    assert.equal(secondary.value, 'speakers')
+    assert.equal(e.audioContexts[0].notes.length, primaryCount)
+    assert(e.ui().querySelector('.secondary-feedback').textContent.includes('Could not use'))
+    assert(e.debug().playing.includes('disposition'))
+    assert.equal(e.notifications.length, 1)
+  }
+)
+asyncCheck(
+  'An unplugged secondary device falls back to Default without switching the primary or doubling a matching output',
+  async () => {
+    const e = environment()
+    await configureRinger(e)
+    e.setMe('Wrap Up', 11)
+    const secondContext = e.audioContexts[1]
+    const primaryCount = e.audioContexts[0].notes.length
+    e.devices.splice(
+      e.devices.findIndex((d) => d.deviceId === 'speakers'),
+      1
+    )
+    e.devices[0].label = 'Default - Support Headset'
+    e.devices[0].groupId = 'support-headset'
+    e.deviceChanged()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(e.debug().audioOutput, 'headset')
+    assert.equal(e.debug().secondaryOutput, '')
+    assert.equal(ringerControls(e).secondary.value, '')
+    assert.equal(e.audioContexts[0].notes.length, primaryCount)
+    assertStopped(secondContext)
+    assert.equal(e.microphoneRequests(), 0)
+  }
+)
+asyncCheck(
+  'An unsupported browser disables Secondary Ringer and still plays reminders on Default',
+  async () => {
+    const e = environment(
+      { g1: ['Me'], secondaryRingerEnabled: true, secondaryDeviceId: 'headset' },
+      {},
+      { noOutputSelection: true }
+    )
+    await e.button('Refresh devices').onclick()
+    const { toggle, secondary } = ringerControls(e)
+    assert(toggle.disabled)
+    assert.equal(toggle.checked, false)
+    assert(secondary.closest('.secondary-options').classList.contains('hidden'))
+    assert.equal(e.audioContexts.length, 1)
+    e.setMe('Wrap Up', 11)
+    assert(e.audioContexts[0].notes.length > 0)
+    assert(e.ui().querySelector('.secondary-feedback').textContent.includes('unavailable'))
+  }
+)
+asyncCheck(
+  'Configuring both outputs while muted never starts tones; Unmute uses the selected pair',
+  async () => {
+    const e = environment({ g1: ['Me'], muted: true })
+    await configureRinger(e)
+    e.setMe('Wrap Up', 11)
+    assert(e.audioContexts.every((context) => context.notes.length === 0))
+    e.button('Unmute').onclick()
+    assert(e.audioContexts.every((context) => context.notes.length > 0))
+    assert.equal(e.debug().audioOutput, 'headset')
+    assert.equal(e.debug().secondaryOutput, 'speakers')
+  }
+)
+asyncCheck(
+  'A saved enabled secondary ringer stays editable when the assistant starts muted',
+  async () => {
+    const e = environment({
+      g1: ['Me'],
+      muted: true,
+      outputDeviceId: 'headset',
+      secondaryRingerEnabled: true,
+      secondaryDeviceId: 'speakers'
+    })
+    await e.button('Refresh devices').onclick()
+    const { toggle, secondary } = ringerControls(e)
+    assert(toggle.checked)
+    assert.equal(secondary.disabled, false)
+    assert.equal(e.audioContexts.length, 0)
+    secondary.value = ''
+    await secondary.onchange()
+    assert.equal(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).secondaryDeviceId, '')
+    e.setMe('Wrap Up', 11)
+    assert(e.audioContexts.every((context) => context.notes.length === 0))
+    e.button('Unmute').onclick()
+    await e.button('Refresh devices').onclick()
+    assert.equal(e.debug().audioOutput, 'headset')
+    assert.equal(e.debug().secondaryOutput, '')
+    assert(e.audioContexts.every((context) => context.notes.length > 0))
+  }
+)
+asyncCheck(
+  'Rapid secondary choices keep the latest selection while the primary alert continues',
+  async () => {
+    let block = false
+    let finish
+    let secondContext = null
+    const pending = new Promise((resolve) => {
+      finish = resolve
+    })
+    const e = environment(
+      { g1: ['Me'] },
+      {},
+      { beforeSink: (id, context) => (block && context === secondContext ? pending : undefined) }
+    )
+    const { secondary } = await configureRinger(e)
+    secondContext = e.audioContexts[1]
+    e.setMe('Wrap Up', 11)
+    block = true
+    secondary.value = 'headset'
+    const first = secondary.onchange()
+    await Promise.resolve()
+    secondary.value = ''
+    const latest = secondary.onchange()
+    const primaryCount = e.audioContexts[0].notes.length
+    assert(e.debug().playing.includes('disposition'))
+    assert.equal(e.debug().secondaryReady, false)
+    const cycle = [...e.jobs.values()].find(({ ms }) => Math.round(ms) === 900)
+    cycle.fn()
+    assert(e.audioContexts[0].notes.length > primaryCount)
+    finish()
+    await Promise.all([first, latest])
+    assert.equal(e.debug().secondaryOutput, '')
+    assert.equal(secondary.value, '')
+    assert.equal(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).secondaryDeviceId, '')
+    assert.equal(e.debug().audioOutput, 'headset')
+    assert.equal(e.notifications.length, 1)
+  }
+)
+asyncCheck(
+  'Switching Secondary Ringer off during a pending route prevents late writes or playback',
+  async () => {
+    let block = false
+    let finish
+    let secondContext = null
+    const pending = new Promise((resolve) => {
+      finish = resolve
+    })
+    const e = environment(
+      { g1: ['Me'] },
+      {},
+      { beforeSink: (id, context) => (block && context === secondContext ? pending : undefined) }
+    )
+    const { toggle, secondary } = await configureRinger(e)
+    secondContext = e.audioContexts[1]
+    e.setMe('Wrap Up', 11)
+    block = true
+    secondary.value = 'headset'
+    const changing = secondary.onchange()
+    await Promise.resolve()
+    toggle.checked = false
+    await toggle.onchange()
+    const saved = e.storage.get('service-desk-8x8-preferences-v5')
+    const notes = secondContext.notes.length
+    finish()
+    await changing
+    assert.equal(e.storage.get('service-desk-8x8-preferences-v5'), saved)
+    assert.equal(secondContext.state, 'closed')
+    assert.equal(secondContext.notes.length, notes)
+    assert.equal(e.debug().secondaryEnabled, false)
+    assert.equal(e.debug().audioOutput, 'headset')
+    assert(e.debug().playing.includes('disposition'))
+  }
+)
+asyncCheck(
+  'Closing during a secondary switch stops both outputs and rejects late routing side effects',
+  async () => {
+    let block = false
+    let finish
+    let secondContext = null
+    const pending = new Promise((resolve) => {
+      finish = resolve
+    })
+    const e = environment(
+      { g1: ['Me'] },
+      {},
+      { beforeSink: (id, context) => (block && context === secondContext ? pending : undefined) }
+    )
+    const { secondary } = await configureRinger(e)
+    secondContext = e.audioContexts[1]
+    e.setMe('Wrap Up', 11)
+    block = true
+    secondary.value = 'headset'
+    const changing = secondary.onchange()
+    await Promise.resolve()
+    const saved = e.storage.get('service-desk-8x8-preferences-v5')
+    e.button('x').onclick()
+    finish()
+    await changing
+    assert.equal(e.storage.get('service-desk-8x8-preferences-v5'), saved)
+    assert(e.audioContexts.every((context) => context.state === 'closed'))
+    e.audioContexts.forEach(assertStopped)
+    assert.equal(e.window.__itsCallAssist, undefined)
+    assert.equal(e.jobs.size, 0)
+    assert.equal(e.deviceListeners.size, 0)
+  }
+)
+asyncCheck(
+  'The secondary output picker is isolated, and an outstanding picker cannot re-enable a disabled ringer',
+  async () => {
+    let finish
+    let pending = false
+    const picker = new Promise((resolve) => {
+      finish = resolve
+    })
+    const e = environment(
+      { g1: ['Me'] },
+      {},
+      {
+        outputPicker: true,
+        beforePicker: () =>
+          pending ? picker : { kind: 'audiooutput', deviceId: 'headset', label: 'Support Headset' }
+      }
+    )
+    const { toggle } = ringerControls(e)
+    toggle.checked = true
+    await toggle.onchange()
+    await e.button('Choose secondary ringer device').onclick()
+    assert.equal(e.debug().audioOutput, '')
+    assert.equal(e.debug().secondaryOutput, 'headset')
+    pending = true
+    const choosing = e.button('Choose secondary ringer device').onclick()
+    toggle.checked = false
+    await toggle.onchange()
+    finish({ kind: 'audiooutput', deviceId: 'speakers' })
+    await choosing
+    assert.equal(e.debug().secondaryEnabled, false)
+    assert.equal(
+      JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).secondaryDeviceId,
+      'headset'
+    )
+    assert.equal(e.microphoneRequests(), 0)
   }
 )
 check(

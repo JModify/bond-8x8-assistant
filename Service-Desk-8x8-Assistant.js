@@ -1,13 +1,14 @@
-/* Service Desk 8x8 Assistant — v1.1.0
+/* Service Desk 8x8 Assistant — v1.1.1
  * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
  * Open queue information using the button to the right of your status,
- * next to the bell. Enter the three inbound queue names in Assistant > Settings.
+ * next to the bell. The three ITS inbound queues are already included.
  * In 8x8 Groups > Filter, choose your group and tick every User status.
  * Select the G1 agents, including Me when covering phones; Mute silences tones.
  * Lunch and disposition reminders apply in both G1 and G2.
  * Browser audio may require a click in the page; normal interactions enable it.
+ * Optional Secondary Ringer sends assistant sounds to a second output device.
  * No downloads, external requests, credentials, or second login are used.
  * Reads rendered queue/agent HTML; never changes your availability or answers calls.
  * Keep selected agents rendered; scroll back to the inbound queues for live counts.
@@ -46,7 +47,7 @@
   const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = '1.1.0'
+  const VERSION = '1.1.1'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -60,26 +61,8 @@
       .trim()
   // Status comparisons ignore letter case, while displayed labels stay intact.
   const normaliseStatus = (value) => normaliseText(value).toLowerCase()
-  const QUEUE_CONFIG_KEY = 'service-desk-8x8-inbound-queues-v1'
-  function validQueueNames (value) {
-    if (!Array.isArray(value) || value.length !== 3) return false
-    // Blank labels cannot identify a queue, and duplicate labels double-count it.
-    const allNamesPresent = value.every((name) => typeof name === 'string' && normaliseText(name))
-    const allNamesUnique = new Set(value.map(normaliseText)).size === 3
-    return allNamesPresent && allNamesUnique
-  }
-  let QUEUES = []
-  // Corrupt or inaccessible site storage falls back to the normal setup menu.
-  try {
-    const value = JSON.parse(root.localStorage.getItem(QUEUE_CONFIG_KEY) || 'null')
-    if (validQueueNames(value)) QUEUES = value.map(normaliseText)
-  } catch {
-    // Monitoring starts after the user supplies valid queue names.
-  }
-  // A private configured download may seed queue names without publishing them.
-  if (!QUEUES.length && validQueueNames(root.__serviceDesk8x8Queues)) {
-    QUEUES = root.__serviceDesk8x8Queues.map(normaliseText)
-  }
+  // Monitor exactly these inbound queues; saved settings cannot redirect monitoring.
+  const QUEUES = Object.freeze(['ITS Academic Hotline', 'ITS Internal TRNFR', 'ITS Service Desk'])
   function parseDuration (text) {
     const value = normaliseStatus(text)
     if (!value) return null
@@ -450,7 +433,9 @@
       page?.kind === 'call' &&
       page.transactionId &&
       callHistory.records.some((call) => call.transactionId === page.transactionId)
-    ) { return null }
+    ) {
+      return null
+    }
     if (page) return { status: page.status }
     // Statistics need a status transition, even if queues or the status timer are hidden.
     const states = docs
@@ -909,6 +894,24 @@
     .settings-card h4 {
       margin: 0 0 6px;
       font-size: 13px;
+    }
+    .secondary-ringer {
+      margin-top: 16px;
+      padding-top: 2px;
+      border-top: 1px solid #d7e0ec;
+    }
+    .secondary-ringer .repeat-control {
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .device-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .device-actions button {
+      margin: 0;
     }
     .settings-description {
       margin: 0 0 14px;
@@ -1882,6 +1885,14 @@
   doc.body.append(host)
   let destroyed = false
   let audio = null
+  let secondaryAudio = null
+  let secondaryOutputReady = false
+  let secondaryOutputPending = false
+  let audioOutputDevices = []
+  const AudioClass = root.AudioContext || root.webkitAudioContext
+  // Each output uses an assistant-owned context; unsupported browsers retain default audio.
+  const canRouteOutput = typeof AudioClass?.prototype?.setSinkId === 'function'
+  const mediaDevices = root.navigator.mediaDevices
   let muted = false
   let audioOutputReady = true
   let lastScan = Date.now()
@@ -1890,7 +1901,7 @@
   let historyDuringCall = false
   const reminders = new Map()
   const reminderWidgets = new Map()
-  let activeView = QUEUES.length ? 'main' : 'settings'
+  let activeView = 'main'
   let activeReminder = null
   const PREFERENCES_KEY = 'service-desk-8x8-preferences-v5'
   let preferences = {}
@@ -1942,6 +1953,11 @@
     typeof preferences.outputDeviceId === 'string' && preferences.outputDeviceId !== 'default'
       ? preferences.outputDeviceId
       : ''
+  let secondaryRingerEnabled = preferences.secondaryRingerEnabled === true && canRouteOutput
+  let secondaryDeviceId =
+    typeof preferences.secondaryDeviceId === 'string' && preferences.secondaryDeviceId !== 'default'
+      ? preferences.secondaryDeviceId
+      : ''
   // An absent field retains previous releases' enabled notification default.
   let desktopNotifications =
     typeof preferences.desktopNotifications === 'boolean' ? preferences.desktopNotifications : true
@@ -1954,50 +1970,6 @@
     'settings-description'
   )
   createElement('button', 'Open Sound Settings', soundsCard).onclick = () => openView('sounds')
-  const queuesCard = createElement('div', '', settingsPanel, 'settings-card')
-  createElement('h4', 'Inbound Queue Names', queuesCard)
-  createElement(
-    'p',
-    'Enter the exact names of the three inbound queues to monitor. Do not touch unless you know what you are doing.',
-    queuesCard,
-    'settings-description'
-  )
-  const queueInputs = [0, 1, 2].map((index) => {
-    const label = createElement('label', `Queue ${index + 1}`, queuesCard, 'sound-field')
-    const input = createElement('input', '', label)
-    input.type = 'text'
-    input.value = QUEUES[index] || ''
-    input.setAttribute('aria-label', `Inbound queue ${index + 1}`)
-    return input
-  })
-  const queueError = createElement(
-    'p',
-    QUEUES.length ? '' : 'Enter three queue names to start monitoring.',
-    queuesCard,
-    'small'
-  )
-  for (const input of queueInputs) {
-    input.onchange = () => {
-      // Apply all three fields together so an incomplete edit never changes monitoring.
-      const names = queueInputs.map((field) => normaliseText(field.value))
-      if (!validQueueNames(names)) {
-        queueError.textContent = 'Enter three different queue names.'
-        return
-      }
-      QUEUES = names
-      // A count read from the old queue selection must not describe the newly chosen queues.
-      lastReadableQueues = null
-      root.__serviceDesk8x8Queues = [...names]
-      try {
-        root.localStorage.setItem(QUEUE_CONFIG_KEY, JSON.stringify(names))
-      } catch {
-        // The validated in-memory names still work if site storage is unavailable.
-      }
-      queueError.textContent = ''
-      reset()
-      safeScan()
-    }
-  }
   const lunchPanel = createElement('div', '', settingsPanel, 'settings-card lunch-settings')
   createElement('h4', 'Lunch Break Length', lunchPanel)
   createElement(
@@ -2039,7 +2011,9 @@
           waitingAlertSeconds,
           desktopNotifications,
           muted,
-          outputDeviceId
+          outputDeviceId,
+          secondaryRingerEnabled,
+          secondaryDeviceId
         })
       )
     } catch {
@@ -2849,10 +2823,9 @@
   function prepareSound () {
     if (muted || destroyed) return
     try {
-      const AudioConstructor = root.AudioContext || root.webkitAudioContext
-      // Keep one assistant-owned context; never reuse the phone application's context.
-      if (AudioConstructor && !audio) {
-        audio = new AudioConstructor()
+      // Neither context belongs to 8x8; changing either sink affects assistant tones only.
+      if (AudioClass && !audio) {
+        audio = new AudioClass()
         if (outputDeviceId) {
           audioOutputReady = false
           // Restore the saved sink asynchronously; playback waits for it to finish.
@@ -2861,6 +2834,11 @@
       }
       // A user gesture can unlock suspended browser audio; later gestures can retry failure.
       if (audio && audio.state !== 'running') audio.resume().catch(() => {})
+      if (secondaryRingerEnabled && canRouteOutput) {
+        // Restore the saved second output lazily, including after unmuting a saved session.
+        if (!secondaryAudio) setSecondaryOutput(secondaryDeviceId)
+        else resumeSecondaryAudio(secondaryAudio)
+      }
     } catch (e) {
       console.warn('Service Desk 8x8 Assistant sound:', e.message)
     }
@@ -3026,19 +3004,84 @@
     }
     banner.classList.toggle('hidden', !reminders.size)
   }
+  function stopScheduledNotes (job, context = null) {
+    // Routing one output must stop its queued notes without interrupting the other speaker.
+    for (const [oscillator, note] of job.nodes) {
+      if (context && note.context !== context) continue
+      job.nodes.delete(oscillator)
+      try {
+        oscillator.stop()
+      } catch {
+        // A note that ended naturally cannot be stopped a second time.
+      }
+      oscillator.disconnect()
+      note.gain.disconnect()
+    }
+    // A reconnected output may join the remaining sound once, without doubling its notes.
+    if (context) job.lastStarted.delete(context)
+    else job.lastStarted.clear()
+  }
+  function stopOutputSounds (context) {
+    if (context) for (const job of sounds.values()) stopScheduledNotes(job, context)
+  }
+  function outputsMatch () {
+    // Equal IDs, including two system-default selections, represent a single output.
+    const primaryId = typeof audio?.sinkId === 'string' ? audio.sinkId : outputDeviceId
+    const secondId =
+      typeof secondaryAudio?.sinkId === 'string' ? secondaryAudio.sinkId : secondaryDeviceId
+    if (primaryId === secondId) return true
+    // The browser may expose Default/Communications aliases for the same hardware.
+    // Match its nonempty group ID rather than guessing from potentially identical labels.
+    const deviceFor = (id) =>
+      audioOutputDevices.find((device) => device.deviceId === (id || 'default'))
+    const primary = deviceFor(primaryId)
+    const secondary = deviceFor(secondId)
+    const alias = (id) => !id || id === 'communications'
+    return Boolean(
+      (alias(primaryId) || alias(secondId)) &&
+      primary?.groupId &&
+      primary.groupId === secondary?.groupId
+    )
+  }
+  function playbackOutputs () {
+    const contexts = audioOutputReady && audio?.state === 'running' ? [audio] : []
+    if (
+      secondaryRingerEnabled &&
+      secondaryOutputReady &&
+      secondaryAudio?.state === 'running' &&
+      !outputsMatch()
+    ) {
+      contexts.push(secondaryAudio)
+    }
+    return contexts
+  }
+  function joinSecondarySounds () {
+    if (destroyed || muted || !playbackOutputs().includes(secondaryAudio)) return
+    // Joining a live job retains its original deadline and never replays the primary output.
+    for (const job of sounds.values()) {
+      if (!job.lastStarted.has(secondaryAudio)) job.cycle([secondaryAudio])
+    }
+  }
+  function resumeSecondaryAudio (context) {
+    if (destroyed || muted || !secondaryRingerEnabled || context !== secondaryAudio) return
+    if (context.state === 'running') joinSecondarySounds()
+    else {
+      // A later trusted interaction can retry a browser-blocked resume without changing devices.
+      context
+        .resume()
+        .then(() => {
+          if (context === secondaryAudio) joinSecondarySounds()
+        })
+        .catch(() => {})
+    }
+  }
   function stopSound (kind) {
     const job = sounds.get(kind)
     if (job) {
       root.clearInterval(job.interval)
       root.clearTimeout(job.timeout)
-      // Stop already scheduled notes as well as the interval that creates new ones.
-      for (const oscillator of job.nodes) {
-        try {
-          oscillator.stop()
-        } catch {
-          // A note that ended naturally cannot be stopped a second time.
-        }
-      }
+      // Stop already scheduled notes on both outputs as well as their shared timer.
+      stopScheduledNotes(job)
       sounds.delete(kind)
     }
     if (kind === 'preview') reminders.delete('preview')
@@ -3053,7 +3096,13 @@
     // Snapshot the configuration; editing a playing sound explicitly restarts it below.
     const configuration = { ...soundSettings[kind] }
     const preset = PRESETS[configuration.preset]
-    const job = { nodes: new Set(), interval: null, timeout: null }
+    const job = {
+      nodes: new Map(),
+      lastStarted: new Map(),
+      interval: null,
+      timeout: null,
+      cycle: null
+    }
     sounds.set(key, job)
     if (preview) {
       reminders.set('preview', {
@@ -3067,7 +3116,7 @@
     // Previews stay short and never repeat, even when the real alert repeats forever.
     const total = preview ? Math.min(3, configuration.seconds) : configuration.seconds
     const endless = configuration.repeat && !preview
-    const cycle = () => {
+    const cycle = (contexts = playbackOutputs()) => {
       // A replaced job must not schedule notes after a settings or output change.
       if (sounds.get(key) !== job) return
       // Use wall time for the finite deadline so delayed timer callbacks cannot extend it.
@@ -3076,39 +3125,43 @@
         stopSound(key)
         return
       }
-      preset.notes.forEach((frequencyHz, noteIndex) => {
-        // Zero-frequency entries are intentional rests between audible notes.
-        const offset = noteIndex * preset.pace
-        if (!frequencyHz || offset >= remaining) return
-        const oscillator = audio.createOscillator()
-        const gain = audio.createGain()
-        // Schedule on the audio clock; shorten the final note to the remaining duration.
-        const noteStart = audio.currentTime + offset
-        const noteLength = Math.min(preset.pace * 0.8, remaining - offset)
-        oscillator.type = preset.wave
-        oscillator.frequency.value = frequencyHz
-        // Brief attack and release ramps avoid abrupt waveform clicks.
-        gain.gain.setValueAtTime(0, noteStart)
-        // Leave gain headroom, apply the volume percentage, and cap attack at 15 ms.
-        gain.gain.linearRampToValueAtTime(
-          (0.3 * configuration.volume) / 100,
-          noteStart + Math.min(0.015, noteLength / 3)
-        )
-        gain.gain.linearRampToValueAtTime(0, noteStart + noteLength)
-        oscillator.connect(gain)
-        // Only this assistant's audio destination is affected by its output selection.
-        gain.connect(audio.destination)
-        job.nodes.add(oscillator)
-        oscillator.start(noteStart)
-        // A short tail allows the release ramp to finish before disconnecting the node.
-        oscillator.stop(noteStart + noteLength + 0.01)
-        oscillator.onended = () => {
-          job.nodes.delete(oscillator)
-          oscillator.disconnect()
-          gain.disconnect()
-        }
-      })
+      for (const context of contexts) {
+        job.lastStarted.set(context, Date.now())
+        preset.notes.forEach((frequencyHz, noteIndex) => {
+          // Zero-frequency entries are intentional rests between audible notes.
+          const offset = noteIndex * preset.pace
+          if (!frequencyHz || offset >= remaining) return
+          const oscillator = context.createOscillator()
+          const gain = context.createGain()
+          // Each speaker has its own audio clock; both use the same pattern and wall-time deadline.
+          const noteStart = context.currentTime + offset
+          const noteLength = Math.min(preset.pace * 0.8, remaining - offset)
+          oscillator.type = preset.wave
+          oscillator.frequency.value = frequencyHz
+          // Brief attack and release ramps avoid abrupt waveform clicks.
+          gain.gain.setValueAtTime(0, noteStart)
+          // Leave gain headroom, apply the volume percentage, and cap attack at 15 ms.
+          gain.gain.linearRampToValueAtTime(
+            (0.3 * configuration.volume) / 100,
+            noteStart + Math.min(0.015, noteLength / 3)
+          )
+          gain.gain.linearRampToValueAtTime(0, noteStart + noteLength)
+          oscillator.connect(gain)
+          // Only this assistant's audio destination is affected by its output selection.
+          gain.connect(context.destination)
+          job.nodes.set(oscillator, { context, gain })
+          oscillator.start(noteStart)
+          // A short tail allows the release ramp to finish before disconnecting the node.
+          oscillator.stop(noteStart + noteLength + 0.01)
+          oscillator.onended = () => {
+            job.nodes.delete(oscillator)
+            oscillator.disconnect()
+            gain.disconnect()
+          }
+        })
+      }
     }
+    job.cycle = cycle
     cycle()
     // Repeat whole note sequences, with a minimum interval to avoid overly tight loops.
     const cycleInterval = Math.max(250, preset.notes.length * preset.pace * MILLISECONDS_PER_SECOND)
@@ -3308,19 +3361,48 @@
     createElement('option', 'Saved output device', outputChoice).value = outputDeviceId
     outputChoice.value = outputDeviceId
   }
-  const AudioClass = root.AudioContext || root.webkitAudioContext
-  // Feature-detect routing; unsupported browsers still retain normal default audio.
-  const canRouteOutput = typeof AudioClass?.prototype?.setSinkId === 'function'
-  const mediaDevices = root.navigator.mediaDevices
   outputChoice.disabled = !canRouteOutput
-  const refreshDevicesButton = createElement('button', 'Refresh devices', devicesCard)
+  const secondaryCard = createElement('div', '', devicesCard, 'secondary-ringer')
+  const secondaryLabel = createElement('label', '', secondaryCard, 'repeat-control')
+  const secondaryToggle = createElement('input', '', secondaryLabel)
+  secondaryToggle.type = 'checkbox'
+  secondaryToggle.id = 'its-secondary-ringer'
+  secondaryToggle.setAttribute('aria-label', 'Secondary Ringer')
+  secondaryLabel.append(doc.createTextNode('Secondary Ringer'))
+  createElement(
+    'p',
+    'Play assistant sounds through a second output as well.',
+    secondaryCard,
+    'settings-description'
+  )
+  const secondaryOptions = createElement('div', '', secondaryCard, 'secondary-options')
+  const secondaryChoice = createElement(
+    'select',
+    '',
+    createElement('label', 'Secondary Ringer Device', secondaryOptions, 'sound-field')
+  )
+  secondaryChoice.setAttribute('aria-label', 'Assistant secondary ringer device')
+  createElement('option', 'System default (Default)', secondaryChoice).value = ''
+  if (secondaryDeviceId) {
+    createElement('option', 'Saved secondary output device', secondaryChoice).value =
+      secondaryDeviceId
+    secondaryChoice.value = secondaryDeviceId
+  }
+  const deviceActions = createElement('div', '', devicesCard, 'device-actions')
+  const refreshDevicesButton = createElement('button', 'Refresh devices', deviceActions)
   refreshDevicesButton.disabled =
     !canRouteOutput || typeof mediaDevices?.enumerateDevices !== 'function'
   // Only display the browser output picker when that API is actually available.
   const chooseOutputButton =
     canRouteOutput && typeof mediaDevices?.selectAudioOutput === 'function'
-      ? createElement('button', 'Choose output device', devicesCard)
+      ? createElement('button', 'Choose output device', deviceActions)
       : null
+  const chooseSecondaryButton =
+    canRouteOutput && typeof mediaDevices?.selectAudioOutput === 'function'
+      ? createElement('button', 'Choose secondary ringer device', secondaryOptions)
+      : null
+  const secondaryFeedback = createElement('p', '', secondaryCard, 'small secondary-feedback')
+  secondaryFeedback.setAttribute('role', 'status')
   const deviceFeedback = createElement(
     'p',
     canRouteOutput
@@ -3331,6 +3413,99 @@
   )
   deviceFeedback.setAttribute('role', 'status')
   let outputChanges = Promise.resolve()
+  let secondaryChanges = Promise.resolve()
+  let secondaryChangeRevision = 0
+  let deviceRefreshRevision = 0
+  function syncSecondaryControls () {
+    secondaryToggle.checked = secondaryRingerEnabled
+    secondaryToggle.disabled = !canRouteOutput
+    secondaryOptions.classList.toggle('hidden', !secondaryRingerEnabled)
+    // Saved device choices remain editable while muted, even before audio is created.
+    secondaryChoice.disabled = !secondaryRingerEnabled || secondaryOutputPending || !canRouteOutput
+    if (chooseSecondaryButton) chooseSecondaryButton.disabled = secondaryChoice.disabled
+  }
+  function updateSecondaryFeedback () {
+    const text = !canRouteOutput
+      ? 'Secondary Ringer is unavailable in this browser. Assistant sounds use the system default.'
+      : !secondaryRingerEnabled
+          ? 'Secondary Ringer is off.'
+          : outputsMatch()
+            ? 'Both outputs use the same device. Sounds play once on that device.'
+            : 'Assistant sounds and previews also play on your secondary device. Mute silences both outputs.'
+    setText(secondaryFeedback, text)
+  }
+  syncSecondaryControls()
+  updateSecondaryFeedback()
+  function setSecondaryOutput (id, note = '') {
+    if (destroyed || !secondaryRingerEnabled || !canRouteOutput) return Promise.resolve(false)
+    const sinkId = id === 'default' ? '' : id
+    // Invalidate earlier choices immediately, even if their browser permission promise is pending.
+    const revision = ++secondaryChangeRevision
+    secondaryOutputReady = false
+    secondaryOutputPending = true
+    stopOutputSounds(secondaryAudio)
+    syncSecondaryControls()
+    setText(secondaryFeedback, 'Connecting Secondary Ringer… Your main output is unchanged.')
+    const change = secondaryChanges.then(async () => {
+      const current = () =>
+        !destroyed && secondaryRingerEnabled && revision === secondaryChangeRevision
+      if (!current()) return false
+      let context
+      try {
+        if (!secondaryAudio) secondaryAudio = new AudioClass()
+        context = secondaryAudio
+        // A second independent sink duplicates only the assistant's locally generated tones.
+        await context.setSinkId(sinkId)
+        if (!current() || context !== secondaryAudio) return false
+        secondaryDeviceId = sinkId
+        savePreferences()
+        secondaryChoice.value = sinkId
+        updateSecondaryFeedback()
+        if (note) setText(secondaryFeedback, note)
+        return true
+      } catch {
+        if (!current() || (context && context !== secondaryAudio)) return false
+        // An unavailable or denied second device must never silence the primary output.
+        secondaryDeviceId = typeof context?.sinkId === 'string' ? context.sinkId : ''
+        savePreferences()
+        secondaryChoice.value = secondaryDeviceId
+        setText(
+          secondaryFeedback,
+          context
+            ? 'Could not use that secondary device. The previous secondary output was kept; your main output is unchanged.'
+            : 'Could not start Secondary Ringer. Your main output is unchanged. Choose the device again to retry.'
+        )
+        return false
+      } finally {
+        if (current() && (!context || context === secondaryAudio)) {
+          secondaryOutputReady = true
+          secondaryOutputPending = false
+          syncSecondaryControls()
+          if (context) resumeSecondaryAudio(context)
+        }
+      }
+    })
+    // Keep routing serial, but prevent a rejected change from blocking subsequent selections.
+    secondaryChanges = change.catch(() => false)
+    return change
+  }
+  secondaryToggle.onchange = () => {
+    if (destroyed || !canRouteOutput) return Promise.resolve(false)
+    secondaryRingerEnabled = secondaryToggle.checked
+    secondaryChangeRevision++
+    secondaryOutputReady = false
+    secondaryOutputPending = false
+    savePreferences()
+    stopOutputSounds(secondaryAudio)
+    syncSecondaryControls()
+    updateSecondaryFeedback()
+    if (secondaryRingerEnabled) return setSecondaryOutput(secondaryDeviceId)
+    // Turning off the ringer closes its context immediately and retains its saved device choice.
+    const previous = secondaryAudio
+    secondaryAudio = null
+    return previous?.close().catch(() => {}) || Promise.resolve(true)
+  }
+  secondaryChoice.onchange = () => setSecondaryOutput(secondaryChoice.value)
   function setAssistantOutput (id, note = '') {
     if (destroyed) return Promise.resolve(false)
     // Browser enumeration calls its default "default"; AudioContext expects an empty ID.
@@ -3379,6 +3554,7 @@
           audioOutputReady = true
           outputChoice.disabled = !canRouteOutput
           syncMute()
+          updateSecondaryFeedback()
           if (chooseOutputButton) chooseOutputButton.disabled = false
           // Resume only current conditions; output changes never send another popup.
           if (!muted && activeReminder) playSound(activeReminder.kind)
@@ -3394,12 +3570,15 @@
   }
   async function refreshAudioDevices () {
     if (destroyed || !canRouteOutput || typeof mediaDevices?.enumerateDevices !== 'function') return
+    const revision = ++deviceRefreshRevision
     try {
       // Enumerate permitted speakers without opening a microphone or altering phone devices.
       const devices = await mediaDevices.enumerateDevices()
       // Wait until pending routing settles before rebuilding the selected option.
-      await outputChanges
-      if (destroyed) return
+      await Promise.all([outputChanges, secondaryChanges])
+      if (destroyed || revision !== deviceRefreshRevision) return
+      audioOutputDevices = devices.filter((device) => device.kind === 'audiooutput')
+      updateSecondaryFeedback()
       // Exclude inputs and the duplicate default alias from the selectable output list.
       const available = devices.filter(
         (d) => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default'
@@ -3409,11 +3588,13 @@
         // Remove the browser's prefix while retaining the device name and clear default label.
         return (label ? label.replace(/^default\s*[-–—]\s*/i, '') : 'System default') + ' (Default)'
       }
-      outputChoice.textContent = ''
-      createElement('option', defaultLabel('audiooutput'), outputChoice).value = ''
-      for (const [index, device] of available.entries()) {
-        createElement('option', device.label || `Output device ${index + 1}`, outputChoice).value =
-          device.deviceId
+      for (const choice of [outputChoice, secondaryChoice]) {
+        choice.textContent = ''
+        createElement('option', defaultLabel('audiooutput'), choice).value = ''
+        for (const [index, device] of available.entries()) {
+          createElement('option', device.label || `Output device ${index + 1}`, choice).value =
+            device.deviceId
+        }
       }
       // A removed or no-longer-permitted speaker falls back to the system default.
       if (outputDeviceId && !available.some((d) => d.deviceId === outputDeviceId)) {
@@ -3423,6 +3604,23 @@
         )
       }
       outputChoice.value = outputDeviceId
+      if (secondaryDeviceId && !available.some((device) => device.deviceId === secondaryDeviceId)) {
+        if (secondaryRingerEnabled) {
+          await setSecondaryOutput(
+            '',
+            'Secondary output is unavailable. Secondary Ringer now uses the system default.'
+          )
+        } else {
+          // Do not create an audio context for a disabled ringer merely to forget a removed device.
+          secondaryDeviceId = ''
+          savePreferences()
+        }
+      }
+      secondaryChoice.value = secondaryDeviceId
+      // A changed system default can make two routes refer to the same physical speaker.
+      if (outputsMatch()) stopOutputSounds(secondaryAudio)
+      else joinSecondarySounds()
+      syncSecondaryControls()
       if (!available.length && !outputDeviceId) {
         setText(
           deviceFeedback,
@@ -3430,7 +3628,7 @@
         )
       }
     } catch {
-      if (!destroyed) {
+      if (!destroyed && revision === deviceRefreshRevision) {
         setText(
           deviceFeedback,
           'Could not list audio devices. The assistant has kept its current output.'
@@ -3458,6 +3656,31 @@
           setText(
             deviceFeedback,
             'No new output was selected. The assistant has kept its current output.'
+          )
+        }
+      }
+    }
+  }
+  if (chooseSecondaryButton) {
+    chooseSecondaryButton.onclick = async () => {
+      // Capture the toggle revision so a picker result cannot re-enable a ringer switched off meanwhile.
+      const revision = secondaryChangeRevision
+      if (destroyed || !secondaryRingerEnabled) return
+      try {
+        const device = await mediaDevices.selectAudioOutput(
+          secondaryDeviceId ? { deviceId: secondaryDeviceId } : {}
+        )
+        if (destroyed || !secondaryRingerEnabled || revision !== secondaryChangeRevision) return
+        if (device?.kind !== 'audiooutput' || typeof device.deviceId !== 'string') {
+          throw Error('No output selected')
+        }
+        await setSecondaryOutput(device.deviceId)
+        await refreshAudioDevices()
+      } catch {
+        if (!destroyed && secondaryRingerEnabled && revision === secondaryChangeRevision) {
+          setText(
+            secondaryFeedback,
+            'No new secondary device was selected. Your outputs are unchanged.'
           )
         }
       }
@@ -3935,12 +4158,6 @@
       countCalls(docs)
       // Short-break totals use only the user's own native clock, independently of queue visibility.
       countShortBreaks(docs)
-      if (!QUEUES.length && !readPersonalPage(docs)) {
-        compactKind = ''
-        showUnavailable(false)
-        openView('settings')
-        return
-      }
       scan(docs)
     } catch (e) {
       showUnavailable(true)
@@ -4016,6 +4233,7 @@
       pageDocument.removeEventListener('keydown', enableAlerts, true)
     }
     audio?.close().catch(() => {})
+    secondaryAudio?.close().catch(() => {})
     host.remove()
     delete root.__itsCallAssist
   }

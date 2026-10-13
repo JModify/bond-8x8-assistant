@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 — 2026-10-13
+
+- Add Secondary Ringer under Settings → Sound Settings → Audio Devices. Default it off, reveal a separate output selector when enabled and save both its toggle and device choice. Duplicate assistant reminders and previews with matching sound, volume, duration and repeat settings, using a second assistant-owned audio context without changing 8x8 or system audio.
+- Mute and close stop both outputs; turning the secondary ringer off leaves the main output uninterrupted. Retain finite sound deadlines when the second output joins, avoid duplicate playback for matching devices or browser-proven Default aliases, preserve working outputs on routing failure and fall back to Default when a selected device disappears. Reject stale changes and browser-picker results after a later choice, disabling or shutdown. Do not open a microphone to list devices.
+- Embed ITS Academic Hotline, ITS Internal TRNFR and ITS Service Desk as the fixed inbound queues, as explicitly requested for public source. Remove the queue editor and configuration bootstrap requirement; ignore old stored queue names. Keep historical release snapshots unchanged and update setup instructions.
+- Expand behavioural checks to 171 scenarios covering dual-output scheduling, isolation, mute and muted startup, finite previews, Default/Communications aliases, persistence, permission failures, removed devices, rapid changes and cleanup, alongside all prior monitoring and Call History checks. Verify the controls and native Chromium audio graphs at five viewport sizes using simulated output devices; physical dual-device playback is not tested by the headless fixture.
+
 ## 1.1.0 — 2026-10-13
 
 - Add Call History between Mute and Settings. Provide a separate Back menu with newest-first records grouped by day, search for names/student numbers/telephone numbers/queues/references, expandable extra details and scrolling that keeps navigation and statistics accessible.
