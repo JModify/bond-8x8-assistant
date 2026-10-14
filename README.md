@@ -12,7 +12,7 @@ This is a **JavaScript prototype** that runs in your 8x8 page. The goal is an **
 
 1. Open your logged-in 8x8 page in **Microsoft Edge**.
 2. Open the [prototype code](Service-Desk-8x8-Assistant.js), select **Raw**, then copy the whole file.
-3. Press **Ctrl+Shift+i** → **Sources → Click "»" icon → Snippets → New snippet**. Name it **8x8 Assistant**, paste the code and press **Ctrl+S**, then **Ctrl+Enter**.
+3. Press **Ctrl+Shift+i** (you may need to do this multiple times consecutively) → **Sources → Click "»" icon → Snippets → New snippet**. Name it **8x8 Assistant**, paste the code and press **Ctrl+S**, then **Ctrl+Enter**.
 4. Open 8x8's **queue information** using the button to the right of your status, next to the bell icon.
 
 <a href="docs/images/queue-info.png"><img src="docs/images/queue-info.png" width="215" alt="Queue information button location"></a>
