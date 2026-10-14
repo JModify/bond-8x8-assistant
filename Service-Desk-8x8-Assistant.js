@@ -40,6 +40,13 @@
   if (root.location.hostname !== 'vcc-au2.8x8.com') {
     throw new Error('Run this snippet in your existing vcc-au2.8x8.com tab.')
   }
+  // The packaged extension supplies hydrated, private storage and notification adapters.
+  // Ordinary snippets retain their existing page/session behaviour without changing 8x8 storage.
+  const deployment = root.__itsCallAssistRuntime || null
+  const settingsStorage = deployment?.settingsStorage || root.localStorage
+  const historyStorage = deployment?.historyStorage || root.sessionStorage
+  // Resolve the browser API at use time so permission/support changes remain observable.
+  const notificationClass = () => deployment?.Notification || root.Notification
   // Carry an ongoing disposition timer across a snippet restart, then remove
   // the previous assistant's observers, audio and panel before starting again.
   const resumedWrapUp = root.__itsCallAssist?.wrapUpSession?.()
@@ -49,7 +56,7 @@
   const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = '1.1.5'
+  const VERSION = deployment?.version || '1.1.5'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -2051,11 +2058,20 @@
   historySearch.setAttribute('aria-label', 'Search Call Notes')
   const historyList = createElement('div', '', historyPanel, 'history-list')
   historyList.setAttribute('role', 'region')
-  historyList.setAttribute('aria-label', 'Calls saved this session, newest first')
+  historyList.setAttribute('aria-label', deployment?.persistent ? 'Saved calls, newest first' : 'Calls saved this session, newest first')
   historyList.tabIndex = 0
+  // Persistent histories can span many days; keep each rendered page responsive.
+  const historyPager = deployment?.historyPageSize
+    ? createElement('div', '', historyPanel, 'history-summary hidden')
+    : null
+  const historyPrevious = historyPager ? createElement('button', 'Previous', historyPager) : null
+  const historyPageLabel = historyPager ? createElement('span', '', historyPager, 'small') : null
+  const historyNext = historyPager ? createElement('button', 'Next', historyPager) : null
   createElement(
     'p',
-    'Edit with the pen. The tick, clicking away or Back saves. Export TXT to keep a copy after this session.',
+    deployment?.persistent
+      ? 'Saved in this browser. The tick, clicking away or Back saves. Export TXT to keep a backup.'
+      : 'Edit with the pen. The tick, clicking away or Back saves. Export TXT to keep a copy after this session.',
     historyPanel,
     'history-note'
   )
@@ -2092,6 +2108,12 @@
     'footer-detail release-version'
   )
   createElement('span', VERSION, versionSection, 'footer-value')
+  const storageState = deployment?.persistent
+    ? createElement('span', 'Saving…', footerDetails, 'small extension-storage-state')
+    : null
+  const stopStorageStatus = deployment?.onStorageStatus?.((status) => {
+    if (storageState) storageState.textContent = status === 'saved' ? 'Saved in this browser' : status === 'error' ? 'Not saved — export a backup' : 'Saving…'
+  })
   const controls = createElement('div', '', footer, 'controls')
   const muteButton = createElement('button', 'Mute', controls)
   const historyButton = createElement('button', 'Call Notes', controls)
@@ -2121,7 +2143,7 @@
   let preferences = {}
   // Validate the stored shape before reading fields; browser storage can be edited.
   try {
-    const value = JSON.parse(root.localStorage.getItem(PREFERENCES_KEY) || '{}')
+    const value = JSON.parse(settingsStorage.getItem(PREFERENCES_KEY) || '{}')
     if (value && typeof value === 'object' && !Array.isArray(value)) preferences = value
   } catch {
     // Invalid JSON or blocked storage uses defaults for this run.
@@ -2215,7 +2237,7 @@
   const savePreferences = () => {
     // Save every chosen G1 name, including names absent from the current roster.
     try {
-      root.localStorage.setItem(
+      settingsStorage.setItem(
         PREFERENCES_KEY,
         JSON.stringify({
           settingsVersion: 3,
@@ -2252,7 +2274,7 @@
   }
   const statistics = { day: dayKey(Date.now()), calls: [], hadGaps: false, lastPresence: null }
   try {
-    const value = JSON.parse(root.localStorage.getItem(STATISTICS_KEY) || '{}')
+    const value = JSON.parse(settingsStorage.getItem(STATISTICS_KEY) || '{}')
     if (value && typeof value === 'object') {
       if (value.day === statistics.day && Array.isArray(value.calls)) {
         // Retain only real timestamps from today; future or invalid entries cannot count as calls.
@@ -2265,6 +2287,9 @@
       const last = value.lastPresence
       if (last && typeof last.status === 'string' && Number.isFinite(last.seenAt)) {
         statistics.lastPresence = { status: normaliseStatus(last.status), seenAt: last.seenAt }
+        if (deployment && typeof last.transactionId === 'string') {
+          statistics.lastPresence.transactionId = last.transactionId
+        }
       }
     }
   } catch {
@@ -2273,7 +2298,7 @@
   let lastStatisticsSave = 0
   function saveStatistics () {
     try {
-      root.localStorage.setItem(STATISTICS_KEY, JSON.stringify(statistics))
+      settingsStorage.setItem(STATISTICS_KEY, JSON.stringify(statistics))
       lastStatisticsSave = Date.now()
     } catch {
       // Statistics remain usable in memory when the browser blocks persistence.
@@ -2326,13 +2351,27 @@
       // never treated as leaving Busy, preventing duplicate counts on recovery.
       // Timer resets alone are not proof of another call. Do not infer calls
       // from missing data or from a timer changing during post-processing.
-      const newCall = busy && !wasBusy
+      const page = deployment && busy ? readCallPage(docs) : null
+      const reference = page?.phase === 'call' && !page.identityConflict && !closedCallPage(page)
+        ? page.transactionId
+        : null
+      const oldReference = old?.transactionId || (
+        deployment && wasBusy
+          ? callHistory.pending.find((call) => call.id === callHistory.currentId)?.transactionId
+          : null
+      )
+      // Across a browser restart, two distinct connected references can prove a new
+      // call even if Busy was the last observed status. Missing Info proves nothing.
+      const newCall = busy && (!wasBusy || (reference && oldReference && reference !== oldReference))
       if (newCall) {
         statistics.calls.push(now)
         changed = true
       }
       if (!old || status !== old.status) changed = true
       statistics.lastPresence = { status, seenAt: now }
+      if (deployment && busy && (reference || (wasBusy && oldReference))) {
+        statistics.lastPresence.transactionId = reference || oldReference
+      }
     }
     if (changed || now - lastStatisticsSave >= 15000) saveStatistics()
     renderStatistics()
@@ -2349,6 +2388,7 @@
     records: []
   }
   let historyRevision = 0
+  let historyPage = 0
   let historyRenderKey = ''
   let historyRenderedQuery = ''
   let editingCallId = null
@@ -2432,7 +2472,7 @@
     return call
   }
   try {
-    const stored = root.sessionStorage?.getItem(CALL_HISTORY_KEY)
+    const stored = historyStorage?.getItem(CALL_HISTORY_KEY)
     const saved = stored ? JSON.parse(stored) : resumedCallHistory
     if (saved && typeof saved === 'object') {
       if (validCallTime(saved.startedAt)) callHistory.startedAt = saved.startedAt
@@ -2519,8 +2559,13 @@
   }
   function saveCallHistory () {
     try {
+      if (deployment?.saveHistory) {
+        // Extension storage writes changing drafts separately from durable completed records.
+        deployment.saveHistory(callHistory, historyRevision)
+        return
+      }
       // Caller details stay in this tab's session; never put them in durable shared preferences.
-      root.sessionStorage?.setItem(CALL_HISTORY_KEY, JSON.stringify(callHistory))
+      historyStorage?.setItem(CALL_HISTORY_KEY, JSON.stringify(callHistory))
     } catch {
       // History and draft editing remain usable in memory when storage is blocked or full.
     }
@@ -2552,17 +2597,30 @@
     return !draft.number || !page.number || phoneDigits(draft.number) === phoneDigits(page.number)
   }
   function matchingCallDraft (page) {
+    // After a new document/session, only a stable reference can restore an older draft.
+    // A repeated telephone number must never attach an earlier caller's notes to a new call.
+    const eligible = callHistory.pending.filter((call) =>
+      !deployment?.restoredDraftIds?.includes(call.id) ||
+      (page.transactionId && call.transactionId === page.transactionId)
+    )
     if (page.transactionId) {
-      const exact = callHistory.pending.find((call) => call.transactionId === page.transactionId)
-      if (exact) return exact
+      const exact = eligible.find((call) => call.transactionId === page.transactionId)
+      if (exact) {
+        // Once this document has verified a restored call, later hidden Info tabs
+        // may keep using its current draft without demanding the reference again.
+        if (deployment?.restoredDraftIds?.includes(exact.id)) {
+          deployment.restoredDraftIds = deployment.restoredDraftIds.filter((id) => id !== exact.id)
+        }
+        return exact
+      }
       // Info can appear after the caller starts typing. Adopt its reference into the same draft.
-      const current = currentCallDraft()
+      const current = eligible.find((call) => call.id === callHistory.currentId)
       return current && !current.transactionId && matchesCallNumber(current, page) ? current : null
     }
-    const current = currentCallDraft()
+    const current = eligible.find((call) => call.id === callHistory.currentId)
     if (current && matchesCallNumber(current, page)) return current
     const byNumber = page.number
-      ? callHistory.pending.filter(
+      ? eligible.filter(
         (call) => call.number && phoneDigits(call.number) === phoneDigits(page.number)
       )
       : []
@@ -2622,7 +2680,13 @@
   }
   function trackCallHistory (docs) {
     const page = readCallPage(docs)
-    const before = JSON.stringify(callHistory)
+    // Completed records do not change during polling; avoid reserialising years of notes.
+    const observation = () => JSON.stringify([
+      callHistory.currentId, callHistory.closedId, callHistory.closedCall,
+      callHistory.nextId, callHistory.pending, callHistory.records.length,
+      callHistory.completedTransactions.length
+    ])
+    const before = observation()
     if (page?.identityConflict) {
       // Keep the draft unchanged while header and Info describe different callers.
     } else if (page?.phase === 'call') {
@@ -2703,7 +2767,7 @@
         callHistory.closedCall = null
       }
     }
-    if (JSON.stringify(callHistory) !== before) saveCallHistory()
+    if (observation() !== before) saveCallHistory()
     renderHistory()
   }
   function callClock (seconds) {
@@ -2752,6 +2816,7 @@
     const id = historyEdit.id
     historyEdit = null
     const record = callHistory.records.find((call) => call.id === id)
+    if (record) deployment?.finishEditor?.(record.recordKey, null)
     const widget = historyWidgets.get(id)
     if (record && widget) syncHistoryEditor(record, widget)
   }
@@ -2791,6 +2856,11 @@
     historyEdit = null
     historyRevision++
     saveCallHistory()
+    deployment?.finishEditor?.(record.recordKey, {
+      caller: record.caller,
+      notes: record.notes,
+      jobNumber: record.jobNumber
+    })
     const widget = historyWidgets.get(record.id)
     if (widget) syncHistoryEditor(record, widget)
     // Filtering and personal-view changes already render; avoid recursive reconciliation.
@@ -2802,6 +2872,17 @@
     // Shadow DOM retargets event.target to the host; its composed path retains the actual card.
     const inside = event.composedPath?.().includes(card) || card?.contains?.(event.target)
     if (!inside) saveHistoryEdit()
+  }
+  function checkpointHistoryEdit () {
+    if (!deployment?.checkpointEditor || !historyEdit || destroyed) return
+    const record = callHistory.records.find((call) => call.id === historyEdit.id)
+    if (!record) return
+    // Extension-only checkpoints survive a browser close without committing an Escape-cancellable edit.
+    deployment.checkpointEditor(record.recordKey, {
+      caller: historyEdit.value,
+      notes: historyEdit.notes,
+      jobNumber: historyEdit.jobNumber
+    })
   }
   let lastDeletedNote = null
   const historyUndo = createElement('button', 'Undo delete', historyTransfer, 'hidden')
@@ -3238,12 +3319,15 @@
       historyEdit?.id === record.id ? saveHistoryEdit() : beginHistoryEdit(record, widget)
     input.oninput = () => {
       if (!destroyed && historyEdit?.id === record.id) historyEdit.value = input.value.slice(0, 160)
+      checkpointHistoryEdit()
     }
     notesInput.oninput = () => {
       if (!destroyed && historyEdit?.id === record.id) historyEdit.notes = notesInput.value.slice(0, MAX_NOTES_LENGTH)
+      checkpointHistoryEdit()
     }
     jobInput.oninput = () => {
       if (!destroyed && historyEdit?.id === record.id) historyEdit.jobNumber = jobInput.value.slice(0, 80)
+      checkpointHistoryEdit()
     }
     deleteButton.onclick = () => deleteHistoryRecord(record)
     // Keep editing keystrokes inside the assistant instead of invoking 8x8 shortcuts.
@@ -3265,9 +3349,10 @@
     const query = normaliseStatus(historySearch.value)
     // A new search leaves the current record; save before evaluating its edited contents.
     if (historyEdit && historyRenderedQuery !== query) saveHistoryEdit(false)
+    if (historyRenderedQuery !== query) historyPage = 0
     historyRenderedQuery = query
     const today = dayKey(Date.now())
-    const key = `${historyRevision}|${query}|${today}`
+    const key = `${historyRevision}|${query}|${today}|${historyPage}`
     // Polling updates statistics without rebuilding the scrollable cards or resetting expanded details.
     if (historyRenderKey === key) return
     historyRenderKey = key
@@ -3285,11 +3370,21 @@
     })
     setText(
       historyCount,
-      `${records.length} ${records.length === 1 ? 'call' : 'calls'} saved this session`
+      `${records.length} ${records.length === 1 ? 'call' : 'calls'} saved${deployment?.persistent ? ' in this browser' : ' this session'}`
     )
     setText(historyResults, query ? `${filtered.length} found` : 'Newest first')
     historyExport.disabled = transferBusy || !records.length
     historyDownload.disabled = transferBusy || !records.length
+    const pageSize = deployment?.historyPageSize || Infinity
+    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
+    historyPage = Math.min(historyPage, pageCount - 1)
+    const visibleRecords = historyPager ? filtered.slice(historyPage * pageSize, (historyPage + 1) * pageSize) : filtered
+    if (historyPager) {
+      historyPager.classList.toggle('hidden', pageCount <= 1)
+      historyPrevious.disabled = historyPage === 0
+      historyNext.disabled = historyPage >= pageCount - 1
+      setText(historyPageLabel, `Page ${historyPage + 1} of ${pageCount}`)
+    }
     const desired = []
     if (!filtered.length) {
       if (!historyEmpty) historyEmpty = createElement('div', '', historyList, 'history-empty')
@@ -3302,7 +3397,7 @@
       desired.push(historyEmpty)
     }
     let previousDay = ''
-    for (const record of filtered) {
+    for (const record of visibleRecords) {
       const recordDay = record.detectedAt === null ? 'unknown' : dayKey(record.detectedAt)
       if (recordDay !== previousDay) {
         const label =
@@ -3342,7 +3437,20 @@
     })
     const retained = new Set(desired)
     for (const node of [...historyList.children]) if (!retained.has(node)) node.remove()
+    if (historyPager) {
+      // Release cards from earlier pages instead of accumulating their detached DOM nodes.
+      const visibleIds = new Set(visibleRecords.map((record) => record.id))
+      for (const id of historyWidgets.keys()) if (!visibleIds.has(id)) historyWidgets.delete(id)
+    }
   }
+  function changeHistoryPage (direction) {
+    saveHistoryEdit(false)
+    historyPage = Math.max(0, historyPage + direction)
+    renderHistory()
+    historyList.scrollTop = 0
+  }
+  if (historyPrevious) historyPrevious.onclick = () => changeHistoryPage(-1)
+  if (historyNext) historyNext.onclick = () => changeHistoryPage(1)
   function renderCall (page) {
     const draft = currentCallDraft()
     compactKind = 'call'
@@ -3392,7 +3500,7 @@
   const SHORT_BREAK_KEY = 'service-desk-8x8-short-breaks-v1'
   const shortBreaks = { day: dayKey(Date.now()), seconds: 0, active: null }
   try {
-    const saved = JSON.parse(root.localStorage.getItem(SHORT_BREAK_KEY) || '{}')
+    const saved = JSON.parse(settingsStorage.getItem(SHORT_BREAK_KEY) || '{}')
     if (saved && typeof saved === 'object') {
       // Store seconds so two partial minutes can contribute to the same completed minute.
       if (
@@ -3419,7 +3527,7 @@
   }
   function saveShortBreaks () {
     try {
-      root.localStorage.setItem(SHORT_BREAK_KEY, JSON.stringify(shortBreaks))
+      settingsStorage.setItem(SHORT_BREAK_KEY, JSON.stringify(shortBreaks))
     } catch {
       // In-memory totals still work when site storage is unavailable.
     }
@@ -3863,7 +3971,7 @@
   const SOUND_KEY = 'service-desk-8x8-sounds-v4'
   let saved = {}
   try {
-    const value = JSON.parse(root.localStorage.getItem(SOUND_KEY) || '{}')
+    const value = JSON.parse(settingsStorage.getItem(SOUND_KEY) || '{}')
     if (value && typeof value === 'object' && !Array.isArray(value)) saved = value
   } catch {
     // Missing or corrupt sound settings use each sound's documented defaults.
@@ -4113,7 +4221,7 @@
   }
   const saveSounds = () => {
     try {
-      root.localStorage.setItem(SOUND_KEY, JSON.stringify(soundSettings))
+      settingsStorage.setItem(SOUND_KEY, JSON.stringify(soundSettings))
     } catch {
       // The selected sounds remain active in memory when persistent storage is blocked.
     }
@@ -4653,6 +4761,9 @@
   )
   createElement('li', 'Under Allowed to send notifications, select Add site.', notificationSteps)
   createElement('li', 'Enter https://vcc-au2.8x8.com and select Add.', notificationSteps)
+  if (deployment) {
+    notificationInstructions.textContent = 'Notifications are sent by this extension. If no popup appears, check Microsoft Edge notifications in Windows Settings.'
+  }
   const desktopLabel = createElement('label', '', desktopCard, 'repeat-control')
   const desktopToggle = createElement('input', '', desktopLabel)
   desktopToggle.type = 'checkbox'
@@ -4674,24 +4785,27 @@
   }
   notificationTest.onclick = async () => {
     if (destroyed || !desktopNotifications || notificationTesting) return
-    if (!('Notification' in root)) {
+    const NotificationClass = notificationClass()
+    if (!NotificationClass) {
       setText(notificationFeedback, 'Desktop notifications are not supported in this browser.')
       return
     }
     notificationTesting = true
     syncNotificationTest()
     try {
-      const permission = root.Notification.permission
+      const permission = NotificationClass.permission
       if (destroyed || !desktopNotifications) return
       if (permission !== 'granted') {
         setText(
           notificationFeedback,
-          'Notifications are not allowed yet. Follow the Edge settings steps above, then try again.'
+          deployment
+            ? 'Notifications are not allowed yet. Check Microsoft Edge notifications in Windows Settings, then try again.'
+            : 'Notifications are not allowed yet. Follow the Edge settings steps above, then try again.'
         )
         return
       }
       notices.get('test')?.close()
-      const notice = new root.Notification('8x8 Assistant: Test Notification', {
+      const notice = new NotificationClass('8x8 Assistant: Test Notification', {
         body: 'This is a test of your desktop notifications.',
         tag: 'its-call-assist-test',
         silent: muted
@@ -4701,6 +4815,9 @@
         root.focus()
         notice.close()
       }
+      // The extension API is asynchronous; report success only after Edge accepts the popup.
+      if (deployment) await notice.ready
+      if (destroyed || !desktopNotifications) return notice.close()
       setText(
         notificationFeedback,
         'Test notification sent. If no popup appeared, check your browser and computer notification settings.'
@@ -4726,24 +4843,26 @@
     syncNotificationTest()
   }
   function sendDesktopNotification (kind, title, body) {
+    const NotificationClass = notificationClass()
     // Browser permission, the global switch and this sound's checkbox must all allow a popup.
     if (
       !destroyed &&
       desktopNotifications &&
       soundSettings[kind].desktopNotification &&
-      'Notification' in root &&
-      root.Notification.permission === 'granted'
+      NotificationClass &&
+      NotificationClass.permission === 'granted'
     ) {
       try {
         notices.get(kind)?.close()
         // Tags replace this reminder's previous popup; mute requests silent OS delivery.
-        const notice = new root.Notification(title, {
+        const notice = new NotificationClass(title, {
           body,
           tag: `its-call-assist-${kind}`,
           requireInteraction: true,
           silent: muted
         })
         notices.set(kind, notice)
+        notice.ready?.catch(() => {})
         notice.onclick = () => {
           root.focus()
           notice.close()
@@ -5215,6 +5334,8 @@
     secondaryAudio?.close().catch(() => {})
     host.remove()
     delete root.__itsCallAssist
+    stopStorageStatus?.()
+    deployment?.onDestroy?.()
   }
   remove.onclick = destroy
   // Polling advances time displays even when no mutation event fires.
@@ -5226,6 +5347,8 @@
     saveCallHistory()
   }
   root.__itsCallAssist.finaliseCallNotes = finaliseCallNotes
+  // Packaged builds can show the saved notes directly from the extension toolbar.
+  root.__itsCallAssist.openCallNotes = () => historyButton.onclick()
   // Return copies so restart support and inspection cannot mutate internal state.
   root.__itsCallAssist.wrapUpSession = () => (wrapUpSession ? { ...wrapUpSession } : null)
   root.__itsCallAssist.statistics = () => ({

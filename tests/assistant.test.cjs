@@ -483,16 +483,19 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     'The production controller must be instrumented for this fixture'
   )
   // A missing-page startup exercises the real first scan, rather than hiding data afterwards.
-  options.beforeStart?.({ header, group, queues, document })
-  vm.runInNewContext(
-    source,
-    { window, location: window.location, Date: Clock, console },
-    { timeout: 1000 }
-  )
+  options.beforeStart?.({ header, group, queues, document, window })
+  // Extension scenarios hydrate asynchronous storage before executing the same core.
+  if (!options.deferStart) {
+    vm.runInNewContext(
+      source,
+      { window, location: window.location, Date: Clock, console },
+      { timeout: 1000 }
+    )
+  }
   const ui = () => document.body.querySelector('#its-call-assist-panel').shadowRoot
   const scan = () => {
     now += 2000
-    window.__itsCallAssist.rescan()
+    window.__itsCallAssist?.rescan?.()
   }
   const setMe = (status, seconds, reason = 'Lunch') => {
     meStatus.setAttribute('data-status-value', status)
@@ -749,6 +752,11 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
         { window, location: window.location, Date: Clock, console },
         { timeout: 1000 }
       ),
+    runScript: (text, extras = {}) => vm.runInNewContext(
+      text,
+      { window, location: window.location, Date: Clock, console, ...extras },
+      { timeout: 1000 }
+    ),
     reload: () => {
       window.__itsCallAssist.destroy()
       vm.runInNewContext(

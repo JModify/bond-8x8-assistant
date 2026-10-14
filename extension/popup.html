@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Service Desk 8x8 Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="shared.js" defer></script>
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <header>
+    <img src="icons/icon48.png" width="40" height="40" alt="">
+    <div><h1>Service Desk<br>8x8 Assistant</h1><p>Joshua Lavagna-Slater</p></div>
+    <span class="version" id="version">v1.0</span>
+  </header>
+  <main>
+    <label class="toggle"><span>Start automatically on 8x8</span><input id="enabled" type="checkbox" checked disabled></label>
+    <section class="summary">
+      <span class="badge" id="badge">Loading</span>
+      <p id="status">Checking your assistant…</p>
+      <p class="small" id="saved">Call Notes stay saved in this browser.</p>
+    </section>
+    <button class="primary" id="activate" disabled>Show assistant on this tab</button>
+    <button id="open-site">Open 8x8</button>
+    <details><summary>Recovery and updates</summary>
+      <p class="small">After reloading the extension, reload 8x8 when you are not on a call.</p>
+      <button id="reload" disabled>Reload this 8x8 tab</button>
+      <button id="update" disabled>Check for updates</button>
+      <p class="small" id="updates">Remote updates have not been configured yet.</p>
+    </details>
+    <p class="feedback" id="feedback" role="status" aria-live="polite"></p>
+  </main>
+  <footer>Use Export TXT in Call Notes to keep a backup.</footer>
+</body>
+</html>
