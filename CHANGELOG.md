@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.6 (Script) — 2026-10-14
+
+- Added **+ Add note** to Call Notes for in-person visits. Manual entries use the existing name/ID, multiline notes and job-number editor, show an In person badge and omit unavailable phone details. The tick, clicking away, Back and navigation save; Escape/Cancel discards a new draft. Manual notes survive session restoration and TXT round trips without affecting call counters or capture guards.
+- Replaced call statistics in Call Notes with Total notes, Students (predicted), Staff (predicted) and Missing job numbers. Totals follow additions, edits, imports, deletion and Undo, independently of search and the main-menu call counter.
+- Added **Notification Display Time** in Assistant Settings, defaulting to five seconds. Finished finite sound/preview cards close after this delay; desktop popups also close automatically. Active repeating in-app alerts stay visible until their condition clears. Wall-time deadlines, episode suppression and stale callback checks prevent permanent or unexpectedly reappearing messages.
+- Made deleted/restored confirmations disappear after five seconds while retaining Undo. Removed the per-record duration-unavailable and prediction-explanation paragraphs; the duration lower-bound marker and labelled prediction remain.
+- Replaced mute/unmute and Settings text buttons with accessible SVG speaker/gear icons. Call Notes sits to their left; speaker appearance changes with mute state, including personal views.
+- Kept the extension 1.0.0 bundle, images and every earlier release snapshot unchanged. Extension checks now validate its separately versioned, recorded core instead of silently replacing it during a script release.
+- Validation: JavaScript syntax and Standard Style, 250 baseline script scenarios, 21 v1.1.6 scenarios and 29 unchanged-extension scenarios (300 total).
+
 ## 1.1.5 — 2026-10-14
 
 - Replaced the blocking Unable to Assist view with a frozen last-read agent table. Missing, partial or unreadable information preserves names, statuses, timers and colours instead of clearing rows or advancing cached times.

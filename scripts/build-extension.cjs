@@ -3,12 +3,23 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process')
+const { packagedSource, compile } = require('./extension-core.cjs')
 const root = path.resolve(__dirname, '..')
 const folder = path.join(root, 'extension')
-const source = fs.readFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'), 'utf8')
-const baseVersion = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim()
 const manifest = JSON.parse(fs.readFileSync(path.join(folder, 'manifest.json'), 'utf8'))
 const config = JSON.parse(fs.readFileSync(path.join(folder, 'update-config.json'), 'utf8'))
+const previous = JSON.parse(fs.readFileSync(path.join(folder, 'core-info.json'), 'utf8'))
+const refreshCore = process.argv.includes('--refresh-core')
+// Ordinary script releases must not silently ship a new extension under its old version.
+const source = refreshCore
+  ? fs.readFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'), 'utf8')
+  : packagedSource(fs.readFileSync(path.join(folder, 'assistant.js'), 'utf8'))
+const baseVersion = refreshCore ? fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim() : previous.coreVersion
+const sourceHash = crypto.createHash('sha256').update(source).digest('hex')
+if (!refreshCore && sourceHash !== previous.coreSha256) throw new Error('The packaged extension core differs from its recorded hash.')
+if (refreshCore && sourceHash !== previous.coreSha256 && fs.existsSync(path.join(root, 'releases', 'edge-extension', manifest.version))) {
+  throw new Error('Increase the extension version before refreshing its released core.')
+}
 delete manifest.update_url
 delete manifest.key
 if (config.enabled) {
@@ -22,26 +33,11 @@ if (config.publicKey !== null) {
   if (typeof config.publicKey !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(config.publicKey)) throw new Error('Invalid extension public key.')
   manifest.key = config.publicKey
 }
-// Change only the outer entry point. The function body and template-literal text
-// stay byte-for-byte identical to the reusable snippet, including CSS and TXT strings.
-const coreFunction = source.replace(/^;\(\(\) => \{$/m, 'function startServiceDeskAssistant () {').replace(/\}\)\(\)\s*$/, '}\n')
-if (coreFunction === source || !coreFunction.includes('function startServiceDeskAssistant () {')) throw new Error('The core entry point could not be packaged.')
-const compiled = `/* Generated from Service-Desk-8x8-Assistant.js. Run npm run build:extension. */
-${coreFunction}
-;(() => {
-  const runtime = window.__itsCallAssistRuntime
-  if (!runtime) return
-  runtime.ready.then(() => {
-    if (!runtime.active || window.__itsCallAssist) return
-    startServiceDeskAssistant()
-    runtime.onStarted()
-  }).catch((error) => runtime.reportStartError(error))
-})()
-`
+const compiled = compile(source)
 const metadata = {
   extensionVersion: manifest.version,
   coreVersion: baseVersion,
-  coreSha256: crypto.createHash('sha256').update(source).digest('hex')
+  coreSha256: sourceHash
 }
 const generated = {
   'assistant.js': compiled,

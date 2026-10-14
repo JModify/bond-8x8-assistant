@@ -2,7 +2,7 @@
 
 See phone coverage, keep call notes and get reminders to finish wrap-up or return from lunch.
 
-**Author:** Joshua Lavagna-Slater · **Version:** 1.1.5
+**Author:** Joshua Lavagna-Slater · **Script version:** 1.1.6
 
 [Assistant code](Service-Desk-8x8-Assistant.js) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
 
@@ -33,16 +33,16 @@ The view changes automatically as you take calls, wrap up or go on break. Click 
 | --- | --- |
 | **Main assistant**<br><a href="docs/images/main-view.png"><img src="docs/images/main-view.png" width="320" alt="Main assistant with agent names blacked out"></a> | View agents, statuses, timers, G1 roles and a combined waiting total. See today's call count, calls in the last hour and the last call. Clear alerts explain when phone cover is needed. Missing information freezes the agent table with a **Last read** badge; the assistant stays open. |
 | **On a call**<br><a href="docs/images/on-call-view.png"><img src="docs/images/on-call-view.png" width="320" alt="On-call example with the phone number and caller identifier blacked out"></a> | See caller number, queue, duration and hold status. Enter a name, username or student number and optional notes; they save at **Wrap up**. Blank names become **Unknown**. |
-| **Call Notes**<br><a href="docs/images/call-history-view.png"><img src="docs/images/call-history-view.png" width="320" alt="Earlier Call History view, now called Call Notes, with personal details blacked out"></a> | Search names, notes and job numbers. Notes stay visible on each record. Use the **pen** to edit the name, notes and **Job Number**; the **tick**, clicking away or **Back** saves. Delete unwanted records with the **bin**, with **Undo** available. **More details** includes timings and a caller-type prediction. |
+| **Call Notes**<br><a href="docs/images/call-history-view.png"><img src="docs/images/call-history-view.png" width="320" alt="Earlier Call History view, now called Call Notes, with personal details blacked out"></a> | Use **+ Add note** for in-person visits. Search names, notes and job numbers; see totals for saved notes, predicted students/staff and missing jobs. The **pen** edits a record; the **tick**, clicking away or **Back** saves. Delete with the **bin**, with **Undo** available. |
 | **Lunch break**<br><a href="docs/images/lunch-view.png"><img src="docs/images/lunch-view.png" width="320" alt="Lunch view showing elapsed and remaining minutes"></a> | See elapsed and remaining minutes, with a reminder when your configured lunch length is exceeded. |
 | **Short break**<br><a href="docs/images/short-break-view.png"><img src="docs/images/short-break-view.png" width="320" alt="Short-break view showing this break and today's total in minutes"></a> | Track this break and today's total in completed minutes. Short breaks are counted separately from lunch. |
 | **Disposition**<br><a href="docs/images/disposition-view.png"><img src="docs/images/disposition-view.png" width="320" alt="Disposition view with a countdown to the wrap-up reminder"></a> | See your countdown and get a reminder to complete the fields and click **Wrap up**. Lunch and disposition reminders work in both groups. |
 
 ## Controls and customisation
 
-- **Mute / Unmute:** control assistant sounds while monitoring and counting continue.
+- **Speaker icon:** mute or unmute sounds while monitoring and counting continue. **Call Notes** sits to the left of the icons.
 - **Call Notes → Export TXT / Import TXT:** save a readable Notepad file or bring saved notes back. Export lets you choose a location where Edge allows it; otherwise it downloads the file. Import adds notes and skips records already present.
-- **Settings:** change lunch length, reminder delays and desktop notifications.
+- **Gear icon → Settings:** change lunch length, reminder delays, notification display time and desktop notifications.
 - **Sound Settings:** choose sounds, volume, duration, repeat and per-sound notifications. Select an output device or enable **Secondary Ringer** for a second device.
 - **– / ×:** minimise or close the assistant. It never changes your status or answers calls for you.
 

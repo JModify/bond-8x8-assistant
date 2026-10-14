@@ -1,12 +1,12 @@
 {
   "name": "bond-8x8-assistant",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "private": true,
   "description": "Service Desk 8x8 Assistant shared core and Microsoft Edge extension",
   "scripts": {
     "check": "node --check Service-Desk-8x8-Assistant.js && npm run lint && node scripts/build-extension.cjs --check",
     "lint": "standard Service-Desk-8x8-Assistant.js extension/*.js scripts/**/*.cjs tests/**/*.cjs",
-    "test": "node tests/assistant.test.cjs && node tests/extension.test.cjs",
+    "test": "node tests/assistant.test.cjs && node tests/script116.test.cjs && node tests/extension.test.cjs",
     "build:extension": "node scripts/build-extension.cjs",
     "package:extension": "node scripts/build-extension.cjs --package"
   },

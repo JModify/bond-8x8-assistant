@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — v1.1.5
+/* Service Desk 8x8 Assistant — v1.1.6
  * Author: Joshua Lavagna-Slater
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
@@ -25,6 +25,8 @@
  * Muting keeps monitoring, timers, notifications and statistics running.
  * Statistics record observed Busy starts, not 8x8's complete historical call totals.
  * Optional caller identifiers and notes are saved at Wrap up.
+ * Add in-person notes manually; Call Notes totals describe saved notes, not observed calls.
+ * Finished reminder messages close after the configured notification display time.
  * Call Notes stays in this tab's session unless you choose to export a local TXT file.
  */
 ;(() => {
@@ -56,7 +58,7 @@
   const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = deployment?.version || '1.1.5'
+  const VERSION = deployment?.version || '1.1.6'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -1442,7 +1444,7 @@
     }
     .history-statistics {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       border: 1px solid #d7e0ec;
       border-radius: 8px;
       background: #f8faff;
@@ -1463,6 +1465,45 @@
     }
     .history-stat .stat-label {
       font-size: 10px;
+    }
+    .history-transfer {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .history-transfer button { margin: 0; }
+    .history-transfer .history-add { margin-right: auto; }
+    .history-source {
+      display: inline-block;
+      padding: 2px 6px;
+      margin-top: 5px;
+      border-radius: 99px;
+      background: #e5f5f1;
+      color: #147e78;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .history-card.new-note { border-style: dashed; }
+    .controls { display: flex; align-items: center; gap: 6px; }
+    .controls button { margin: 0; }
+    .controls .notes-shortcut { margin-right: 6px; }
+    button.icon-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      padding: 6px;
+      margin: 0;
+      flex-shrink: 0;
+    }
+    .button-icon { width: 19px; height: 19px; pointer-events: none; }
+    .icon-button[aria-pressed="true"] {
+      color: #a95005;
+      background: #fff0dc;
+      border-color: #e4c393;
     }
     .history-summary {
       display: flex;
@@ -1889,6 +1930,22 @@
     parent?.append(element)
     return element
   }
+  function buttonIcon (button, paths) {
+    // Fixed SVG paths avoid platform-dependent emoji and never interpret page/user text.
+    button.textContent = ''
+    button.classList.add('icon-button')
+    button.type = 'button'
+    const icon = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    for (const [name, value] of Object.entries({ viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'button-icon', 'aria-hidden': 'true' })) {
+      icon.setAttribute(name, value)
+    }
+    for (const shape of paths) {
+      const part = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+      part.setAttribute('d', shape)
+      icon.append(part)
+    }
+    button.append(icon)
+  }
   const panel = createElement('section', '', shadow, 'panel')
   const compactView = createElement('div', '', panel, 'compact-view hidden')
   const compactHeading = createElement('div', '', compactView, 'compact-heading')
@@ -1917,9 +1974,9 @@
   const callBadge = createElement('span', 'Connected', callHeadingTitle, 'call-badge')
   const callActions = createElement('div', '', callHeading, 'call-heading-actions')
   const callElapsed = createElement('span', '—', callActions, 'call-duration')
-  const callMute = createElement('button', 'Mute', callActions)
   const callHistoryButton = createElement('button', 'Call Notes', callActions)
   callHistoryButton.title = 'Open Call Notes'
+  const callMute = createElement('button', '', callActions)
   const callInformation = createElement('div', '', callView, 'call-information')
   function createCallDetail (parent, label, className) {
     const box = createElement('div', '', parent)
@@ -2030,18 +2087,21 @@
     createElement('span', label, box, 'stat-label')
     return value
   }
-  const historyToday = createHistoryStatistic('Calls taken today', 'stat-total')
-  const historyHour = createHistoryStatistic('In the last hour', '')
-  const historyLast = createHistoryStatistic('Last call detected', '')
+  const historyTotal = createHistoryStatistic('Total notes', 'notes-total')
+  const historyStudents = createHistoryStatistic('Students (predicted)', 'notes-students')
+  const historyStaff = createHistoryStatistic('Staff (predicted)', 'notes-staff')
+  const historyMissingJobs = createHistoryStatistic('Missing job numbers', 'notes-missing-jobs')
   const historySummary = createElement('div', '', historyPanel, 'history-summary')
-  const historyCount = createElement(
+  createElement(
     'span',
-    '0 calls saved this session',
+    deployment?.persistent ? 'Saved in this browser' : 'This session',
     historySummary,
     'history-session-count'
   )
   const historyResults = createElement('span', '', historySummary, 'small')
   const historyTransfer = createElement('div', '', historyPanel, 'history-transfer')
+  const historyAdd = createElement('button', '+ Add note', historyTransfer, 'primary history-add')
+  historyAdd.title = 'Add an in-person note'
   const historyImport = createElement('button', 'Import TXT', historyTransfer)
   const historyExport = createElement('button', 'Export TXT', historyTransfer)
   const historyDownload = createElement('button', 'Download TXT', historyTransfer, 'hidden')
@@ -2115,9 +2175,15 @@
     if (storageState) storageState.textContent = status === 'saved' ? 'Saved in this browser' : status === 'error' ? 'Not saved — export a backup' : 'Saving…'
   })
   const controls = createElement('div', '', footer, 'controls')
-  const muteButton = createElement('button', 'Mute', controls)
-  const historyButton = createElement('button', 'Call Notes', controls)
-  const settingsButton = createElement('button', 'Settings', controls)
+  const historyButton = createElement('button', 'Call Notes', controls, 'notes-shortcut')
+  const muteButton = createElement('button', '', controls)
+  const settingsButton = createElement('button', '', controls)
+  settingsButton.setAttribute('aria-label', 'Settings')
+  settingsButton.title = 'Assistant settings'
+  buttonIcon(settingsButton, [
+    'M9.85 4.50L10.44 2.12L13.56 2.12L14.15 4.50L15.78 5.18L17.88 3.91L20.09 6.12L18.82 8.22L19.50 9.85L21.88 10.44L21.88 13.56L19.50 14.15L18.82 15.78L20.09 17.88L17.88 20.09L15.78 18.82L14.15 19.50L13.56 21.88L10.44 21.88L9.85 19.50L8.22 18.82L6.12 20.09L3.91 17.88L5.18 15.78L4.50 14.15L2.12 13.56L2.12 10.44L4.50 9.85L5.18 8.22L3.91 6.12L6.12 3.91L8.22 5.18Z',
+    'M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0'
+  ])
   doc.body.append(host)
   let destroyed = false
   let audio = null
@@ -2136,6 +2202,8 @@
   let compactKind = ''
   let historyDuringCall = false
   const reminders = new Map()
+  const reminderLifetimes = new Map()
+  const noticeTimes = new Map()
   const reminderWidgets = new Map()
   let activeView = 'main'
   let activeReminder = null
@@ -2183,6 +2251,7 @@
   let waitingAlertSeconds = Number.isFinite(preferences.waitingAlertSeconds)
     ? settingNumber(preferences.waitingAlertSeconds, 180, 1, 3600)
     : secondsPreference('coverSeconds', 'coverMinutes', 180, 3600)
+  let notificationDisplaySeconds = settingNumber(preferences.notificationDisplaySeconds, 5, 1, 300)
   muted = preferences.muted === true
   // AudioContext uses an empty sink ID for the operating system's default device.
   let outputDeviceId =
@@ -2245,6 +2314,7 @@
           lunchMinutes,
           dispositionSeconds,
           waitingAlertSeconds,
+          notificationDisplaySeconds,
           desktopNotifications,
           muted,
           outputDeviceId,
@@ -2305,15 +2375,15 @@
     }
   }
   function renderStatistics () {
-    // Both menus read one counter; copying formatted values cannot create a second count.
-    for (const value of [callTotal, historyToday]) setText(value, String(statistics.calls.length))
+    // Observed call totals belong to the main menu; note totals have their own lifecycle.
+    setText(callTotal, String(statistics.calls.length))
     const now = Date.now()
     // A rolling hour differs from the Brisbane calendar-day total.
     const hourMilliseconds = SECONDS_PER_MINUTE * SECONDS_PER_MINUTE * MILLISECONDS_PER_SECOND
     const hourTotal = String(
       statistics.calls.filter((time) => time >= now - hourMilliseconds).length
     )
-    for (const value of [callsHour, historyHour]) setText(value, hourTotal)
+    setText(callsHour, hourTotal)
     const latest = statistics.calls.at(-1)
     const lastTime =
       latest === undefined
@@ -2323,7 +2393,7 @@
           hour: '2-digit',
           minute: '2-digit'
         })
-    for (const value of [lastCall, historyLast]) setText(value, lastTime)
+    setText(lastCall, lastTime)
   }
   function countCalls (docs) {
     const now = Date.now()
@@ -2393,6 +2463,7 @@
   let historyRenderedQuery = ''
   let editingCallId = null
   let historyEdit = null
+  let newManualRecord = null
   const historyWidgets = new Map()
   const historyDays = new Map()
   let historyEmpty = null
@@ -2444,7 +2515,7 @@
       originalId: Number.isSafeInteger(value.originalId) && value.originalId > 0
         ? value.originalId
         : value.id,
-      origin: value.origin === 'text' ? 'text' : '8x8',
+      origin: ['text', 'manual'].includes(value.origin) ? value.origin : '8x8',
       detectedAt: value.detectedAt,
       transactionId: text('transactionId', 160),
       number: readablePhone(text('number', 80)),
@@ -2789,6 +2860,8 @@
   }
   function syncHistoryEditor (record, widget) {
     const editing = historyEdit?.id === record.id
+    const adding = record === newManualRecord
+    widget.card.classList.toggle('new-note', adding)
     widget.card.classList.toggle('editing', editing)
     widget.caller.classList.toggle('hidden', editing)
     widget.input.classList.toggle('hidden', !editing)
@@ -2801,9 +2874,13 @@
     const action = editing ? 'Save call note' : 'Edit call note'
     widget.button.title = action
     widget.button.setAttribute('aria-label', `${action} for call #${record.id}`)
+    setText(widget.deleteButton, adding ? '×' : '🗑')
+    widget.deleteButton.title = adding ? 'Cancel new note' : 'Delete call note'
+    widget.deleteButton.setAttribute('aria-label', adding ? 'Cancel new note' : `Delete call note #${record.id}`)
     setText(widget.prediction, 'Caller type (prediction): ' + record.callerPrediction)
     setText(widget.notes, record.notes || '')
     setText(widget.job, record.jobNumber ? 'Job: ' + record.jobNumber : 'No job number')
+    setText(widget.savedAt, 'Saved at: ' + historyTime(record.completedAt))
     // Polling must leave the active editor's text, selection and caret untouched.
     if (!editing) {
       widget.input.value = record.caller === 'Unknown' ? '' : record.caller
@@ -2815,6 +2892,15 @@
     if (!historyEdit) return
     const id = historyEdit.id
     historyEdit = null
+    if (newManualRecord?.id === id) {
+      // Escape/Cancel removes an unsaved manual draft without touching saved notes or call guards.
+      newManualRecord = null
+      historyWidgets.get(id)?.card.remove()
+      historyWidgets.delete(id)
+      historyRevision++
+      renderHistory()
+      return
+    }
     const record = callHistory.records.find((call) => call.id === id)
     if (record) deployment?.finishEditor?.(record.recordKey, null)
     const widget = historyWidgets.get(id)
@@ -2846,13 +2932,20 @@
   }
   function saveHistoryEdit (refresh = true) {
     if (destroyed || !historyEdit) return
-    const record = callHistory.records.find((call) => call.id === historyEdit.id)
+    const adding = newManualRecord?.id === historyEdit.id
+    const record = adding ? newManualRecord : callHistory.records.find((call) => call.id === historyEdit.id)
     if (!record) return cancelHistoryEdit()
     // Autosave changes user-entered fields and the prediction, never measured timings or counters.
     record.caller = normaliseText(historyEdit.value).slice(0, 160) || 'Unknown'
     record.callerPrediction = predictCaller(record.caller)
     record.notes = cleanNotes(historyEdit.notes)
     record.jobNumber = cleanJobNumber(historyEdit.jobNumber)
+    if (adding) {
+      // A manual note joins saved records only on confirmation/autosave, never the call counter.
+      record.completedAt = Date.now()
+      callHistory.records.push(record)
+      newManualRecord = null
+    }
     historyEdit = null
     historyRevision++
     saveCallHistory()
@@ -2874,7 +2967,7 @@
     if (!inside) saveHistoryEdit()
   }
   function checkpointHistoryEdit () {
-    if (!deployment?.checkpointEditor || !historyEdit || destroyed) return
+    if (!deployment?.checkpointEditor || !historyEdit || destroyed || newManualRecord?.id === historyEdit.id) return
     const record = callHistory.records.find((call) => call.id === historyEdit.id)
     if (!record) return
     // Extension-only checkpoints survive a browser close without committing an Escape-cancellable edit.
@@ -2885,6 +2978,8 @@
     })
   }
   let lastDeletedNote = null
+  let transferMessageTimer = null
+  const NOTE_FEEDBACK_MS = 5000
   const historyUndo = createElement('button', 'Undo delete', historyTransfer, 'hidden')
   function deleteHistoryRecord (record) {
     if (destroyed || activeView !== 'history' || historyPanel.classList.contains('hidden')) return
@@ -2898,7 +2993,7 @@
     saveCallHistory()
     renderHistory()
     historyUndo.classList.remove('hidden')
-    transferMessage('Call note deleted. Undo restores it. Your call counter is unchanged.')
+    transferMessage('Call note deleted. Undo restores it.', false, NOTE_FEEDBACK_MS)
   }
   historyUndo.onclick = () => {
     if (destroyed || !lastDeletedNote) return
@@ -2911,7 +3006,46 @@
     historyRevision++
     saveCallHistory()
     renderHistory()
-    transferMessage('Call note restored.')
+    transferMessage('Call note restored.', false, NOTE_FEEDBACK_MS)
+  }
+  historyAdd.onclick = () => {
+    if (destroyed || activeView !== 'history' || historyPanel.classList.contains('hidden') || transferBusy) return
+    if (newManualRecord) {
+      historyWidgets.get(newManualRecord.id)?.input.focus?.({ preventScroll: true })
+      return
+    }
+    saveHistoryEdit(false)
+    const id = callHistory.nextId++
+    newManualRecord = {
+      id,
+      recordKey: newNoteKey(),
+      originalId: id,
+      origin: 'manual',
+      detectedAt: Date.now(),
+      completedAt: null,
+      caller: 'Unknown',
+      callerPrediction: 'Unknown',
+      notes: '',
+      jobNumber: '',
+      number: null,
+      queue: null,
+      transactionId: null,
+      channel: null,
+      channelNumber: null,
+      durationSeconds: null,
+      waitSeconds: null,
+      holdSeconds: null,
+      durationComplete: false
+    }
+    // Reserve the sequence number so a concurrent connected call cannot reuse it.
+    saveCallHistory()
+    historySearch.value = ''
+    historyPage = 0
+    historyRevision++
+    renderHistory()
+    const widget = historyWidgets.get(id)
+    beginHistoryEdit(newManualRecord, widget)
+    historyList.scrollTop = 0
   }
   const NOTE_SEPARATOR = '--------------------'
   const NOTE_DETAILS = '[Call details]'
@@ -2987,7 +3121,7 @@
       return text
     }
     if (type === 'source') {
-      if (!['8x8', 'text'].includes(value.toLowerCase())) {
+      if (!['8x8', 'text', 'manual'].includes(value.toLowerCase())) {
         throw new Error('The record source is not recognised.')
       }
       return value.toLowerCase()
@@ -3135,16 +3269,26 @@
     renderHistory()
     return { added, skipped }
   }
-  function transferMessage (message, error = false) {
+  function transferMessage (message, error = false, expireAfter = 0) {
     if (destroyed) return
+    root.clearTimeout(transferMessageTimer)
+    transferMessageTimer = null
     setText(historyTransferStatus, message)
     historyTransferStatus.setAttribute('data-error', String(error))
     historyTransferStatus.classList.remove('hidden')
+    if (expireAfter) {
+      // Replacing a confirmation cancels its old timer, so it cannot erase a newer message.
+      transferMessageTimer = root.setTimeout(() => {
+        transferMessageTimer = null
+        if (!destroyed) historyTransferStatus.classList.add('hidden')
+      }, expireAfter)
+    }
   }
   function setTransferBusy (busy) {
     transferBusy = busy
     if (destroyed) return
     historyImport.disabled = busy
+    historyAdd.disabled = busy
     historyExport.disabled = historyDownload.disabled = busy || !callHistory.records.length
   }
   function downloadCallNotes () {
@@ -3243,6 +3387,7 @@
     const heading = createElement('div', '', card, 'history-card-heading')
     const slot = createElement('div', '', heading, 'history-caller-slot')
     const caller = createElement('h4', record.caller, slot, 'history-caller')
+    if (record.origin === 'manual') createElement('span', 'In person', slot, 'history-source')
     const input = createElement('input', '', slot, 'history-edit-input hidden')
     input.type = 'text'
     input.maxLength = 160
@@ -3256,7 +3401,7 @@
       actions,
       'history-time'
     )
-    time.title = 'Call first detected at ' + historyTime(record.detectedAt)
+    time.title = (record.origin === 'manual' ? 'Note added at ' : 'Call first detected at ') + historyTime(record.detectedAt)
     const button = createElement('button', '✎', actions, 'history-edit-toggle')
     const deleteButton = createElement('button', '🗑', actions, 'history-delete')
     deleteButton.title = 'Delete call note'
@@ -3276,45 +3421,34 @@
     jobInput.autocomplete = 'off'
     jobInput.placeholder = 'e.g. INC1234567 or REQ123456'
     jobInput.setAttribute('aria-label', `Job number for call #${record.id}`)
-    const information = createElement('div', '', card, 'history-information')
-    setText(
-      createCallDetail(information, 'Phone number', 'history-number'),
-      record.number || 'Unavailable'
-    )
-    setText(createCallDetail(information, 'Queue', 'history-queue'), record.queue || 'Unavailable')
-    const timings = createElement('div', '', card, 'history-timings')
-    const duration =
+    if (record.origin !== 'manual') {
+      const information = createElement('div', '', card, 'history-information')
+      setText(
+        createCallDetail(information, 'Phone number', 'history-number'),
+        record.number || 'Unavailable'
+      )
+      setText(createCallDetail(information, 'Queue', 'history-queue'), record.queue || 'Unavailable')
+      const timings = createElement('div', '', card, 'history-timings')
+      const duration =
       record.durationSeconds === null
         ? '—'
         : (record.durationComplete ? '' : '≥ ') + callClock(record.durationSeconds)
-    createElement('span', 'Duration ' + duration, timings, 'history-duration')
-    createElement('span', 'Queue wait ' + callClock(record.waitSeconds), timings, 'history-wait')
+      createElement('span', 'Duration ' + duration, timings, 'history-duration')
+      createElement('span', 'Queue wait ' + callClock(record.waitSeconds), timings, 'history-wait')
+    }
     const details = createElement('details', '', card, 'history-extra')
     createElement('summary', 'More details', details)
     const prediction = createElement('p', '', details, 'history-prediction')
     prediction.title = 'Based on the entered name or ID; this prediction may be incorrect.'
-    createElement(
-      'p',
-      'Prediction uses the entered name or ID and may be incorrect.',
-      details,
-      'prediction-note'
-    )
     if (record.transactionId) createElement('p', 'Call reference: ' + record.transactionId, details)
     if (record.channel) createElement('p', 'Channel: ' + record.channel, details)
     if (record.channelNumber) createElement('p', 'Channel number: ' + record.channelNumber, details)
     if (record.holdSeconds !== null) {
       createElement('p', 'Hold time last read: ' + callClock(record.holdSeconds), details)
     }
-    createElement('p', 'Saved at: ' + historyTime(record.completedAt), details)
+    const savedAt = createElement('p', 'Saved at: ' + historyTime(record.completedAt), details)
     if (record.origin === 'text') createElement('p', 'Imported from a text file. Missing details remain unknown.', details)
-    if (!record.durationComplete) {
-      createElement(
-        'p',
-        'Duration shows the last time read during the call; the full duration was unavailable.',
-        details
-      )
-    }
-    const widget = { card, caller, input, button, prediction, notes, job, fields, notesInput, jobInput }
+    const widget = { card, caller, input, button, deleteButton, prediction, savedAt, notes, job, fields, notesInput, jobInput }
     button.onclick = () =>
       historyEdit?.id === record.id ? saveHistoryEdit() : beginHistoryEdit(record, widget)
     input.oninput = () => {
@@ -3329,7 +3463,7 @@
       if (!destroyed && historyEdit?.id === record.id) historyEdit.jobNumber = jobInput.value.slice(0, 80)
       checkpointHistoryEdit()
     }
-    deleteButton.onclick = () => deleteHistoryRecord(record)
+    deleteButton.onclick = () => record === newManualRecord ? cancelHistoryEdit() : deleteHistoryRecord(record)
     // Keep editing keystrokes inside the assistant instead of invoking 8x8 shortcuts.
     for (const field of [input, notesInput, jobInput]) {
       for (const event of ['keydown', 'keypress', 'keyup']) field.addEventListener(event, (e) => e.stopPropagation())
@@ -3368,13 +3502,15 @@
         readablePhone(query) && phoneDigits(call.number).includes(phoneDigits(query))
       return !query || text.includes(query) || numberMatch
     })
-    setText(
-      historyCount,
-      `${records.length} ${records.length === 1 ? 'call' : 'calls'} saved${deployment?.persistent ? ' in this browser' : ' this session'}`
-    )
+    // These totals describe every saved note, regardless of search or rendered page.
+    setText(historyTotal, String(records.length))
+    setText(historyStudents, String(records.filter((record) => record.callerPrediction === 'Student').length))
+    setText(historyStaff, String(records.filter((record) => record.callerPrediction === 'Staff').length))
+    setText(historyMissingJobs, String(records.filter((record) => !cleanJobNumber(record.jobNumber)).length))
     setText(historyResults, query ? `${filtered.length} found` : 'Newest first')
     historyExport.disabled = transferBusy || !records.length
     historyDownload.disabled = transferBusy || !records.length
+    historyAdd.disabled = transferBusy
     const pageSize = deployment?.historyPageSize || Infinity
     const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
     historyPage = Math.min(historyPage, pageCount - 1)
@@ -3386,13 +3522,22 @@
       setText(historyPageLabel, `Page ${historyPage + 1} of ${pageCount}`)
     }
     const desired = []
-    if (!filtered.length) {
+    if (newManualRecord) {
+      let widget = historyWidgets.get(newManualRecord.id)
+      if (!widget) {
+        widget = createHistoryWidget(newManualRecord)
+        historyWidgets.set(newManualRecord.id, widget)
+      }
+      syncHistoryEditor(newManualRecord, widget)
+      desired.push(widget.card)
+    }
+    if (!filtered.length && !newManualRecord) {
       if (!historyEmpty) historyEmpty = createElement('div', '', historyList, 'history-empty')
       setText(
         historyEmpty,
         query
           ? 'No matching call notes. Try another name, note or job number.'
-          : 'No call notes yet. Calls appear after Wrap up, or use Import TXT.'
+          : 'No notes yet. Calls save after Wrap up. Use Add note for an in-person visit, or Import TXT.'
       )
       desired.push(historyEmpty)
     }
@@ -3440,6 +3585,7 @@
     if (historyPager) {
       // Release cards from earlier pages instead of accumulating their detached DOM nodes.
       const visibleIds = new Set(visibleRecords.map((record) => record.id))
+      if (newManualRecord) visibleIds.add(newManualRecord.id)
       for (const id of historyWidgets.keys()) if (!visibleIds.has(id)) historyWidgets.delete(id)
     }
   }
@@ -3994,12 +4140,62 @@
     }
   }
   const sounds = new Map()
+  function startReminderLifetime (kind, soundKind = kind, preview = false) {
+    // Each episode owns a fresh deadline. A newer break or preview cannot inherit an old expiry.
+    const configuration = soundSettings[soundKind]
+    reminderLifetimes.set(kind, {
+      soundKind,
+      repeating: configuration.repeat && !preview,
+      expectedFinishAt: Date.now() + (preview ? Math.min(3, configuration.seconds) : configuration.seconds) * MILLISECONDS_PER_SECOND,
+      finishedAt: null,
+      expired: false
+    })
+  }
+  function expireNotifications () {
+    const now = Date.now()
+    const displayMs = notificationDisplaySeconds * MILLISECONDS_PER_SECOND
+    let changed = false
+    for (const [kind, lifetime] of reminderLifetimes) {
+      if (lifetime.expired || lifetime.repeating) continue
+      if (lifetime.finishedAt === null && now >= lifetime.expectedFinishAt) {
+        // Polling also enforces the wall-time deadline after browser timer throttling.
+        stopSound(kind, true)
+        lifetime.finishedAt = lifetime.expectedFinishAt
+        changed = true
+      }
+      if (lifetime.finishedAt !== null && now >= lifetime.finishedAt + displayMs) {
+        lifetime.expired = true
+        reminders.delete(kind)
+        notices.get(kind)?.close()
+        notices.delete(kind)
+        noticeTimes.delete(kind)
+        changed = true
+      }
+    }
+    for (const [kind, sentAt] of noticeTimes) {
+      const notice = notices.get(kind)
+      if (!notice) { noticeTimes.delete(kind); continue }
+      const lifetime = reminderLifetimes.get(kind)
+      // Desktop popups for ongoing repeating alerts close too; their actionable in-app
+      // card remains visible until the real condition clears. Finite popups follow the sound.
+      const finishedAt = lifetime && !lifetime.repeating
+        ? lifetime.finishedAt ?? lifetime.expectedFinishAt
+        : sentAt
+      if (now >= finishedAt + displayMs) {
+        notice.close()
+        notices.delete(kind)
+        noticeTimes.delete(kind)
+      }
+    }
+    if (changed) syncReminderBox()
+  }
   function soundPlaybackState (kind, soundKind) {
     // An active reminder can remain visible while its finite sound has ended.
     const configuration = soundSettings[soundKind]
     if (muted) return 'Sound muted'
     if (!configuration.volume) return 'Sound volume is 0%'
     if (sounds.has(kind)) return 'Sound playing'
+    if (reminderLifetimes.get(kind)?.finishedAt !== null && reminderLifetimes.has(kind)) return 'Sound finished'
     if (!audioOutputReady) return 'Connecting sound output'
     if (audio?.state !== 'running') return 'Click the page to enable sound'
     return 'Sound finished'
@@ -4123,7 +4319,7 @@
         .catch(() => {})
     }
   }
-  function stopSound (kind) {
+  function stopSound (kind, finished = false) {
     const job = sounds.get(kind)
     if (job) {
       root.clearInterval(job.interval)
@@ -4132,7 +4328,15 @@
       stopScheduledNotes(job)
       sounds.delete(kind)
     }
-    if (kind === 'preview') reminders.delete('preview')
+    const lifetime = reminderLifetimes.get(kind)
+    if (lifetime && !lifetime.repeating && (job || finished)) {
+      // An explicit stop finishes now; a natural stop retains the original finite deadline.
+      lifetime.finishedAt = finished ? lifetime.expectedFinishAt : Date.now()
+    }
+    if (kind === 'preview' && !finished) {
+      reminders.delete('preview')
+      reminderLifetimes.delete('preview')
+    }
     syncReminderBox()
   }
   function playSound (kind, preview = false) {
@@ -4159,6 +4363,7 @@
         body: `Testing your selected "${configuration.preset}" sound for this reminder.`
       })
     }
+    startReminderLifetime(key, kind, preview)
     syncReminderBox()
     const start = Date.now()
     // Previews stay short and never repeat, even when the real alert repeats forever.
@@ -4170,7 +4375,7 @@
       // Use wall time for the finite deadline so delayed timer callbacks cannot extend it.
       const remaining = endless ? Infinity : total - (Date.now() - start) / MILLISECONDS_PER_SECOND
       if (remaining <= 0) {
-        stopSound(key)
+        stopSound(key, true)
         return
       }
       for (const context of contexts) {
@@ -4216,7 +4421,10 @@
     job.interval = root.setInterval(cycle, cycleInterval)
     // A finite sound also has a hard stop independent of its repeating cycle timer.
     if (!endless) {
-      job.timeout = root.setTimeout(() => stopSound(key), total * MILLISECONDS_PER_SECOND)
+      job.timeout = root.setTimeout(() => {
+        // Ignore a delayed callback belonging to a preview/job that has since been replaced.
+        if (sounds.get(key) === job) stopSound(key, true)
+      }, total * MILLISECONDS_PER_SECOND)
     }
   }
   const saveSounds = () => {
@@ -4389,6 +4597,16 @@
     (number) => {
       waitingAlertSeconds = number
     }
+  )
+  timingSetting(
+    'Notification Display Time',
+    'How long a finished sound message stays visible before it closes. Desktop notifications also close automatically. Active repeating alerts stay visible in the assistant until their condition clears.',
+    'its-notification-display-seconds',
+    notificationDisplaySeconds,
+    1,
+    300,
+    'seconds',
+    (number) => { notificationDisplaySeconds = number }
   )
   createElement('h4', 'Audio Devices', devicesCard)
   createElement(
@@ -4811,6 +5029,7 @@
         silent: muted
       })
       notices.set('test', notice)
+      noticeTimes.set('test', Date.now())
       notice.onclick = () => {
         root.focus()
         notice.close()
@@ -4839,6 +5058,7 @@
     if (!desktopNotifications) {
       for (const notice of notices.values()) notice.close()
       notices.clear()
+      noticeTimes.clear()
     } else enableAlerts(event)
     syncNotificationTest()
   }
@@ -4862,6 +5082,7 @@
           silent: muted
         })
         notices.set(kind, notice)
+        noticeTimes.set(kind, Date.now())
         notice.ready?.catch(() => {})
         notice.onclick = () => {
           root.focus()
@@ -4876,6 +5097,7 @@
     if (destroyed) return
     // The reason remains visible even if sound is muted or desktop notifications are off.
     reminders.set(kind, { title, body })
+    startReminderLifetime(kind)
     try {
       playSound(kind)
     } catch {
@@ -4889,7 +5111,9 @@
     stopSound(kind)
     notices.get(kind)?.close()
     notices.delete(kind)
+    noticeTimes.delete(kind)
     reminders.delete(kind)
+    reminderLifetimes.delete(kind)
     syncReminderBox()
   }
   function reset (preservePersonal = false) {
@@ -4941,7 +5165,8 @@
       notify(reminder.kind, reminder.title, reminder.body)
     } else {
       activeReminder = reminder
-      reminders.set(reminder.kind, reminder)
+      // A finished finite message must not reappear on every scan of the same condition.
+      if (!reminderLifetimes.get(reminder.kind)?.expired) reminders.set(reminder.kind, reminder)
       syncReminderBox()
       // Finite sounds stay finished; repeating sounds recover after audio/output interruptions.
       if (!sounds.has(reminder.kind) && soundSettings[reminder.kind].repeat) {
@@ -5230,6 +5455,8 @@
   }
   function safeScan () {
     if (destroyed) return
+    // Message expiry continues even when 8x8's agent or queue information is unavailable.
+    expireNotifications()
     try {
       const docs = getReadableDocuments()
       // Call capture and finalisation do not require the queue or roster panels.
@@ -5263,7 +5490,11 @@
   }
   function syncMute () {
     for (const button of [muteButton, compactMute, callMute]) {
-      setText(button, muted ? 'Unmute' : 'Mute')
+      buttonIcon(button, [
+        'M11 5 6 9H3v6h3l5 4V5Z',
+        ...(muted ? ['m16 9 5 6m0-6-5 6'] : ['M15.5 8.5a5 5 0 0 1 0 7', 'M19 5a10 10 0 0 1 0 14'])
+      ])
+      button.setAttribute('aria-label', muted ? 'Unmute' : 'Mute')
       button.setAttribute('aria-pressed', String(muted))
       button.title = muted ? 'Unmute assistant sounds' : 'Mute assistant sounds'
     }
@@ -5321,11 +5552,14 @@
     root.removeEventListener?.('pagehide', saveShortBreaks)
     root.removeEventListener?.('pagehide', finaliseCallNotes)
     destroyed = true
+    root.clearTimeout(transferMessageTimer)
     root.clearInterval(interval)
     mediaDevices?.removeEventListener?.('devicechange', audioDeviceChanged)
     for (const key of [...sounds.keys()]) stopSound(key)
     for (const observer of observers.values()) observer.disconnect()
     for (const notice of notices.values()) notice.close()
+    noticeTimes.clear()
+    reminderLifetimes.clear()
     for (const pageDocument of interactionDocs) {
       pageDocument.removeEventListener('pointerdown', enableAlerts, true)
       pageDocument.removeEventListener('keydown', enableAlerts, true)

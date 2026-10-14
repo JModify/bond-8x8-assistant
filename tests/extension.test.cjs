@@ -9,7 +9,7 @@ const folder = path.join(root, 'extension')
 const read = (name) => fs.readFileSync(path.join(folder, name), 'utf8')
 const manifest = JSON.parse(read('manifest.json'))
 const clone = (value) => JSON.parse(JSON.stringify(value))
-const asFunction = (source) => source.replace(/^;\(\(\) => \{$/m, 'function startServiceDeskAssistant () {').replace(/\}\)\(\)\s*$/, '}\n')
+const { asFunction, packagedSource } = require('../scripts/extension-core.cjs')
 const compiled = read('assistant.js').replace(
   'root.__itsCallAssist = { destroy, inspect: () => lastSample }',
   'root.__itsCallAssist = { destroy, inspect: () => lastSample, rescan: safeScan, debug: () => ({ playing: [...sounds.keys()] }), exportCallNotesText }'
@@ -221,11 +221,12 @@ check('Manifest V3 runs only on the permitted top-level 8x8 host with packaged r
     assert(fs.statSync(path.join(folder, file)).size > 0)
   }
   const metadata = JSON.parse(read('core-info.json'))
-  const core = fs.readFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'), 'utf8')
+  const core = packagedSource(read('assistant.js'))
   assert(read('assistant.js').includes(asFunction(core)))
   assert.equal(metadata.coreSha256, crypto.createHash('sha256').update(core).digest('hex'))
   assert.equal(metadata.extensionVersion, manifest.version)
-  assert.equal(metadata.coreVersion, fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim())
+  assert(core.includes('v' + metadata.coreVersion))
+  assert.equal(read('assistant.js'), fs.readFileSync(path.join(root, 'releases', 'edge-extension', manifest.version, 'extension', 'assistant.js'), 'utf8'))
   assert(!/\beval\s*\(|\bnew Function\b|https?:\/\//.test(read('popup.html')))
   assert(!/<script[^>]*>\s*[^<\s]/.test(read('popup.html')))
 })
@@ -736,11 +737,11 @@ check('The deterministic builder accepts HTTPS update configuration and rejects 
         : fs.readFileSync(file, encoding),
       writeFileSync: (file, content) => written.set(file, content)
     }
-    const context = { require: (name) => name === 'node:fs' ? fakeFS : require(name), __dirname: path.join(root, 'scripts'), process: { argv: [], env: {} }, console: { log () {} }, URL }
+    const context = { require: (name) => name === 'node:fs' ? fakeFS : name === './extension-core.cjs' ? require('../scripts/extension-core.cjs') : require(name), __dirname: path.join(root, 'scripts'), process: { argv: [], env: {} }, console: { log () {} }, URL }
     if (updateUrl.startsWith('https:')) {
       vm.runInNewContext(builder, context)
       assert.equal(JSON.parse(written.get(path.join(folder, 'manifest.json'))).update_url, updateUrl)
-      assert(written.get(path.join(folder, 'assistant.js')).includes(asFunction(fs.readFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'), 'utf8'))))
+      assert(written.get(path.join(folder, 'assistant.js')).includes(asFunction(packagedSource(read('assistant.js')))))
     } else assert.throws(() => vm.runInNewContext(builder, context), /HTTPS/)
   }
 })

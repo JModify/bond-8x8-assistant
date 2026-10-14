@@ -202,6 +202,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
   const document = {
     listeners: new Map(),
     createElement: (tag) => new Node(tag),
+    createElementNS: (_namespace, tag) => new Node(tag),
     createTextNode: (t) => new Node('#text', t),
     querySelectorAll: (s) => document.body.querySelectorAll(s),
     addEventListener: (name, listener) => {
@@ -463,6 +464,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       inspect: () => lastSample,
       debug: () => ({
         activeReminder,
+        reminderLifetimes: [...reminderLifetimes].map(([key, value]) => [key, { ...value }]),
         playing: [...sounds.keys()],
         muted,
         audioOutput: audio?.sinkId,
@@ -767,10 +769,10 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     },
     debug: () => window.__itsCallAssist.debug(),
     checkbox: (name) => ui().querySelector(`[aria-label="G1: ${name}"]`),
-    button: (name) =>
-      ui()
-        .querySelectorAll('button')
-        .find((n) => n.textContent === name),
+    button: (name) => {
+      const buttons = ui().querySelectorAll('button')
+      return buttons.find((n) => n.getAttribute('aria-label') === name) || buttons.find((n) => n.textContent === name)
+    },
     waiting,
     tick: (name, value) => {
       const b = ui().querySelector(`[aria-label="G1: ${name}"]`)
@@ -1077,17 +1079,17 @@ check('A hidden roster freezes agent data while Settings stays accessible and re
 })
 
 check(
-  'Release reports version 1.1.5 and bottom controls are Mute, Call Notes and Settings',
+  'Release reports version 1.1.6 and bottom controls put Call Notes before accessible mute and settings icons',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.1.5')
+    assert.equal(e.window.__itsCallAssist.version, '1.1.6')
     assert.deepEqual(
       e
         .ui()
         .querySelector('.controls')
         .querySelectorAll('button')
-        .map((b) => b.textContent),
-      ['Mute', 'Call Notes', 'Settings']
+        .map((b) => b.getAttribute('aria-label') || b.textContent),
+      ['Call Notes', 'Mute', 'Settings']
     )
     assert.deepEqual(
       e
@@ -1099,10 +1101,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.1.5'
+      '1.1.6'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.5'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.6'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -2448,8 +2450,8 @@ check(
         .ui()
         .querySelector('.controls')
         .querySelectorAll('button')
-        .map((b) => b.textContent),
-      ['Unmute', 'Call Notes', 'Settings']
+        .map((b) => b.getAttribute('aria-label') || b.textContent),
+      ['Call Notes', 'Unmute', 'Settings']
     )
   }
 )
@@ -3868,7 +3870,7 @@ check('Ambiguous visible phone cards cannot create or finalise an arbitrary call
   assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
 })
 check(
-  'History menu is separate, shows statistics from the same counter and returns to the main menu',
+  'Call Notes is separate, shows note totals instead of observed call statistics and returns to main',
   () => {
     const e = environment()
     e.showCall()
@@ -3879,20 +3881,15 @@ check(
     assert(!e.ui().querySelector('.call-history').classList.contains('hidden'))
     assert(e.ui().querySelector('.main-view').classList.contains('hidden'))
     assert(e.ui().querySelector('.panel').classList.contains('history-panel'))
-    const main = e
-      .ui()
-      .querySelector('.statistics')
-      .querySelectorAll('.stat-value')
-      .map((n) => n.textContent)
     const history = e
       .ui()
       .querySelector('.history-statistics')
       .querySelectorAll('.stat-value')
       .map((n) => n.textContent)
-    assert.deepEqual(history, main)
+    assert.deepEqual(history, ['1', '0', '1', '1'])
     assert.equal(
       e.ui().querySelector('.history-session-count').textContent,
-      '1 call saved this session'
+      'This session'
     )
     assert.equal(e.ui().querySelector('.history-caller').textContent, 'Alex')
     e.ui().querySelector('.call-history').querySelector('button').onclick()
@@ -3983,14 +3980,14 @@ check('Midnight resets daily statistics while the session history keeps complete
   assert(e.ui().querySelector('.history-day').textContent.includes('13 Oct 2026'))
   assert.equal(
     e.ui().querySelector('.history-statistics').querySelector('.stat-value').textContent,
-    '0'
+    '1'
   )
 })
 check('Muted calls still record identifiers and history independently of every sound', () => {
   const e = environment({ muted: true, g1: [] })
   e.showCall()
   e.caller('Alex')
-  assert.equal(e.ui().querySelector('.call-heading').querySelector('button').textContent, 'Unmute')
+  assert(e.ui().querySelector('.call-heading').querySelector('[aria-label="Unmute"]'))
   e.showWrapUp(120, { seconds: 20 })
   assert.equal(e.window.__itsCallAssist.callHistorySession().records[0].caller, 'Alex')
   assert.equal(e.debug().playing.length, 0)
@@ -4186,9 +4183,8 @@ check(
         'Caller type (prediction): ' + expected
       )
     })
-    assert(
-      historyCard(e).querySelector('.prediction-note').textContent.includes('may be incorrect')
-    )
+    assert.equal(historyCard(e).querySelector('.prediction-note'), null)
+    assert(historyCard(e).querySelector('.history-prediction').title.includes('prediction'))
   }
 )
 check('The pen becomes a tick and saves only the identifier and updated prediction', () => {
@@ -5165,7 +5161,8 @@ check('Sound Settings and manual previews remain usable while monitoring lacks a
   preview.onclick()
   assert(e.debug().playing.includes('preview'))
   e.scan()
-  assert(e.debug().playing.includes('preview'))
+  assert(!e.debug().playing.includes('preview'))
+  assert(e.ui().querySelector('[data-kind="preview"]').textContent.includes('Sound finished'))
   assert.equal(e.notifications.length, 0)
   e.button('Stop preview').onclick()
   assert(!e.debug().playing.includes('preview'))
@@ -5202,7 +5199,7 @@ check('Unreadable own timers freeze the table but readable Busy transitions keep
   assert.deepEqual(agentSnapshot(e), snapshot)
   assert.equal(e.window.__itsCallAssist.statistics().total, 1)
   e.button('Call Notes').onclick()
-  assert.equal(e.ui().querySelector('.history-statistics').querySelector('.stat-total').textContent, '1')
+  assert.equal(e.ui().querySelector('.history-statistics').querySelector('.notes-total').textContent, '0')
   e.meStatus.setAttribute('data-status-value', 'Available')
   e.scan()
   e.meStatus.setAttribute('data-status-value', 'Busy')
