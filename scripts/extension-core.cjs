@@ -1,4 +1,4 @@
-/* Keep script releases independent from the core frozen into a released extension. */
+/* Keep prototype releases independent from the core frozen into a released extension. */
 const HEADER = '/* Generated from Service-Desk-8x8-Assistant.js. Run npm run build:extension. */\n'
 const STARTUP = `
 ;(() => {

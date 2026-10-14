@@ -1,11 +1,11 @@
-/* v1.1.6 scenarios run separately to keep simulated browser contexts bounded. */
+/* Prototype feature scenarios run separately to keep simulated browser contexts bounded. */
 const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 const assert = require('node:assert/strict')
 const fixture = fs.readFileSync(path.join(__dirname, 'assistant.test.cjs'), 'utf8')
 const context = vm.createContext({ require, __dirname, console, Blob, TextDecoder })
-// Run the shared 8x8 fixture definitions, including the production script, without the baseline list.
+// Run the shared 8x8 fixture definitions, including the prototype, without the baseline list.
 vm.runInContext(fixture.slice(0, fixture.indexOf("check('Me is selectable")) + '\nglobalThis.environment = environment', context)
 const environment = context.environment
 const checks = []
@@ -391,5 +391,5 @@ asyncCheck('A desktop notification test closes after the configured time even th
     passed++
     console.log('PASS:', name)
   }
-  console.log(`${passed} v1.1.6 scenarios passed.`)
+  console.log(`${passed} prototype feature scenarios passed.`)
 })().catch((error) => { console.error(error); process.exitCode = 1 })

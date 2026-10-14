@@ -1,15 +1,17 @@
-# Service Desk 8x8 Assistant
+# Service Desk 8x8 Assistant — Prototype
 
 See phone coverage, keep call notes and get reminders to finish wrap-up or return from lunch.
 
-**Author:** Joshua Lavagna-Slater · **Script version:** 1.1.6
+This is a **JavaScript prototype** that runs in your 8x8 page. The goal is an **organisation-approved Microsoft Edge extension** built into the browser. The extension package in this repository is for development and testing; it is not an approved deployment.
 
-[Assistant code](Service-Desk-8x8-Assistant.js) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
+**Author:** Joshua Lavagna-Slater · **Prototype version:** 1.1.7
 
-## Setup
+[Prototype code](Service-Desk-8x8-Assistant.js) · [Download release](https://github.com/JModify/bond-8x8-assistant/releases/tag/v1.1.7) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
+
+## Prototype setup
 
 1. Open your logged-in 8x8 page in **Microsoft Edge**.
-2. Open the [assistant code](Service-Desk-8x8-Assistant.js), select **Raw**, then copy the whole file.
+2. Open the [prototype code](Service-Desk-8x8-Assistant.js), select **Raw**, then copy the whole file.
 3. Press **Ctrl+Shift+i** → **Sources → Click "»" icon → Snippets → New snippet**. Name it **8x8 Assistant**, paste the code and press **Ctrl+S**, then **Ctrl+Enter**.
 4. Open 8x8's **queue information** using the button to the right of your status, next to the bell icon.
 
@@ -23,7 +25,7 @@ See phone coverage, keep call notes and get reminders to finish wrap-up or retur
 | --- | --- |
 | <a href="docs/images/filter-group.png"><img src="docs/images/filter-group.png" width="215" alt="8x8 group filter with ITS selected and favorite-only filtering off"></a> | <a href="docs/images/filter-user-status.png"><img src="docs/images/filter-user-status.png" width="215" alt="8x8 user status filter with every status selected"></a> |
 
-After refreshing or reopening 8x8, run your saved snippet again with **Ctrl+Enter**.
+After refreshing or reopening 8x8, run the prototype from your saved snippet again with **Ctrl+Enter**.
 
 ## Assistant views
 

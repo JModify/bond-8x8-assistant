@@ -454,7 +454,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     }
   }
   // Add test-only entry points inside the running closure without publishing
-  // debug controls in the real snippet. Whitespace changes must remain harmless.
+  // debug controls in the real prototype. Whitespace changes must remain harmless.
   const controllerPattern =
     /root\.__itsCallAssist = \{\s*destroy,\s*inspect:\s*\(\) => lastSample\s*\}[ \t]*;?/
   const source = original.replace(
@@ -1079,10 +1079,10 @@ check('A hidden roster freezes agent data while Settings stays accessible and re
 })
 
 check(
-  'Release reports version 1.1.6 and bottom controls put Call Notes before accessible mute and settings icons',
+  'Prototype reports version 1.1.7 and bottom controls put Call Notes before accessible mute and settings icons',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.1.6')
+    assert.equal(e.window.__itsCallAssist.version, '1.1.7')
     assert.deepEqual(
       e
         .ui()
@@ -1101,10 +1101,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.1.6'
+      '1.1.7'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.6'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.1.7'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -1181,7 +1181,7 @@ check('A Busy timer reset alone is not counted as another call', () => {
   assert.equal(e.window.__itsCallAssist.statistics().total, 1)
 })
 check(
-  'Rerunning the snippet keeps daily statistics without duplicating an ongoing Busy period',
+  'Rerunning the prototype keeps daily statistics without duplicating an ongoing Busy period',
   () => {
     const e = environment()
     e.setMe('Busy', 0)
@@ -3780,7 +3780,7 @@ check(
   }
 )
 check(
-  'Blocked session storage keeps call history usable and preserves a draft on snippet rerun',
+  'Blocked session storage keeps call history usable and preserves a draft on prototype rerun',
   () => {
     const e = environment({}, {}, { blockSessionStorage: true })
     e.showCall()
@@ -4388,7 +4388,7 @@ check('A rerun or refresh finalises the active saved-record editor', () => {
   }
 })
 check(
-  'Blocked session storage retains confirmed history edits in memory through a snippet rerun',
+  'Blocked session storage retains confirmed history edits in memory through a prototype rerun',
   () => {
     const e = environment({ g1: [] }, {}, { blockSessionStorage: true })
     e.showCall()

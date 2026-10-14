@@ -1,0 +1,33 @@
+name: Publish prototype v1.1.7
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - releases/1.1.7/Service-Desk-8x8-Assistant.js
+
+# One-off v1.1.7 publication. No manual trigger or path for any later release.
+permissions:
+  contents: write
+
+concurrency:
+  group: prototype-1.1.7-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      # GitHub CLI and Node are already installed on the hosted runner. No extra actions or packages.
+      - name: Read the exact release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$GH_REPO/tarball/$GITHUB_SHA" > "$RUNNER_TEMP/prototype.tar.gz"
+          tar -xzf "$RUNNER_TEMP/prototype.tar.gz" --strip-components=1
+      - name: Publish verified prototype and download
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/publish-prototype-release.cjs

@@ -1,5 +1,7 @@
-/* Service Desk 8x8 Assistant — v1.1.6
+/* Service Desk 8x8 Assistant — Prototype v1.1.7
  * Author: Joshua Lavagna-Slater
+ * JavaScript prototype for an organisation-approved Microsoft Edge extension.
+ * The standalone prototype runs in the page; the extension is a separate build.
  * Run in the existing logged-in 8x8 tab: DevTools > Sources > Snippets >
  * New snippet. Paste this entire file, then press Ctrl+Enter.
  * Open queue information using the button to the right of your status,
@@ -40,16 +42,16 @@
     // The browser denies access to a cross-origin top page; use this window.
   }
   if (root.location.hostname !== 'vcc-au2.8x8.com') {
-    throw new Error('Run this snippet in your existing vcc-au2.8x8.com tab.')
+    throw new Error('Run this prototype in your existing vcc-au2.8x8.com tab.')
   }
   // The packaged extension supplies hydrated, private storage and notification adapters.
-  // Ordinary snippets retain their existing page/session behaviour without changing 8x8 storage.
+  // The standalone prototype retains page/session behaviour without changing 8x8 storage.
   const deployment = root.__itsCallAssistRuntime || null
   const settingsStorage = deployment?.settingsStorage || root.localStorage
   const historyStorage = deployment?.historyStorage || root.sessionStorage
   // Resolve the browser API at use time so permission/support changes remain observable.
   const notificationClass = () => deployment?.Notification || root.Notification
-  // Carry an ongoing disposition timer across a snippet restart, then remove
+  // Carry an ongoing disposition timer across a prototype restart, then remove
   // the previous assistant's observers, audio and panel before starting again.
   const resumedWrapUp = root.__itsCallAssist?.wrapUpSession?.()
   // Session storage normally handles restarts; this copy also supports blocked storage.
@@ -58,7 +60,7 @@
   const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
   root.__itsCallAssist?.destroy()
   const doc = root.document
-  const VERSION = deployment?.version || '1.1.6'
+  const VERSION = deployment?.version || '1.1.7'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -592,6 +594,7 @@
   // Keep assistant styles inside its shadow root so the 8x8 controls are unaffected.
   style.textContent = `
     :host {
+      --assistant-button-height: 32px;
       font:
         13px/1.45 system-ui,
         sans-serif;
@@ -1325,6 +1328,7 @@
     }
     .call-heading-actions button {
       margin: 0;
+      height: var(--assistant-button-height);
       font-size: 10px;
       padding: 3px 6px;
     }
@@ -1487,23 +1491,23 @@
     }
     .history-card.new-note { border-style: dashed; }
     .controls { display: flex; align-items: center; gap: 6px; }
-    .controls button { margin: 0; }
+    .controls button { height: var(--assistant-button-height); margin: 0; }
     .controls .notes-shortcut { margin-right: 6px; }
     button.icon-button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       width: 32px;
-      height: 32px;
+      height: var(--assistant-button-height);
       padding: 6px;
       margin: 0;
       flex-shrink: 0;
     }
     .button-icon { width: 19px; height: 19px; pointer-events: none; }
     .icon-button[aria-pressed="true"] {
-      color: #a95005;
-      background: #fff0dc;
-      border-color: #e4c393;
+      color: #b42332;
+      background: #fff0f1;
+      border-color: #e5a8ae;
     }
     .history-summary {
       display: flex;
@@ -2611,7 +2615,7 @@
       }
     }
   }
-  // A blocked-storage upgrade from an older running snippet still needs the new guard ledger.
+  // A blocked-storage upgrade from an older running prototype still needs the new guard ledger.
   if (!Array.isArray(callHistory.completedTransactions)) {
     callHistory.completedTransactions = callHistory.records.map((call) => call.transactionId).filter(Boolean)
   }

@@ -10,7 +10,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(folder, 'manifest.json'), 
 const config = JSON.parse(fs.readFileSync(path.join(folder, 'update-config.json'), 'utf8'))
 const previous = JSON.parse(fs.readFileSync(path.join(folder, 'core-info.json'), 'utf8'))
 const refreshCore = process.argv.includes('--refresh-core')
-// Ordinary script releases must not silently ship a new extension under its old version.
+// Prototype releases must not silently ship a new extension under its old version.
 const source = refreshCore
   ? fs.readFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'), 'utf8')
   : packagedSource(fs.readFileSync(path.join(folder, 'assistant.js'), 'utf8'))

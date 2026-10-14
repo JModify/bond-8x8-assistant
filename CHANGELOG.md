@@ -1,5 +1,15 @@
 # Changelog
 
+The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
+
+## 1.1.7 (Prototype) — 2026-10-14
+
+- Aligned Call Notes, mute and Settings buttons to a shared 32-pixel height. The on-call shortcut uses the same height as its speaker icon.
+- Changed muted speaker icons to red with a matching pale-red background and border. Accessible Mute/Unmute names, tooltips and behaviour remain intact.
+- Renamed the standalone assistant to **Prototype** in the current source, README, technical guide, package description and development workflow. Made the goal of an organisation-approved Microsoft Edge extension clear, while identifying the existing extension package as development/testing only. Kept all historical snapshots, redacted images and extension 1.0.0 files unchanged.
+- Added a one-off main-branch workflow, limited to the explicitly requested 1.1.7 snapshot, to publish **Service Desk 8x8 Assistant - Prototype**, tag `v1.1.7`, and a versioned JavaScript download. The publisher rejects later versions and has no manual trigger. Publication checks exact source/snapshot bytes, version metadata, the target commit and uploaded checksum before leaving draft state; retries never overwrite a tag or asset.
+- Validation: JavaScript syntax and Standard Style, 250 baseline prototype scenarios, 21 prototype feature scenarios, 29 unchanged-extension scenarios and 11 offline release scenarios (311 total). UI sizing was checked in the styles; live Edge rendering was not available here.
+
 ## 1.1.6 (Script) — 2026-10-14
 
 - Added **+ Add note** to Call Notes for in-person visits. Manual entries use the existing name/ID, multiline notes and job-number editor, show an In person badge and omit unavailable phone details. The tick, clicking away, Back and navigation save; Escape/Cancel discards a new draft. Manual notes survive session restoration and TXT round trips without affecting call counters or capture guards.
