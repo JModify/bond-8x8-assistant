@@ -4,9 +4,9 @@ See phone coverage, keep call notes and get reminders to finish wrap-up or retur
 
 This is a **JavaScript prototype** that runs in your 8x8 page.
 
-**Author:** Joshua Lavagna-Slater · **Prototype version:** 1.1.7
+**Author:** Joshua Lavagna-Slater · **Prototype version:** 1.2.0
 
-[Prototype code](Service-Desk-8x8-Assistant.js) · [Download release](https://github.com/JModify/bond-8x8-assistant/releases/tag/v1.1.7) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
+[Prototype code](Service-Desk-8x8-Assistant.js) · [Download release](https://github.com/JModify/bond-8x8-assistant/releases/tag/v1.2.0) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
 
 ## Future direction
 
@@ -44,6 +44,8 @@ The extension package is currently for development and testing, pending approval
 
 After refreshing or reopening 8x8, run the prototype from your saved snippet again with **Ctrl+Enter**.
 
+**Optional auto-save:** open **Settings → Data location → Choose data file**, choose a TXT file and allow access. Call Notes restore when the prototype starts. Use **Reconnect** if Edge asks for access again.
+
 ## Assistant views
 
 The view changes automatically as you take calls, wrap up or go on break. Click an image to enlarge it. Example images show v1.1.3 with personal details blacked out.
@@ -59,9 +61,10 @@ The view changes automatically as you take calls, wrap up or go on break. Click 
 
 ## Controls and customisation
 
+- **Resize:** drag the assistant’s top-left corner. Double-click it to restore the default size.
 - **Speaker icon:** mute or unmute sounds while monitoring and counting continue. **Call Notes** sits to the left of the icons.
 - **Call Notes → Export TXT / Import TXT:** save a readable Notepad file or bring saved notes back. Export lets you choose a location where Edge allows it; otherwise it downloads the file. Import adds notes and skips records already present.
-- **Gear icon → Settings:** change lunch length, reminder delays, notification display time and desktop notifications.
+- **Gear icon → Settings:** choose a data file, change lunch length, reminder delays and notifications.
 - **Sound Settings:** choose sounds, volume, duration, repeat and per-sound notifications. Select an output device or enable **Secondary Ringer** for a second device.
 - **– / ×:** minimise or close the assistant. It never changes your status or answers calls for you.
 
@@ -69,5 +72,6 @@ The view changes automatically as you take calls, wrap up or go on break. Click 
 
 - **Agent information frozen:** open 8x8 queue information and check the setup filters. Last-read statuses and times stay visible until live data returns. **Call Notes** and settings remain available.
 - **Queue data unavailable:** scroll back to the three monitored queues for live waiting counts.
-- Keep 8x8 open. The counter can miss calls when the assistant is unavailable. Export Call Notes before ending your tab session. Importing or deleting notes does not change the call counter.
+- Keep 8x8 open. The counter can miss calls when the assistant is unavailable. Connect a data file or export Call Notes before ending your tab session. A crash or power loss can interrupt the latest save.
+- **Data file needs attention:** open Settings to reconnect or choose another file. Recovered unfinished notes have a **Recovered** label. Importing or deleting notes does not change the call counter.
 - For notification setup and detailed behaviour, see the [technical guide](TECHNICAL.md).

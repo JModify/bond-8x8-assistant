@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.1.7
+/* Service Desk 8x8 Assistant — Prototype v1.2.0
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -29,7 +29,9 @@
  * Optional caller identifiers and notes are saved at Wrap up.
  * Add in-person notes manually; Call Notes totals describe saved notes, not observed calls.
  * Finished reminder messages close after the configured notification display time.
- * Call Notes stays in this tab's session unless you choose to export a local TXT file.
+ * Drag the top-left corner to resize; double-click it to reset.
+ * Call Notes uses this tab's session and an optional chosen Data location TXT file.
+ * Auto-save needs file permission; crashes/power loss cannot guarantee a final save.
  */
 ;(() => {
   'use strict'
@@ -57,10 +59,15 @@
   // Session storage normally handles restarts; this copy also supports blocked storage.
   // Finish a saved-record editor before taking the blocked-storage restart snapshot.
   root.__itsCallAssist?.finaliseCallNotes?.()
-  const resumedCallHistory = root.__itsCallAssist?.callHistorySession?.()
-  root.__itsCallAssist?.destroy()
+  const priorFileHandoff = root.__itsCallAssistDataShutdown
+  let previousDataSource = root.__itsCallAssist?.dataFileSession ||
+    (typeof priorFileHandoff?.session === 'function' ? priorFileHandoff.session : () => priorFileHandoff?.session)
+  const resumedDataFile = previousDataSource?.()
+  const previousAssistant = root.__itsCallAssist
+  const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
+  const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.1.7'
+  const VERSION = deployment?.version || '1.2.0'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -614,6 +621,64 @@
       box-shadow: 0 8px 35px #0004;
       padding: 16px;
     }
+    .resize-handle {
+      position: absolute;
+      top: -6px;
+      left: -6px;
+      width: 24px;
+      height: 24px;
+      padding: 3px;
+      margin: 0;
+      z-index: 3;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: #f2f7ff;
+      color: #31577e;
+      opacity: 0;
+      cursor: nwse-resize;
+      touch-action: none;
+    }
+    :host(:hover) .resize-handle,
+    .resize-handle:focus-visible,
+    .resize-handle.resizing { opacity: 1; }
+    .panel.resized { display: flex; flex-direction: column; max-height: calc(100dvh - 36px); overflow: hidden; }
+    .resized .main-view { flex: 1 1 auto; min-height: 0; }
+    .resized .main-content { flex: 1 1 auto; min-height: 0; }
+    .resized.main-panel .agents { flex: 1 1 auto; max-height: none; min-height: 50px; }
+    .resized .menu-view:not(.hidden),
+    .resized .call-view:not(.hidden) { flex: 1 1 auto; min-height: 0; overflow: auto; max-height: none; }
+    .resized .call-history:not(.hidden) { display: flex; flex-direction: column; }
+    .resized .call-history > :not(.history-list) { flex-shrink: 0; }
+    .resized .history-list { flex: 1 1 auto; min-height: 80px; max-height: none; }
+    .resized .assistant-bottom { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .resized .current-reminders { flex: 0 1 auto; min-height: 0; overflow: auto; }
+    .resized .footer { flex-shrink: 0; }
+    .data-file-status {
+      display: block;
+      width: 100%;
+      margin: 6px 0 0;
+      padding: 5px 8px;
+      text-align: left;
+      font-size: 11px;
+      color: #276451;
+      background: #edf7f2;
+      border-color: #c4dfd2;
+      flex-shrink: 0;
+    }
+    .data-file-status[data-attention="true"] { color: #8a4a12; background: #fff4e5; border-color: #e7c89e; }
+    button[data-file-attention="true"] { position: relative; }
+    button[data-file-attention="true"]::after {
+      content: '';
+      position: absolute;
+      right: 1px;
+      top: 1px;
+      width: 7px;
+      height: 7px;
+      background: #b42332;
+      border: 1px solid #fff;
+      border-radius: 50%;
+    }
+    .data-location-status { white-space: pre-line; overflow-wrap: anywhere; }
     .panel.main-panel {
       display: flex;
       flex-direction: column;
@@ -2152,6 +2217,8 @@
   createElement('p', 'Open 8x8 queue information for live updates.', dataWarning)
   const dataLastRead = createElement('p', '', dataWarning, 'data-last-read')
   const bottom = createElement('div', '', panel, 'assistant-bottom')
+  const dataFileStatus = createElement('button', '', bottom, 'data-file-status hidden')
+  dataFileStatus.title = 'Open Data location settings'
   const banner = createElement('div', '', bottom, 'alert current-reminders hidden')
   banner.setAttribute('role', 'region')
   banner.setAttribute('aria-label', 'Current assistant reminders')
@@ -2190,6 +2257,8 @@
   ])
   doc.body.append(host)
   let destroyed = false
+  let windowResizer = null
+  let automaticData = null
   let audio = null
   let secondaryAudio = null
   let secondaryOutputReady = false
@@ -2279,6 +2348,22 @@
     'settings-description'
   )
   createElement('button', 'Open Sound Settings', soundsCard).onclick = () => openView('sounds')
+  const dataLocation = createElement('div', '', settingsPanel, 'settings-card data-location')
+  createElement('h4', 'Data location', dataLocation)
+  createElement('p', 'Choose a text file for automatic saving and restoring of Call Notes. Changes save while the assistant is open, with another save attempted when you leave.', dataLocation, 'settings-description')
+  const dataLocationInfo = createElement('p', 'No data file selected.', dataLocation, 'settings-description data-location-status')
+  dataLocationInfo.setAttribute('role', 'status')
+  const dataChoose = createElement('button', 'Choose data file', dataLocation)
+  const dataReconnect = createElement('button', 'Reconnect', dataLocation, 'hidden')
+  const dataSave = createElement('button', 'Save now', dataLocation, 'hidden')
+  const dataDisconnect = createElement('button', 'Disconnect', dataLocation, 'hidden')
+  createElement('p', 'Use Edge’s file picker to choose the folder. Edge may ask for access again after reopening. A crash or power loss can interrupt the latest save.', dataLocation, 'settings-description')
+  dataChoose.disabled = !!deployment || typeof root.showSaveFilePicker !== 'function'
+  if (dataChoose.disabled) {
+    dataLocationInfo.textContent = deployment
+      ? 'The extension already saves Call Notes in this browser.'
+      : 'Automatic file access is unavailable here. You can still use Export TXT and Import TXT.'
+  }
   const lunchPanel = createElement('div', '', settingsPanel, 'settings-card lunch-settings')
   createElement('h4', 'Lunch Break Length', lunchPanel)
   createElement(
@@ -2468,6 +2553,9 @@
   let editingCallId = null
   let historyEdit = null
   let newManualRecord = null
+  const touchedCallFields = new Map((Array.isArray(resumedDataFile?.touched) ? resumedDataFile.touched : [])
+    .filter(([id, fields]) => Number.isSafeInteger(id) && Array.isArray(fields))
+    .map(([id, fields]) => [id, new Set(fields.filter((key) => ['callerInput', 'notesInput'].includes(key)))]))
   const historyWidgets = new Map()
   const historyDays = new Map()
   let historyEmpty = null
@@ -2530,6 +2618,7 @@
       waitSeconds: seconds('waitSeconds'),
       holdSeconds: seconds('holdSeconds')
     }
+    if (value.recovered === true) call.recovered = true
     if (pending) {
       call.callerInput =
         typeof value.callerInput === 'string' ? value.callerInput.slice(0, 160) : ''
@@ -2633,13 +2722,14 @@
     record.origin ||= '8x8'
   }
   function saveCallHistory () {
+    automaticData?.changed()
     try {
       if (deployment?.saveHistory) {
         // Extension storage writes changing drafts separately from durable completed records.
         deployment.saveHistory(callHistory, historyRevision)
         return
       }
-      // Caller details stay in this tab's session; never put them in durable shared preferences.
+      // Keep the tab copy separate from preferences; the optional file writer runs independently.
       historyStorage?.setItem(CALL_HISTORY_KEY, JSON.stringify(callHistory))
     } catch {
       // History and draft editing remain usable in memory when storage is blocked or full.
@@ -2739,6 +2829,7 @@
     }
     delete record.callerInput
     delete record.notesInput
+    delete record.recovered
     callHistory.records.push(record)
     callHistory.closedId = record.id
     callHistory.closedCall = { id: record.id, transactionId: record.transactionId, number: record.number }
@@ -2896,6 +2987,7 @@
     if (!historyEdit) return
     const id = historyEdit.id
     historyEdit = null
+    automaticData?.changed()
     if (newManualRecord?.id === id) {
       // Escape/Cancel removes an unsaved manual draft without touching saved notes or call guards.
       newManualRecord = null
@@ -2944,6 +3036,9 @@
     record.callerPrediction = predictCaller(record.caller)
     record.notes = cleanNotes(historyEdit.notes)
     record.jobNumber = cleanJobNumber(historyEdit.jobNumber)
+    if (record.recovered) {
+      record.completedAt ??= Date.now()
+    }
     if (adding) {
       // A manual note joins saved records only on confirmation/autosave, never the call counter.
       record.completedAt = Date.now()
@@ -2971,6 +3066,7 @@
     if (!inside) saveHistoryEdit()
   }
   function checkpointHistoryEdit () {
+    automaticData?.changed()
     if (!deployment?.checkpointEditor || !historyEdit || destroyed || newManualRecord?.id === historyEdit.id) return
     const record = callHistory.records.find((call) => call.id === historyEdit.id)
     if (!record) return
@@ -3068,7 +3164,8 @@
     ['Duration seconds', 'durationSeconds', 'seconds'],
     ['Queue wait seconds', 'waitSeconds', 'seconds'],
     ['Last hold segment seconds', 'holdSeconds', 'seconds'],
-    ['Full duration recorded', 'durationComplete', 'boolean']
+    ['Full duration recorded', 'durationComplete', 'boolean'],
+    ['Recovered draft', 'recovered', 'boolean']
   ]
   const isNoteSeparator = (line) => /^\s*-{20,}\s*$/.test(line)
   function escapedNoteLine (line) {
@@ -3085,14 +3182,14 @@
       ? remainder
       : line
   }
-  function exportCallNotesText () {
+  function exportCallNotesText (entries = callHistory.records) {
     // Export every saved record, regardless of the search filter; unfinished calls remain drafts.
     const lines = [
       'Service Desk 8x8 Assistant — Call Notes (TXT v1)',
       'Exported: ' + new Date().toISOString(),
       NOTE_SEPARATOR
     ]
-    const records = [...callHistory.records].sort(
+    const records = [...entries].sort(
       (a, b) => (a.detectedAt ?? -Infinity) - (b.detectedAt ?? -Infinity) || a.id - b.id
     )
     for (const record of records) {
@@ -3205,7 +3302,7 @@
     record.originalId = fields.originalId || null
     return record
   }
-  function parseCallNotesText (text) {
+  function parseCallNotesText (text, allowEmpty = false) {
     if (typeof text !== 'string' || text.length > MAX_IMPORT_BYTES) {
       throw new Error('Choose a text file no larger than 5 MB.')
     }
@@ -3229,7 +3326,7 @@
     }
     if (blocks.length > MAX_IMPORT_RECORDS) throw new Error('Import up to 2,000 records at a time.')
     const records = blocks.map(readTextNote).filter(Boolean)
-    if (!records.length) throw new Error('No call notes were found in the selected file.')
+    if (!records.length && !allowEmpty) throw new Error('No call notes were found in the selected file.')
     return records
   }
   function legacyNoteSignature (record) {
@@ -3273,7 +3370,7 @@
     renderHistory()
     return { added, skipped }
   }
-  function transferMessage (message, error = false, expireAfter = 0) {
+  function transferMessage (message, error = false, expireAfter = NOTE_FEEDBACK_MS) {
     if (destroyed) return
     root.clearTimeout(transferMessageTimer)
     transferMessageTimer = null
@@ -3330,6 +3427,11 @@
         types: [{ description: 'Notepad text file', accept: { 'text/plain': ['.txt'] } }]
       })
       if (destroyed) return
+      if (await automaticData?.usesFile(handle)) {
+        transferMessage('That file is used for automatic saving. Choose a different file for your TXT export.', true)
+        return
+      }
+      if (destroyed) return
       const text = exportCallNotesText()
       writable = await handle.createWritable()
       if (destroyed) {
@@ -3364,16 +3466,7 @@
     if (!file || destroyed || transferBusy) return
     setTransferBusy(true)
     try {
-      if (file.size > MAX_IMPORT_BYTES) throw new Error('Choose a text file no larger than 5 MB.')
-      let text
-      if (root.TextDecoder && file.arrayBuffer) {
-        // Notepad also writes UTF-16. A BOM selects its encoding; ordinary files use UTF-8.
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        let encoding = 'utf-8'
-        if (bytes[0] === 255 && bytes[1] === 254) encoding = 'utf-16le'
-        else if (bytes[0] === 254 && bytes[1] === 255) encoding = 'utf-16be'
-        text = new root.TextDecoder(encoding, { fatal: true }).decode(bytes)
-      } else text = await file.text()
+      const text = await readNotesFile(file)
       // A closed/replaced assistant must not accept a late file-read result.
       if (destroyed) return
       const { added, skipped } = importCallNotesText(text)
@@ -3385,6 +3478,553 @@
       historyFile.value = ''
     }
   }
+  async function readNotesFile (file) {
+    if (file.size > MAX_IMPORT_BYTES) throw new Error('Choose a text file no larger than 5 MB.')
+    if (root.TextDecoder && file.arrayBuffer) {
+      // Share the manual import encoding rules, including Notepad UTF-16 and invalid-byte rejection.
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const encoding = bytes[0] === 255 && bytes[1] === 254
+        ? 'utf-16le'
+        : bytes[0] === 254 && bytes[1] === 255 ? 'utf-16be' : 'utf-8'
+      return new root.TextDecoder(encoding, { fatal: true }).decode(bytes)
+    }
+    return file.text()
+  }
+  function dataSnapshot () {
+    const entries = new Map(callHistory.records.map((record) => [record.recordKey, { ...record }]))
+    // Preserve unfinished call fields without creating a completed call or changing its counter.
+    for (const draft of callHistory.pending) {
+      if (entries.has(draft.recordKey)) continue
+      entries.set(draft.recordKey, {
+        ...draft,
+        caller: normaliseText(draft.callerInput) || 'Unknown',
+        callerPrediction: predictCaller(draft.callerInput),
+        notes: cleanNotes(draft.notesInput),
+        jobNumber: '',
+        completedAt: null,
+        durationComplete: false,
+        recovered: true
+      })
+    }
+    const editing = historyEdit && (newManualRecord?.id === historyEdit.id
+      ? newManualRecord
+      : callHistory.records.find((record) => record.id === historyEdit.id))
+    if (editing) {
+      // A file checkpoint includes typing without committing the editor or taking away Escape.
+      entries.set(editing.recordKey, {
+        ...editing,
+        caller: normaliseText(historyEdit.value) || 'Unknown',
+        callerPrediction: predictCaller(historyEdit.value),
+        notes: cleanNotes(historyEdit.notes),
+        jobNumber: cleanJobNumber(historyEdit.jobNumber),
+        recovered: true
+      })
+    }
+    return [...entries.values()]
+  }
+  function dataSignature (records) {
+    // Row numbers can change on restore; compare the actual text and recorded details instead.
+    return JSON.stringify(records.map((record) => [record.recordKey, record.caller, record.notes, record.jobNumber,
+      ...NOTE_TEXT_FIELDS.filter(([, key]) => key !== 'recordKey').map(([, key]) => record[key] ?? null)
+    ]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  }
+  function createAutomaticData () {
+    const DATABASE = 'service-desk-8x8-data-location-v1'
+    const CHECKPOINT = 'service-desk-8x8-data-checkpoint-v1'
+    const ENABLED = 'service-desk-8x8-data-enabled-v1'
+    const HEADER = 'Assistant autosave: '
+    let handle = resumedDataFile?.handle || null
+    let ready = false
+    let stopping = false
+    let loading = false
+    let epoch = 0
+    let pickerEpoch = 0
+    let timer = null
+    let feedbackTimer = null
+    let lastAttention = ''
+    let database = null
+    let databasePromise = null
+    let databaseTimeout = null
+    let flight = Promise.resolve()
+    let expectedText = ''
+    let fileId = ''
+    let generation = ''
+    let lastSignature = ''
+    let lastSavedAt = 0
+    let remembered = true
+    let needsAccess = false
+    let cleanRevision = historyRevision
+    let inheritedChanges = resumedDataFile?.uncheckpointed === true
+    let parentCheckpointRead = false
+    let checkpoint = resumedDataFile?.checkpoint || null
+    try {
+      const stored = historyStorage?.getItem(CHECKPOINT)
+      if (stored) checkpoint = JSON.parse(stored)
+    } catch {}
+    function inheritFinalCheckpoint () {
+      if (parentCheckpointRead) return
+      parentCheckpointRead = true
+      const parent = previousDataSource?.()
+      // Release the retired instance's closure after its final checkpoint has been copied.
+      previousDataSource = null
+      if (!parent) return
+      handle = parent.handle || null
+      checkpoint = parent.checkpoint || null
+      inheritedChanges = parent.uncheckpointed === true
+    }
+    const active = (token) => token === epoch && !stopping && !destroyed
+    function status (message, attention = false, feedback = true) {
+      if (destroyed) return
+      setText(dataLocationInfo, (handle ? handle.name + '\n' : '') + message)
+      setText(dataFileStatus, (attention ? 'Data file: ' : 'Auto-save: ') + message)
+      // File-health feedback also expires. The Settings indicator retains any unresolved problem.
+      if (attention && feedback && message !== lastAttention) {
+        root.clearTimeout(feedbackTimer)
+        dataFileStatus.classList.remove('hidden')
+        feedbackTimer = root.setTimeout(() => {
+          feedbackTimer = null
+          if (!destroyed) dataFileStatus.classList.add('hidden')
+        }, NOTE_FEEDBACK_MS)
+      } else if (!attention) {
+        root.clearTimeout(feedbackTimer)
+        feedbackTimer = null
+        dataFileStatus.classList.add('hidden')
+      }
+      if (feedback || !attention) lastAttention = attention ? message : ''
+      settingsButton.setAttribute('data-file-attention', String(attention))
+      settingsButton.title = attention ? 'Settings — Data file needs attention' : 'Assistant settings'
+      setText(historySummary.querySelector('.history-session-count'), ready ? 'Auto-save enabled' : handle ? 'Auto-save paused' : 'This session')
+      historyList.setAttribute('aria-label', ready ? 'Saved Call Notes, newest first' : 'Call Notes in this tab, newest first')
+      setText(historyPanel.querySelector('.history-note'), ready
+        ? 'The tick, clicking away or Back saves. Your data file updates automatically; Export TXT makes a separate copy.'
+        : 'Edit with the pen. The tick, clicking away or Back saves. Export TXT to keep a copy after this session.')
+      dataFileStatus.setAttribute('data-attention', String(attention))
+      dataFileStatus.title = (handle?.name || 'Data location') + ' — Open Data location settings'
+      dataReconnect.classList.toggle('hidden', !handle)
+      dataSave.classList.toggle('hidden', !handle || !ready)
+      dataDisconnect.classList.toggle('hidden', !handle)
+      dataChoose.textContent = handle ? 'Change data file' : 'Choose data file'
+    }
+    function rememberCheckpoint (dirty) {
+      if (!fileId) return
+      checkpoint = { fileId, generation, keys: checkpoint?.keys || [], digest: checkpoint?.digest || '', dirty }
+      try { historyStorage?.setItem(CHECKPOINT, JSON.stringify(checkpoint)) } catch {}
+    }
+    function openDatabase () {
+      if (databasePromise) return databasePromise
+      databasePromise = new Promise((resolve, reject) => {
+        if (!root.indexedDB) return reject(new Error('Edge could not remember the data location.'))
+        let settled = false
+        databaseTimeout = root.setTimeout(() => finish(new Error('The data location could not be opened.')), 8000)
+        function finish (error, value) {
+          if (settled) { value?.close?.(); return }
+          settled = true
+          root.clearTimeout(databaseTimeout)
+          databaseTimeout = null
+          error ? reject(error) : resolve(value)
+        }
+        try {
+          const request = root.indexedDB.open(DATABASE, 1)
+          request.onupgradeneeded = () => {
+            if (!request.result.objectStoreNames.contains('connection')) request.result.createObjectStore('connection')
+          }
+          request.onerror = request.onblocked = () => finish(new Error('Edge could not remember the data location.'))
+          request.onsuccess = () => {
+            const db = request.result
+            if (settled) { db.close(); return }
+            if (stopping || destroyed) { db.close(); finish(new Error('Assistant closed.')); return }
+            database = db
+            db.onversionchange = () => { db.close(); database = null; databasePromise = null }
+            finish(null, db)
+          }
+        } catch (error) { finish(error) }
+      }).catch((error) => { databasePromise = null; throw error })
+      return databasePromise
+    }
+    async function connection (operation, value) {
+      const db = await openDatabase()
+      return new Promise((resolve, reject) => {
+        // Only the browser file handle is stored here. Caller data goes to the chosen TXT file.
+        const transaction = db.transaction('connection', operation === 'get' ? 'readonly' : 'readwrite')
+        const store = transaction.objectStore('connection')
+        const request = operation === 'get'
+          ? store.get('file')
+          : operation === 'put' ? store.put(value, 'file') : store.delete('file')
+        transaction.oncomplete = () => resolve(request.result)
+        transaction.onerror = transaction.onabort = () => reject(new Error('Edge could not remember the data location.'))
+      })
+    }
+    function readData (text) {
+      if (!text.trim()) return { records: [], meta: null }
+      // An arbitrary text document must not be silently converted into an assistant data file.
+      if (!/^\uFEFF?Service Desk 8x8 Assistant.*Call Notes \(TXT v/m.test(text) && !/^\s*-{20,}\s*$/m.test(text)) {
+        throw new Error('Choose an assistant TXT export or an empty file. This file has not been changed.')
+      }
+      const preamble = text.replace(/\r\n?/g, '\n').split(/^\s*-{20,}\s*$/m)[0]
+      const metadata = preamble.split('\n').filter((line) => line.startsWith(HEADER))
+      if (metadata.length > 1) throw new Error('The data file has duplicate backup information.')
+      const meta = metadata.length ? JSON.parse(metadata[0].slice(HEADER.length)) : null
+      if (meta && (meta.format !== 1 || typeof meta.fileId !== 'string' || !meta.fileId || meta.fileId.length > 180 ||
+          typeof meta.generation !== 'string' || !meta.generation || meta.generation.length > 180)) {
+        throw new Error('This data file uses unrecognised backup information. It has not been changed.')
+      }
+      const records = parseCallNotesText(text, true)
+      const keys = new Set()
+      for (const record of records) {
+        record.recordKey ||= newNoteKey()
+        if (keys.has(record.recordKey)) throw new Error('The data file contains duplicate record keys. It has not been changed.')
+        keys.add(record.recordKey)
+      }
+      return { records, meta }
+    }
+    async function fileDigest (text) {
+      if (!root.crypto?.subtle) throw new Error('Edge could not verify this data file. Use Export TXT to keep a copy.')
+      // A small session checkpoint detects edits even when an external editor leaves the header unchanged.
+      const bytes = await new root.Blob([text]).arrayBuffer()
+      const hash = await root.crypto.subtle.digest('SHA-256', bytes)
+      return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+    }
+    function restoreData (records, meta, digest) {
+      const sameFile = !!meta && checkpoint?.fileId === meta.fileId
+      const sameGeneration = sameFile && checkpoint.generation === meta.generation &&
+        (!checkpoint.digest || checkpoint.digest === digest)
+      const dirty = sameFile && (checkpoint.dirty === true || inheritedChanges || historyRevision !== cleanRevision)
+      // A commit may have reached disk just before its session checkpoint was interrupted.
+      if (dirty && !sameGeneration && dataSignature(dataSnapshot()) !== dataSignature(records)) {
+        throw new Error('The data file changed while this tab had unsaved notes. Choose a new data file to keep both copies.')
+      }
+      const previousKeys = new Set(sameFile && Array.isArray(checkpoint.keys) ? checkpoint.keys : [])
+      const fileKeys = new Set(records.map((record) => record.recordKey))
+      const local = new Map(callHistory.records.map((record) => [record.recordKey, { ...record }]))
+      // Apply an externally saved deletion only to a known, clean checkpoint, never to new local notes.
+      if (sameFile && !sameGeneration && !dirty && !historyEdit) {
+        for (const key of previousKeys) if (!fileKeys.has(key)) local.delete(key)
+      }
+      const recover = []
+      for (const record of records) {
+        const pending = record.recovered && record.transactionId
+          ? callHistory.pending.find((call) => call.transactionId === record.transactionId)
+          : null
+        const completed = record.recovered && record.transactionId
+          ? [...local.values()].find((call) => call.origin === '8x8' && call.transactionId === record.transactionId)
+          : null
+        if (pending || completed) { recover.push({ record, pending, completed }); continue }
+        const existing = local.get(record.recordKey)
+        if (sameGeneration && dirty) {
+          // The disk is unchanged; preserve local edits/deletions made since its last successful save.
+          if (existing || previousKeys.has(record.recordKey)) continue
+        }
+        if (existing && dataSignature([existing]) !== dataSignature([record])) {
+          const cleanCheckpoint = sameFile && !dirty && previousKeys.has(record.recordKey) && !historyEdit
+          if (!cleanCheckpoint) throw new Error('This file and this tab have different edits to the same note. Choose a new data file to keep both copies.')
+        }
+        local.set(record.recordKey, { ...record, id: existing?.id || 0 })
+      }
+      // Validation/conflict checks finish before any live record or call field is changed.
+      for (const record of local.values()) {
+        if (!record.id) record.id = callHistory.nextId++
+        record.originalId ||= record.id
+      }
+      callHistory.records = [...local.values()]
+      for (const { record, pending, completed } of recover) {
+        if (pending) {
+          pending.recordKey = record.recordKey
+          pending.originalId = record.originalId || pending.originalId
+          if (validCallTime(record.detectedAt)) pending.detectedAt = Math.min(pending.detectedAt, record.detectedAt)
+          for (const key of ['number', 'queue', 'channel', 'channelNumber', 'waitSeconds', 'holdSeconds']) {
+            if (pending[key] == null && record[key] != null) pending[key] = record[key]
+          }
+          if (record.durationSeconds !== null) pending.durationSeconds = Math.max(pending.durationSeconds || 0, record.durationSeconds)
+          // An explicit empty edit is intentional too. A delayed restore must not fill it back in.
+          const touched = touchedCallFields.get(pending.id)
+          if (!(sameGeneration && dirty) && !pending.callerInput && !touched?.has('callerInput')) {
+            pending.callerInput = record.caller === 'Unknown' ? '' : record.caller
+          }
+          if (!(sameGeneration && dirty) && !pending.notesInput && !touched?.has('notesInput')) pending.notesInput = record.notes
+        } else {
+          const touched = touchedCallFields.get(completed.id)
+          if (!(sameGeneration && dirty) && completed.caller === 'Unknown' && !touched?.has('callerInput')) completed.caller = record.caller
+          if (!(sameGeneration && dirty) && !completed.notes && !touched?.has('notesInput')) completed.notes = record.notes
+          completed.callerPrediction = predictCaller(completed.caller)
+        }
+      }
+      historyRevision++
+      saveCallHistory()
+      renderHistory()
+    }
+    function problem (error) {
+      ready = false
+      needsAccess = ['NotAllowedError', 'SecurityError'].includes(error?.name)
+      const message = needsAccess
+        ? 'File access needed. Click Reconnect.'
+        : error?.name === 'NotFoundError'
+          ? 'File moved or deleted. Choose its new location.'
+          : error?.name === 'NoModificationAllowedError'
+            ? 'Another window is saving this file. Reconnect to try again.'
+            : error?.message || 'Auto-save stopped. Your notes are still available in this tab.'
+      status(message, true)
+    }
+    async function connect (candidate, token) {
+      loading = true
+      try {
+        if (!candidate || candidate.kind !== 'file' || typeof candidate.queryPermission !== 'function' ||
+            typeof candidate.getFile !== 'function' || typeof candidate.createWritable !== 'function') {
+          throw new Error('Choose your data file again. Its saved connection is no longer valid.')
+        }
+        if (await candidate.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+          if (!active(token)) return
+          handle = candidate
+          ready = false
+          needsAccess = true
+          status('File access needed. Click Reconnect.', true)
+          return
+        }
+        const text = await readNotesFile(await candidate.getFile())
+        const digest = await fileDigest(text)
+        if (!active(token)) return
+        const { records, meta } = readData(text)
+        restoreData(records, meta, digest)
+        if (!active(token)) return
+        handle = candidate
+        expectedText = text
+        fileId = meta?.fileId || newNoteKey()
+        generation = meta?.generation || ''
+        lastSignature = dataSignature(records)
+        const dirty = dataSignature(dataSnapshot()) !== lastSignature
+        if (!dirty) { cleanRevision = historyRevision; inheritedChanges = false }
+        checkpoint = { fileId, generation, keys: records.map((record) => record.recordKey), digest, dirty }
+        rememberCheckpoint(dirty)
+        ready = true
+        needsAccess = false
+        remembered = true
+        try {
+          await connection('put', candidate)
+        } catch { remembered = false }
+        try { settingsStorage.setItem(ENABLED, 'true') } catch {}
+        if (!active(token)) return
+        rememberCheckpoint(dataSignature(dataSnapshot()) !== lastSignature)
+        status(remembered ? 'Connected. Changes save automatically.' : 'Connected for this session. Choose this file again after reopening Edge.', !remembered)
+      } finally {
+        if (active(token)) { loading = false; changed() }
+      }
+    }
+    function changed () {
+      if (stopping || destroyed || !handle || !ready || loading) return
+      const dirty = dataSignature(dataSnapshot()) !== lastSignature
+      if (!dirty) { cleanRevision = historyRevision; inheritedChanges = false }
+      rememberCheckpoint(dirty)
+      if (!dirty || timer) return
+      // Coalesce typing and native timer updates without postponing the save indefinitely.
+      const delay = Math.max(750, 5000 - (Date.now() - lastSavedAt))
+      timer = root.setTimeout(() => { timer = null; flush() }, delay)
+    }
+    function flush (final = false) {
+      if ((destroyed || stopping) && final !== true) return flight
+      root.clearTimeout(timer)
+      timer = null
+      if (!handle || !ready || loading) return flight
+      const records = dataSnapshot()
+      const signature = dataSignature(records)
+      if (signature === lastSignature) return flight
+      const token = epoch
+      const target = handle
+      const targetId = fileId
+      const nextGeneration = newNoteKey()
+      const meta = { format: 1, fileId: targetId, generation: nextGeneration }
+      const text = exportCallNotesText(records).replace(/(Exported: [^\r\n]+)(\r?\n)/,
+        '$1$2' + HEADER + JSON.stringify(meta) + '\r\n')
+      if (records.length > MAX_IMPORT_RECORDS || new root.Blob([text]).size > MAX_IMPORT_BYTES) {
+        problem(new Error('Auto-save limit reached: 2,000 notes or 5 MB. Export a copy and remove older notes before reconnecting.'))
+        return flight
+      }
+      const current = () => token === epoch && target === handle
+      flight = flight.catch(() => {}).then(async () => {
+        if (!current() || !ready || signature === lastSignature) return
+        if (await target.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+          const error = new Error('File access needed.')
+          error.name = 'NotAllowedError'
+          throw error
+        }
+        const save = async () => {
+          if (!current()) return
+          const digest = await fileDigest(text)
+          if (await readNotesFile(await target.getFile()) !== expectedText) {
+            throw new Error('The data file changed elsewhere. Reconnect to restore it, or choose a new file to keep this tab’s notes.')
+          }
+          let writable
+          try {
+            // Exclusive streams plus a same-origin Web Lock prevent two assistant tabs racing.
+            writable = await target.createWritable({ mode: 'exclusive' })
+            if (!current()) { await writable.abort(); return }
+            await writable.write(text)
+            if (!current() || await readNotesFile(await target.getFile()) !== expectedText) {
+              throw new Error('The data file changed during saving. Your notes remain in this tab.')
+            }
+            if (dataSignature(dataSnapshot()) !== signature) {
+              // Typing or Escape superseded this queued snapshot. Never commit that stale draft.
+              await writable.abort()
+              writable = null
+              return
+            }
+            // The prior file remains intact until close commits the complete replacement.
+            await writable.close()
+            writable = null
+            if (!current()) return
+            expectedText = text
+            generation = nextGeneration
+            lastSignature = signature
+            lastSavedAt = Date.now()
+            checkpoint = { fileId: targetId, generation, keys: records.map((record) => record.recordKey), digest, dirty: false }
+            rememberCheckpoint(dataSignature(dataSnapshot()) !== signature)
+            if (!checkpoint.dirty) { cleanRevision = historyRevision; inheritedChanges = false }
+            status(remembered ? 'Saved ' + new Date(lastSavedAt).toLocaleTimeString('en-AU') : 'Saved. Reconnect this file next browser session.', !remembered)
+          } catch (error) {
+            if (writable) await writable.abort().catch(() => {})
+            throw error
+          }
+        }
+        status('Saving…', !remembered, false)
+        const locks = root.navigator?.locks
+        if (locks?.request) await locks.request('service-desk-8x8-assistant-data-write', { mode: 'exclusive' }, save)
+        else await save()
+      }).catch((error) => { if (current()) problem(error) }).finally(() => {
+        if (!stopping && !destroyed) changed()
+      })
+      return flight
+    }
+    async function choose () {
+      if (destroyed || stopping || dataChoose.disabled) return
+      if (transferBusy) { status('Finish the TXT import or export before changing your data file.'); return }
+      let token = epoch
+      const selection = ++pickerEpoch
+      const wasReady = ready
+      try {
+        // Open the picker directly in the click gesture, before any awaited I/O.
+        const candidate = await root.showSaveFilePicker({
+          id: 'assistant-automatic-data',
+          suggestedName: '8x8-Assistant-Data.txt',
+          types: [{ description: 'Assistant data text file', accept: { 'text/plain': ['.txt'] } }]
+        })
+        if (!active(token) || selection !== pickerEpoch) return
+        await flight.catch(() => {})
+        await Promise.resolve(previousShutdown).catch(() => {})
+        if (!active(token) || selection !== pickerEpoch) return
+        inheritFinalCheckpoint()
+        // Until a file is actually chosen, the previous connection keeps saving normally.
+        token = ++epoch
+        ready = false
+        root.clearTimeout(timer)
+        timer = null
+        await connect(candidate, token)
+        if (active(token)) await flush()
+      } catch (error) {
+        if (!active(token)) return
+        ready = wasReady
+        if (error.name !== 'AbortError') status(error.message || 'The data file could not be selected.', true)
+      } finally { if (active(token)) changed() }
+    }
+    async function resume () {
+      if (!handle || stopping || destroyed) return
+      const token = ++epoch
+      ready = false
+      try {
+        // Re-authorisation must begin inside this real button click; never prompt on startup.
+        const permission = await handle.requestPermission({ mode: 'readwrite' })
+        if (!active(token)) return
+        if (permission !== 'granted') { needsAccess = true; status('File access was not allowed. Your notes stay in this tab.', true); return }
+        await flight.catch(() => {})
+        await Promise.resolve(previousShutdown).catch(() => {})
+        if (active(token)) inheritFinalCheckpoint()
+        if (active(token)) { await connect(handle, token); await flush() }
+      } catch (error) { if (active(token)) problem(error) }
+    }
+    async function disconnect () {
+      const token = ++epoch
+      parentCheckpointRead = true
+      ready = false
+      root.clearTimeout(timer)
+      timer = null
+      handle = null
+      checkpoint = null
+      fileId = ''
+      generation = ''
+      needsAccess = false
+      let forgotten = false
+      try { historyStorage?.removeItem?.(CHECKPOINT) } catch {}
+      try { settingsStorage.setItem(ENABLED, 'false'); forgotten = true } catch {}
+      try { await connection('delete'); forgotten = true } catch {}
+      if (active(token)) {
+        status(forgotten
+          ? 'Disconnected. Your data file has not been deleted.'
+          : 'Disconnected for now. Edge could not forget this file; remove its file access in Edge before reopening.', !forgotten)
+      }
+    }
+    async function start () {
+      const token = epoch
+      try {
+        // A rerun waits for the previous instance’s final file commit before reading it back.
+        await Promise.resolve(previousShutdown).catch(() => {})
+        if (!active(token)) return
+        inheritFinalCheckpoint()
+        // A failed IndexedDB deletion must not reconnect a file explicitly disabled by the user.
+        let disabled = false
+        try { disabled = settingsStorage.getItem(ENABLED) === 'false' } catch {}
+        if (!handle && disabled) return
+        if (!handle && root.indexedDB) handle = await connection('get') || null
+        if (!active(token)) return
+        if (handle) await connect(handle, token)
+        else if (settingsStorage.getItem(ENABLED) === 'true') status('Choose your data file again to restore Call Notes.', true)
+      } catch (error) {
+        if (active(token)) {
+          let enabled = !!handle
+          try { enabled ||= settingsStorage.getItem(ENABLED) === 'true' } catch {}
+          if (enabled) problem(error)
+        }
+      }
+    }
+    function stop () {
+      stopping = true
+      root.clearTimeout(timer)
+      root.clearTimeout(databaseTimeout)
+      root.clearTimeout(feedbackTimer)
+      databaseTimeout = null
+      timer = null
+      // Drain any in-progress commit first, then compare the final model with what actually saved.
+      // This also repairs a snapshot whose close had already begun when the user pressed Escape.
+      const prior = flight
+      return Promise.all([prior.catch(() => {}), Promise.resolve(previousShutdown).catch(() => {})])
+        .then(() => {
+          if (!parentCheckpointRead && epoch === 0) inheritFinalCheckpoint()
+          return flush(true)
+        }).finally(() => { database?.close?.(); database = null })
+    }
+    dataChoose.onclick = choose
+    dataReconnect.onclick = resume
+    dataSave.onclick = () => flush()
+    dataDisconnect.onclick = disconnect
+    dataFileStatus.onclick = () => {
+      if (needsAccess) return resume()
+      openView('settings')
+      dataLocation.scrollIntoView?.({ block: 'nearest' })
+    }
+    async function usesFile (candidate) {
+      return !!handle && (candidate === handle || !!(await handle.isSameEntry?.(candidate)))
+    }
+    return {
+      start,
+      changed,
+      flush,
+      stop,
+      usesFile,
+      // Opaque checkpoint metadata also survives a rerun when session storage is blocked.
+      session: () => ({
+        handle,
+        checkpoint: checkpoint && { ...checkpoint, keys: [...(checkpoint.keys || [])] },
+        uncheckpointed: inheritedChanges || historyRevision !== cleanRevision || checkpoint?.dirty === true,
+        touched: [...touchedCallFields].map(([id, fields]) => [id, [...fields]])
+      })
+    }
+  }
   function createHistoryWidget (record) {
     const card = createElement('article', '', historyList, 'history-card')
     card.setAttribute('data-call-id', String(record.id))
@@ -3392,6 +4032,7 @@
     const slot = createElement('div', '', heading, 'history-caller-slot')
     const caller = createElement('h4', record.caller, slot, 'history-caller')
     if (record.origin === 'manual') createElement('span', 'In person', slot, 'history-source')
+    if (record.recovered) createElement('span', 'Recovered', slot, 'history-source')
     const input = createElement('input', '', slot, 'history-edit-input hidden')
     input.type = 'text'
     input.maxLength = 160
@@ -3633,6 +4274,8 @@
       return
     }
     draft[key] = input.value.slice(0, limit)
+    if (!touchedCallFields.has(draft.id)) touchedCallFields.set(draft.id, new Set())
+    touchedCallFields.get(draft.id).add(key)
     saveCallHistory()
   }
   callerInput.oninput = () => saveOnCallInput(callerInput, 'callerInput', 160)
@@ -3914,6 +4557,7 @@
     historyPanel.classList.toggle('hidden', compact || activeView !== 'history')
     bottom.classList.remove('hidden')
     footer.classList.toggle('hidden', compact || activeView !== 'main')
+    windowResizer?.apply()
   }
   function minuteValue (seconds) {
     // Keep the lunch view in minutes, including small overruns and time left near zero.
@@ -5545,16 +6189,127 @@
     minimize.textContent = collapsed ? '+' : '-'
     minimize.title = collapsed ? 'Restore assistant' : 'Minimise assistant'
     minimize.setAttribute('aria-label', minimize.title)
+    windowResizer?.apply()
+  }
+  function createWindowResizer () {
+    const key = 'service-desk-8x8-window-size-v1'
+    let preferred = null
+    let drag = null
+    try {
+      const value = JSON.parse(settingsStorage.getItem(key) || 'null')
+      if (Number.isFinite(value?.width) && Number.isFinite(value?.height)) preferred = value
+    } catch {}
+    const grip = createElement('button', '', shadow, 'resize-handle')
+    grip.type = 'button'
+    grip.setAttribute('aria-label', 'Resize assistant')
+    grip.title = 'Drag this corner to resize. Arrow keys resize; double-click or Home resets the size.'
+    buttonIcon(grip, ['M5 15V5h10M5 5l14 14'])
+    // The corner hit area has its own sizing; it is not one of the footer icon buttons.
+    grip.classList.remove('icon-button')
+    const bounds = () => ({ width: Math.max(180, (root.innerWidth || 1024) - 36), height: Math.max(160, (root.innerHeight || 768) - 36) })
+    function fitted (size) {
+      const max = bounds()
+      return {
+        width: Math.max(Math.min(340, max.width), Math.min(max.width, size.width)),
+        height: Math.max(Math.min(480, max.height), Math.min(max.height, size.height))
+      }
+    }
+    function apply () {
+      const compact = panel.classList.contains('compact') || content.classList.contains('hidden')
+      const size = preferred ? fitted(preferred) : null
+      panel.style.width = size ? size.width + 'px' : ''
+      panel.style.height = size && !compact ? size.height + 'px' : ''
+      panel.classList.toggle('resized', !!size && !compact)
+    }
+    function persist () {
+      try { settingsStorage.setItem(key, JSON.stringify(preferred)) } catch {}
+    }
+    function removeDragListeners () {
+      root.removeEventListener?.('pointermove', move, true)
+      root.removeEventListener?.('pointerup', finish, true)
+      root.removeEventListener?.('pointercancel', cancel, true)
+      root.removeEventListener?.('keydown', cancelKey, true)
+    }
+    function finish (event) {
+      if (!drag || (event?.pointerId !== undefined && event.pointerId !== drag.id)) return
+      try { grip.releasePointerCapture?.(drag.id) } catch {}
+      drag = null
+      grip.classList.remove('resizing')
+      removeDragListeners()
+      persist()
+    }
+    function cancel (event) {
+      if (!drag || (event?.pointerId !== undefined && event.pointerId !== drag.id)) return
+      preferred = drag.original
+      finish(event)
+      apply()
+    }
+    function cancelKey (event) {
+      if (event.key === 'Escape') { event.preventDefault(); cancel() }
+    }
+    function move (event) {
+      if (!drag || event.pointerId !== drag.id || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return
+      event.preventDefault()
+      // The bottom-right anchor stays fixed while the top-left corner follows the pointer.
+      preferred = fitted({ width: drag.width + drag.x - event.clientX, height: drag.height + drag.y - event.clientY })
+      apply()
+    }
+    grip.onpointerdown = (event) => {
+      if (destroyed || (event.button !== undefined && event.button !== 0) || event.isPrimary === false) return
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = panel.getBoundingClientRect?.()
+      const size = preferred ? fitted(preferred) : { width: rect?.width || 470, height: rect?.height || 600 }
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, ...size, original: preferred && { ...preferred } }
+      try { grip.setPointerCapture?.(event.pointerId) } catch {}
+      grip.classList.add('resizing')
+      root.addEventListener?.('pointermove', move, true)
+      root.addEventListener?.('pointerup', finish, true)
+      root.addEventListener?.('pointercancel', cancel, true)
+      root.addEventListener?.('keydown', cancelKey, true)
+    }
+    function reset () { preferred = null; persist(); apply() }
+    grip.ondblclick = reset
+    grip.onkeydown = (event) => {
+      if (event.key === 'Home') { event.preventDefault(); reset(); return }
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+      event.preventDefault()
+      const rect = panel.getBoundingClientRect?.()
+      const size = preferred || { width: rect?.width || 470, height: rect?.height || 600 }
+      const step = event.shiftKey ? 50 : 10
+      preferred = fitted({
+        width: size.width + (event.key === 'ArrowLeft' ? step : event.key === 'ArrowRight' ? -step : 0),
+        height: size.height + (event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0)
+      })
+      persist()
+      apply()
+    }
+    root.addEventListener?.('resize', apply)
+    apply()
+    return { apply, destroy: () => { removeDragListeners(); root.removeEventListener?.('resize', apply); grip.remove() } }
   }
   function destroy () {
+    if (destroyed) return
     // Set the shutdown flag before async output changes can resume sounds or save devices.
     saveStatistics()
     saveShortBreaks()
     saveHistoryEdit(false)
     saveCallHistory()
+    const finalFileSave = automaticData?.stop()
+    if (finalFileSave) {
+      // A close followed immediately by a manual rerun still waits for this instance's final save.
+      const handoff = { promise: finalFileSave, session: automaticData.session }
+      root.__itsCallAssistDataShutdown = handoff
+      Promise.resolve(finalFileSave).catch(() => {}).finally(() => {
+        if (root.__itsCallAssistDataShutdown === handoff) delete root.__itsCallAssistDataShutdown
+      })
+    }
+    windowResizer?.destroy()
     root.removeEventListener?.('pagehide', saveStatistics)
     root.removeEventListener?.('pagehide', saveShortBreaks)
     root.removeEventListener?.('pagehide', finaliseCallNotes)
+    root.removeEventListener?.('beforeunload', finaliseCallNotes)
+    doc.removeEventListener?.('visibilitychange', saveHiddenData)
     destroyed = true
     root.clearTimeout(transferMessageTimer)
     root.clearInterval(interval)
@@ -5574,6 +6329,7 @@
     delete root.__itsCallAssist
     stopStorageStatus?.()
     deployment?.onDestroy?.()
+    return finalFileSave
   }
   remove.onclick = destroy
   // Polling advances time displays even when no mutation event fires.
@@ -5583,6 +6339,11 @@
   function finaliseCallNotes () {
     saveHistoryEdit(false)
     saveCallHistory()
+    automaticData?.flush()
+  }
+  function saveHiddenData () {
+    // Hidden/pagehide events are only extra opportunities; ongoing saves cover unannounced crashes.
+    if (doc.visibilityState === 'hidden') automaticData?.flush()
   }
   root.__itsCallAssist.finaliseCallNotes = finaliseCallNotes
   // Packaged builds can show the saved notes directly from the extension toolbar.
@@ -5602,11 +6363,19 @@
   })
   // Data-only copies support restarts without exposing mutable draft/record objects.
   root.__itsCallAssist.callHistorySession = () => JSON.parse(JSON.stringify(callHistory))
+  root.__itsCallAssist.dataFileSession = () => automaticData?.session() || null
   // Preserve the latest observed call count when the page closes or navigates away.
   root.addEventListener?.('pagehide', saveStatistics)
   root.addEventListener?.('pagehide', saveShortBreaks)
   root.addEventListener?.('pagehide', finaliseCallNotes)
+  root.addEventListener?.('beforeunload', finaliseCallNotes)
+  doc.addEventListener?.('visibilitychange', saveHiddenData)
+  windowResizer = createWindowResizer()
   prepareSound()
   safeScan()
   refreshAudioDevices()
+  if (!deployment && typeof root.showSaveFilePicker === 'function') {
+    automaticData = createAutomaticData()
+    automaticData.start()
+  }
 })()

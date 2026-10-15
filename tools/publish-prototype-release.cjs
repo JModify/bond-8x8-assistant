@@ -1,9 +1,9 @@
-/* One-off publication of the explicitly requested v1.1.7 prototype. No dependencies. */
+/* One-off publication of the explicitly requested v1.2.0 prototype. No dependencies. */
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const RELEASE_NAME = 'Service Desk 8x8 Assistant - Prototype'
-const RELEASE_VERSION = '1.1.7'
+const RELEASE_VERSION = '1.2.0'
 
 function prepareRelease (root, repository, commit) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repository || '') || !/^[a-f0-9]{40}$/.test(commit || '')) {
@@ -12,7 +12,7 @@ function prepareRelease (root, repository, commit) {
   const read = (file) => fs.readFileSync(path.join(root, file))
   const version = read('VERSION').toString('utf8').trim()
   // This publisher is authorised for one release; future versions cannot use its write access.
-  if (version !== RELEASE_VERSION) throw new Error('This one-off publisher only supports prototype v1.1.7.')
+  if (version !== RELEASE_VERSION) throw new Error('This one-off publisher only supports prototype v1.2.0.')
   const source = read('Service-Desk-8x8-Assistant.js')
   const snapshot = read(`releases/edge-prototype/${version}/Service-Desk-8x8-Assistant.js`)
   const metadata = JSON.parse(read('package.json'))
@@ -124,8 +124,9 @@ async function publishRelease (info, request = githubRequest) {
 
 module.exports = { prepareRelease, publishRelease, githubRequest }
 if (require.main === module) {
-  // Only the push adding the immutable v1.1.7 snapshot can start this one-off workflow.
-  if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_EVENT_NAME !== 'push') {
+  // Only the push adding the immutable v1.2.0 snapshot can start this one-off workflow.
+  if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_EVENT_NAME !== 'push' ||
+      process.env.PROTOTYPE_RELEASE_VERSION !== RELEASE_VERSION) {
     throw new Error('Prototype publication requires a main-branch GitHub Actions run.')
   }
   const info = prepareRelease(path.resolve(__dirname, '..'), process.env.GITHUB_REPOSITORY, process.env.GITHUB_SHA)

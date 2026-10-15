@@ -2,6 +2,17 @@
 
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
+## 1.2.0 (Prototype) — 2026-10-15
+
+- Added a top-left resize grip with pointer capture, keyboard arrows, cancellation and double-click/Home reset. Window dimensions persist as preferences and fit the current viewport. Menus, agent lists and footer controls use the resized space; minimise and personal break bars retain their compact height.
+- Added opt-in **Settings → Data location** for a user-chosen TXT file. The prototype autosaves while running, restores on startup when access remains allowed, and offers Reconnect, Save now, Change data file and Disconnect. Only a browser file handle is remembered in IndexedDB; caller content remains local to the tab and the chosen file.
+- Checkpointed unfinished edits, in-person notes and call fields for crash recovery, without changing observed call counts or live editing/Escape behaviour. Recovered notes are labelled, and a running call can resume its fields only when its stable call reference matches.
+- Added serial/exclusive writes, content-digest checkpoints, complete-file comparisons and conflict detection. Preserve local deletions and edits, reject invalid files before applying them, abort stale streams, protect the automatic file from manual export, and drain commits on close/rerun. Handle permission loss, missing files, storage/write errors, late results and concurrent windows without silently overwriting either copy.
+- Save opportunities include background changes, page hiding, pagehide, beforeunload and explicit assistant close. Crashes, forced termination and power loss still cannot guarantee a final browser write. No unattended file pickers, automatic downloads or organisation-policy changes are used.
+- Made every Call Notes transfer/deletion/file-feedback message disappear after five seconds, including export/import success, errors and cancellations. Routine successful autosaves do not create toasts; unresolved file problems remain visible in Settings.
+- Preserve the packaged extension 1.0.0, existing screenshots and every earlier prototype snapshot. This release remains a JavaScript prototype and still needs to be started manually after reopening 8x8.
+- Validation: JavaScript syntax and Standard Style, 250 baseline scenarios, 21 prototype feature scenarios, 31 unchanged-extension scenarios, 11 offline release scenarios and 43 persistence/resize scenarios (356 total). Browser file dialogs and physical Edge shutdown remain to be verified in the managed user environment.
+
 ## Repository reorganisation — 2026-10-15
 
 - Moved every prototype snapshot (1.0.0 through 1.1.7) into `releases/edge-prototype/<version>/` without changing file contents. `releases/edge-extension/1.0.0/` remains unchanged.

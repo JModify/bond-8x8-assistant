@@ -67,11 +67,11 @@ function withTemporaryRelease (fn) {
 }
 
 check('Release uses exact prototype bytes, version, name and extension goal', () => {
-  assert.equal(info.version, '1.1.7')
+  assert.equal(info.version, '1.2.0')
   assert.equal(info.name, 'Service Desk 8x8 Assistant - Prototype')
   assert(info.body.includes('organisation-approved Microsoft Edge extension'))
   assert(info.body.includes(info.digest.slice(7)))
-  assert.equal(info.assetName, 'Service-Desk-8x8-Assistant-Prototype-1.1.7.js')
+  assert.equal(info.assetName, 'Service-Desk-8x8-Assistant-Prototype-1.2.0.js')
 })
 check('Later versions, mixed metadata and a stale archive fail before publication', () => {
   withTemporaryRelease((folder) => {
@@ -82,8 +82,8 @@ check('Later versions, mixed metadata and a stale archive fail before publicatio
     metadata.version = '1.1.6'
     fs.writeFileSync(path.join(folder, 'package.json'), JSON.stringify(metadata))
     assert.throws(() => prepareRelease(folder, info.repository, commit), /must agree/)
-    fs.writeFileSync(path.join(folder, 'VERSION'), '1.1.8\n')
-    assert.throws(() => prepareRelease(folder, info.repository, commit), /one-off publisher only supports prototype v1.1.7/)
+    fs.writeFileSync(path.join(folder, 'VERSION'), '1.2.1\n')
+    assert.throws(() => prepareRelease(folder, info.repository, commit), /one-off publisher only supports prototype v1.2.0/)
   })
   assert.throws(() => prepareRelease(root, info.repository, 'main'), /exact release commit/)
   assert.throws(() => prepareRelease(root, '../other', commit), /repository/)
