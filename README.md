@@ -2,11 +2,20 @@
 
 See phone coverage, keep call notes and get reminders to finish wrap-up or return from lunch.
 
-This is a **JavaScript prototype** that runs in your 8x8 page. The goal is an **organisation-approved Microsoft Edge extension** built into the browser. The extension package in this repository is for development and testing; it is not an approved deployment.
+This is a **JavaScript prototype** that runs in your 8x8 page.
 
 **Author:** Joshua Lavagna-Slater · **Prototype version:** 1.1.7
 
 [Prototype code](Service-Desk-8x8-Assistant.js) · [Download release](https://github.com/JModify/bond-8x8-assistant/releases/tag/v1.1.7) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
+
+## Future direction
+
+The goal is an **organisation-approved Microsoft Edge extension** that:
+
+- **Starts automatically** when you open 8x8, without manually running the assistant each session.
+- **Keeps Call Notes and settings across browser sessions**, so your call history is still there when you reopen Edge.
+
+The extension package is currently for development and testing, pending approval for team deployment.
 
 ## Prototype setup
 

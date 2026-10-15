@@ -7,12 +7,19 @@ For each authorised application update:
 1. Read the current VERSION, CHANGELOG.md, prototype and repository HEAD.
 2. Increment the patch version by default unless the user specifies another version. The previous baseline is 1.0.0 and the first versioned update is 1.0.1.
 3. Keep the prototype header, VERSION constant, VERSION file, package.json and visible version in agreement.
-4. Add a dated changelog entry and an exact release snapshot at `releases/<version>/Service-Desk-8x8-Assistant.js`. Never modify an existing release snapshot.
+4. Add a dated changelog entry and an exact release snapshot at `releases/edge-prototype/<version>/Service-Desk-8x8-Assistant.js`. Never modify an existing release snapshot.
 5. Run `npm run check` and `npm test`. Update behavioral tests for the changes.
 6. Push the tested change to GitHub's main branch, preserving unrelated changes and using an expected-HEAD check. Do not force-push over another update. The user's standing request authorises these release pushes.
 7. Prototype releases must not regenerate a previously released extension under the same extension version. Keep extension files and archives intact; its build checks validate its independently recorded core.
-8. For the explicitly requested 1.1.7 GitHub Release, verify that its one-off workflow published `Service Desk 8x8 Assistant - Prototype`, tagged `v1.1.7`, with the exact snapshot as a downloadable prototype asset. This publisher rejects other versions and its workflow has no manual trigger or ongoing release automation. Never move an existing tag or overwrite an earlier release. If publication is blocked, report the specific Actions/permission error.
+8. Keep the published 1.1.7 GitHub Release, tag and downloadable prototype asset unchanged. Its completed one-off workflow was retired during the repository reorganisation. Do not re-enable ongoing privileged release automation. Never move an existing tag or overwrite an earlier release.
 9. Deliver the versioned prototype and link the verified GitHub Release or commit. Do not also save repository-backed source to Library.
+
+# Repository layout
+
+- `releases/` has only `edge-prototype/` and `edge-extension/`. All prototype versions belong under `releases/edge-prototype/<version>/`. The user-authorised folder relocation preserves snapshot bytes.
+- Extension files have a single canonical location: `releases/edge-extension/<version>/extension/`. Do not recreate a root `extension/` copy or change a released bundle. Build and test directly from the versioned package.
+- Repository utilities live in `tools/`, not `scripts/`. `tools/extension-updates.json` is build configuration, separate from the installed extension. Builds stage outside the repository in `../output/`; refreshing the core requires an explicit new extension version.
+- Repository layout/documentation changes do not change the application version or create a new application release. Preserve the latest README setup edits and screenshots.
 
 # Application constraints
 

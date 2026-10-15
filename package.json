@@ -4,11 +4,11 @@
   "private": true,
   "description": "Service Desk 8x8 Assistant prototype and development Microsoft Edge extension",
   "scripts": {
-    "check": "node --check Service-Desk-8x8-Assistant.js && npm run lint && node scripts/build-extension.cjs --check",
-    "lint": "standard Service-Desk-8x8-Assistant.js extension/*.js scripts/**/*.cjs tests/**/*.cjs",
+    "check": "node --check Service-Desk-8x8-Assistant.js && npm run lint && node tools/build-extension.cjs --check",
+    "lint": "standard Service-Desk-8x8-Assistant.js tools/**/*.cjs tests/**/*.cjs",
     "test": "node tests/assistant.test.cjs && node tests/prototype.test.cjs && node tests/extension.test.cjs && node tests/release.test.cjs",
-    "build:extension": "node scripts/build-extension.cjs",
-    "package:extension": "node scripts/build-extension.cjs --package"
+    "build:extension": "node tools/build-extension.cjs",
+    "package:extension": "node tools/build-extension.cjs --package"
   },
   "engines": {
     "node": ">=18"

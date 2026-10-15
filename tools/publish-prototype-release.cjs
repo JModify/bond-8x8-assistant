@@ -14,7 +14,7 @@ function prepareRelease (root, repository, commit) {
   // This publisher is authorised for one release; future versions cannot use its write access.
   if (version !== RELEASE_VERSION) throw new Error('This one-off publisher only supports prototype v1.1.7.')
   const source = read('Service-Desk-8x8-Assistant.js')
-  const snapshot = read(`releases/${version}/Service-Desk-8x8-Assistant.js`)
+  const snapshot = read(`releases/edge-prototype/${version}/Service-Desk-8x8-Assistant.js`)
   const metadata = JSON.parse(read('package.json'))
   const lock = JSON.parse(read('package-lock.json'))
   // Never publish a stale snapshot, mixed versions or an extension as the prototype.

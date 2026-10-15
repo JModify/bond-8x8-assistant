@@ -4,7 +4,7 @@ const path = require('node:path')
 const os = require('node:os')
 const assert = require('node:assert/strict')
 const { spawnSync } = require('node:child_process')
-const { prepareRelease, publishRelease, githubRequest } = require('../scripts/publish-prototype-release.cjs')
+const { prepareRelease, publishRelease, githubRequest } = require('../tools/publish-prototype-release.cjs')
 const root = path.resolve(__dirname, '..')
 const commit = 'a'.repeat(40)
 const info = prepareRelease(root, 'JModify/bond-8x8-assistant', commit)
@@ -57,7 +57,7 @@ function fakeGitHub (options = {}) {
 function withTemporaryRelease (fn) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'prototype-release-'))
   try {
-    for (const file of ['VERSION', 'package.json', 'package-lock.json', 'CHANGELOG.md', 'Service-Desk-8x8-Assistant.js', `releases/${info.version}/Service-Desk-8x8-Assistant.js`]) {
+    for (const file of ['VERSION', 'package.json', 'package-lock.json', 'CHANGELOG.md', 'Service-Desk-8x8-Assistant.js', `releases/edge-prototype/${info.version}/Service-Desk-8x8-Assistant.js`]) {
       const target = path.join(folder, file)
       fs.mkdirSync(path.dirname(target), { recursive: true })
       fs.copyFileSync(path.join(root, file), target)
@@ -75,9 +75,9 @@ check('Release uses exact prototype bytes, version, name and extension goal', ()
 })
 check('Later versions, mixed metadata and a stale archive fail before publication', () => {
   withTemporaryRelease((folder) => {
-    fs.appendFileSync(path.join(folder, `releases/${info.version}/Service-Desk-8x8-Assistant.js`), '// stale\n')
+    fs.appendFileSync(path.join(folder, `releases/edge-prototype/${info.version}/Service-Desk-8x8-Assistant.js`), '// stale\n')
     assert.throws(() => prepareRelease(folder, info.repository, commit), /must agree/)
-    fs.copyFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'), path.join(folder, `releases/${info.version}/Service-Desk-8x8-Assistant.js`))
+    fs.copyFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'), path.join(folder, `releases/edge-prototype/${info.version}/Service-Desk-8x8-Assistant.js`))
     const metadata = JSON.parse(fs.readFileSync(path.join(folder, 'package.json')))
     metadata.version = '1.1.6'
     fs.writeFileSync(path.join(folder, 'package.json'), JSON.stringify(metadata))
@@ -148,7 +148,7 @@ check('An unexpected upload host is rejected before transferring the prototype',
   await assert.rejects(githubRequest('https://example.invalid/'), /GitHub API hosts/)
 })
 check('Local execution cannot publish or make any GitHub requests', () => {
-  const result = spawnSync(process.execPath, [path.join(root, 'scripts/publish-prototype-release.cjs')], {
+  const result = spawnSync(process.execPath, [path.join(root, 'tools/publish-prototype-release.cjs')], {
     env: { ...process.env, GITHUB_ACTIONS: '', GITHUB_REF: 'refs/heads/main' }, encoding: 'utf8'
   })
   assert.notEqual(result.status, 0)

@@ -2,6 +2,14 @@
 
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
+## Repository reorganisation — 2026-10-15
+
+- Moved every prototype snapshot (1.0.0 through 1.1.7) into `releases/edge-prototype/<version>/` without changing file contents. `releases/edge-extension/1.0.0/` remains unchanged.
+- Removed the duplicate root extension source. Tools and tests now use its single canonical package under the extension release folder; generated builds go outside the repository.
+- Renamed `scripts/` to `tools/`, including its build-only extension update configuration. Updated package commands, tests and documentation; retired the completed one-off 1.1.7 publishing workflow.
+- Added **Future direction** to the README: an approved Edge extension with automatic startup and Call Notes/settings retained across browser sessions. Preserved the latest setup instructions and images.
+- Application versions, published GitHub Release/tag/download, prototype bytes and extension bundle/ZIP are unchanged. This is a repository refactor, not an application release.
+
 ## 1.1.7 (Prototype) — 2026-10-14
 
 - Aligned Call Notes, mute and Settings buttons to a shared 32-pixel height. The on-call shortcut uses the same height as its speaker icon.

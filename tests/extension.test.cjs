@@ -5,11 +5,11 @@ const vm = require('node:vm')
 const crypto = require('node:crypto')
 const assert = require('node:assert/strict')
 const root = path.resolve(__dirname, '..')
-const folder = path.join(root, 'extension')
+const folder = path.join(root, 'releases', 'edge-extension', '1.0.0', 'extension')
 const read = (name) => fs.readFileSync(path.join(folder, name), 'utf8')
 const manifest = JSON.parse(read('manifest.json'))
 const clone = (value) => JSON.parse(JSON.stringify(value))
-const { asFunction, packagedSource } = require('../scripts/extension-core.cjs')
+const { asFunction, packagedSource } = require('../tools/extension-core.cjs')
 const compiled = read('assistant.js').replace(
   'root.__itsCallAssist = { destroy, inspect: () => lastSample }',
   'root.__itsCallAssist = { destroy, inspect: () => lastSample, rescan: safeScan, debug: () => ({ playing: [...sounds.keys()] }), exportCallNotesText }'
@@ -226,7 +226,6 @@ check('Manifest V3 runs only on the permitted top-level 8x8 host with packaged r
   assert.equal(metadata.coreSha256, crypto.createHash('sha256').update(core).digest('hex'))
   assert.equal(metadata.extensionVersion, manifest.version)
   assert(core.includes('v' + metadata.coreVersion))
-  assert.equal(read('assistant.js'), fs.readFileSync(path.join(root, 'releases', 'edge-extension', manifest.version, 'extension', 'assistant.js'), 'utf8'))
   assert(!/\beval\s*\(|\bnew Function\b|https?:\/\//.test(read('popup.html')))
   assert(!/<script[^>]*>\s*[^<\s]/.test(read('popup.html')))
 })
@@ -726,23 +725,67 @@ check('Unconfigured remote updates make no network request; configured updates u
   assert.equal(data.updateChecks, 1)
   assert.equal((await backend.request('status')).updatesConfigured, true)
 })
+function builderFixture (argv = [], config) {
+  const builder = fs.readFileSync(path.join(root, 'tools/build-extension.cjs'), 'utf8')
+  const written = new Map()
+  const copies = []
+  const removed = []
+  const fakeFS = {
+    ...fs,
+    readFileSync: (file, encoding) => config && file === path.join(root, 'tools', 'extension-updates.json')
+      ? JSON.stringify(config)
+      : fs.readFileSync(file, encoding),
+    writeFileSync: (file, content) => written.set(file, content),
+    // Keep the simulated build from changing either real output or release files.
+    cpSync: (from, to) => copies.push({ from, to }),
+    rmSync: (file) => removed.push(file),
+    mkdirSync () {}
+  }
+  const context = {
+    require: (name) => name === 'node:fs' ? fakeFS : name === './extension-core.cjs' ? require('../tools/extension-core.cjs') : require(name),
+    __dirname: path.join(root, 'tools'),
+    process: { argv, env: {} },
+    console: { log () {} },
+    URL
+  }
+  return { run: () => vm.runInNewContext(builder, context), written, copies, removed }
+}
 check('The deterministic builder accepts HTTPS update configuration and rejects executable update URLs', () => {
-  const builder = fs.readFileSync(path.join(root, 'scripts/build-extension.cjs'), 'utf8')
+  const staged = path.join(root, '..', 'output', 'edge-extension', manifest.version, 'extension')
   for (const updateUrl of ['https://updates.example.com/8x8-updates.xml', 'http://updates.example.com/file', 'javascript:alert(1)']) {
-    const written = new Map()
-    const fakeFS = {
-      ...fs,
-      readFileSync: (file, encoding) => file === path.join(folder, 'update-config.json')
-        ? JSON.stringify({ enabled: true, updateUrl, publicKey: null })
-        : fs.readFileSync(file, encoding),
-      writeFileSync: (file, content) => written.set(file, content)
-    }
-    const context = { require: (name) => name === 'node:fs' ? fakeFS : name === './extension-core.cjs' ? require('../scripts/extension-core.cjs') : require(name), __dirname: path.join(root, 'scripts'), process: { argv: [], env: {} }, console: { log () {} }, URL }
+    const e = builderFixture([], { enabled: true, updateUrl, publicKey: null })
     if (updateUrl.startsWith('https:')) {
-      vm.runInNewContext(builder, context)
-      assert.equal(JSON.parse(written.get(path.join(folder, 'manifest.json'))).update_url, updateUrl)
-      assert(written.get(path.join(folder, 'assistant.js')).includes(asFunction(packagedSource(read('assistant.js')))))
-    } else assert.throws(() => vm.runInNewContext(builder, context), /HTTPS/)
+      e.run()
+      assert.equal(JSON.parse(e.written.get(path.join(staged, 'manifest.json'))).update_url, updateUrl)
+      assert(e.written.get(path.join(staged, 'assistant.js')).includes(asFunction(packagedSource(read('assistant.js')))))
+      assert([...e.written.keys()].every((file) => file.startsWith(staged + path.sep)))
+    } else assert.throws(e.run, /HTTPS/)
+  }
+})
+check('A new extension core is staged outside releases under an explicit new version', () => {
+  const e = builderFixture(['--version', '1.0.1', '--refresh-core'])
+  e.run()
+  const staged = path.join(root, '..', 'output', 'edge-extension', '1.0.1', 'extension')
+  const outputManifest = JSON.parse(e.written.get(path.join(staged, 'manifest.json')))
+  const metadata = JSON.parse(e.written.get(path.join(staged, 'core-info.json')))
+  assert.equal(outputManifest.version, '1.0.1')
+  assert.equal(outputManifest.version_name, '1.0.1')
+  assert.equal(metadata.extensionVersion, '1.0.1')
+  assert.equal(metadata.coreVersion, fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim())
+  assert.equal(metadata.coreSha256, crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'))).digest('hex'))
+  assert.deepEqual(e.copies, [{ from: folder, to: staged }])
+  assert(e.written.get(path.join(staged, 'assistant.js')).includes(asFunction(fs.readFileSync(path.join(root, 'Service-Desk-8x8-Assistant.js'), 'utf8'))))
+  assert([...e.written.keys()].every((file) => file.startsWith(staged + path.sep)))
+})
+check('Refreshing a released core or choosing an invalid output path fails before writes', () => {
+  const existing = builderFixture(['--refresh-core'])
+  assert.throws(existing.run, /new --version/)
+  const invalid = builderFixture(['--version', '../outside', '--refresh-core'])
+  assert.throws(invalid.run, /complete extension version/)
+  for (const e of [existing, invalid]) {
+    assert.equal(e.written.size, 0)
+    assert.equal(e.copies.length, 0)
+    assert.equal(e.removed.length, 0)
   }
 })
 ;(async () => {
