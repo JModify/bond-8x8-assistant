@@ -2,6 +2,14 @@
 
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
+## Bookmark launcher — 2026-10-15
+
+- Packaged the unchanged prototype 1.2.0 as a self-contained JavaScript favourite. The downloadable HTML supports dragging onto Edge's favourites bar or importing as a bookmarks HTML file; no runtime code download or installed extension is needed.
+- Added an HTTPS origin guard, document-body readiness wait, duplicate loading-click guard and short startup-error message. The full released source remains readable and byte-identical inside the decoded payload; existing rerun/draft/file behaviour is unchanged.
+- Added deterministic build/check tooling, source-version/snapshot validation, a conservative bookmark size limit and targeted offline scenarios. Updated launch instructions while retaining the existing snippet setup. Managed Edge execution/import still needs verification on an authorised workstation.
+- Validation: syntax and Standard Style, 356 existing scenarios, 12 new bookmark scenarios, and an independent Python HTML parser/source round trip. The browser test environment blocks local-file navigation, so live drag/import and managed Edge execution were not verified.
+- This is a new launcher for the existing release. Prototype version/source, published releases/tags/assets, extension packages and all archived snapshots are unchanged.
+
 ## 1.2.0 (Prototype) — 2026-10-15
 
 - Added a top-left resize grip with pointer capture, keyboard arrows, cancellation and double-click/Home reset. Window dimensions persist as preferences and fit the current viewport. Menus, agent lists and footer controls use the resized space; minimise and personal break bars retain their compact height.

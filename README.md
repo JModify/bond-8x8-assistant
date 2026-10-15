@@ -19,6 +19,8 @@ The extension package is currently for development and testing, pending approval
 
 ## Prototype setup
 
+**Bookmark option:** open the [bookmark installer file](docs/bookmark/Service-Desk-8x8-Assistant-Bookmark-1.2.0.html) and use GitHub’s **Download raw file** button. Open the downloaded HTML in Edge, then drag **8x8 Assistant** onto your favourites bar. Click that favourite from your signed-in 8x8 tab to start the assistant. The file also includes an import option. Managed Edge compatibility still needs checking; the saved snippet below remains available.
+
 1. Open your logged-in 8x8 page in **Microsoft Edge**.
 2. Open the [prototype code](Service-Desk-8x8-Assistant.js), select **Raw**, then copy the whole file.
 3. Press **Ctrl+Shift+i** (you may need to do this multiple times consecutively as DevTools are supposed to be blocked by organisation)
@@ -42,7 +44,7 @@ The extension package is currently for development and testing, pending approval
    | --- | --- |
    | <a href="docs/images/filter-group.png"><img src="docs/images/filter-group.png" width="215" alt="8x8 group filter with ITS selected and favorite-only filtering off"></a> | <a href="docs/images/filter-user-status.png"><img src="docs/images/filter-user-status.png" width="215" alt="8x8 user status filter with every status selected"></a> |
 
-After refreshing or reopening 8x8, run the prototype from your saved snippet again with **Ctrl+Enter**.
+After refreshing or reopening 8x8, click your **8x8 Assistant** favourite or run your saved snippet again with **Ctrl+Enter**.
 
 **Optional auto-save:** open **Settings → Data location → Choose data file**, choose a TXT file and allow access. Call Notes restore when the prototype starts. Use **Reconnect** if Edge asks for access again.
 

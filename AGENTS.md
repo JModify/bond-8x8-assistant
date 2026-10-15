@@ -20,6 +20,7 @@ For each authorised application update:
 - Extension files have a single canonical location: `releases/edge-extension/<version>/extension/`. Do not recreate a root `extension/` copy or change a released bundle. Build and test directly from the versioned package.
 - Repository utilities live in `tools/`, not `scripts/`. `tools/extension-updates.json` is build configuration, separate from the installed extension. Builds stage outside the repository in `../output/`; refreshing the core requires an explicit new extension version.
 - Repository layout/documentation changes do not change the application version or create a new application release. Preserve the latest README setup edits and screenshots.
+- `tools/build-bookmark.cjs` packages the exact existing prototype release as an offline favourite; builds stage in `../output/bookmark/` and the distributable is checked in under `docs/bookmark/`. Launcher packaging alone does not change the core version or rewrite its release snapshot. Do not replace the embedded source with eval, a remote loader or a policy workaround; never embed caller data or local preferences. Keep URL size, origin/readiness, repeat-click and draft-preservation checks.
 
 # Application constraints
 

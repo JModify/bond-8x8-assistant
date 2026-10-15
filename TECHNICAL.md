@@ -4,7 +4,7 @@ Detailed alert rules, browser behaviour, storage, audio routing and development 
 
 Author: **Joshua Lavagna-Slater** | Current prototype version: **1.2.0**.
 
-The current JavaScript prototype is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js). It is run through Edge's DevTools **Snippets** feature; that browser label does not make it an installed extension.
+The current JavaScript prototype is [Service-Desk-8x8-Assistant.js](Service-Desk-8x8-Assistant.js). It can run from the self-contained bookmark launcher or Edge's DevTools **Snippets** feature. Neither method installs an extension.
 
 The intended deployment is an organisation-approved Microsoft Edge extension. `releases/edge-extension/1.0.0/extension/` contains the single, separately versioned development/test package, not a published or approved deployment. Approval and distribution must be arranged before team installation as an extension. Historical source filenames and snapshots stay unchanged; earlier references to a "script" describe this prototype.
 
@@ -22,7 +22,19 @@ The intended deployment is an organisation-approved Microsoft Edge extension. `r
 
 If the assistant says **Agent information frozen**, complete steps 4–6 so your own status and the complete agent list are readable. The assistant keeps its last-read table and menus open while you restore the view. If Monitoring says **Queue data unavailable**, scroll back to the three configured inbound queues for live counts and phone-cover alerts.
 
-The prototype starts monitoring immediately. The page can remain in the background, but it must stay open. A page refresh or browser restart requires running the saved snippet again. Browser audio may need a click in the page before it can play. Background tab throttling or freezing can delay detection.
+The prototype starts monitoring immediately. The page can remain in the background, but it must stay open. A page refresh or browser restart requires clicking the favourite or running the saved snippet again. Browser audio may need a click in the page before it can play. Background tab throttling or freezing can delay detection.
+
+## Offline bookmark launcher
+
+Download [the v1.2.0 installer](docs/bookmark/Service-Desk-8x8-Assistant-Bookmark-1.2.0.html) using GitHub's Download raw file control, then open the downloaded HTML in Edge. Drag **8x8 Assistant** onto the favourites bar; Ctrl+Shift+B shows the bar. Alternatively use Edge Settings → Import browser data → Favorites or bookmarks HTML file and select that same file. Move the imported favourite to the bar. Only one bookmark is included; the installer does not contain other links, remote assets or setup scripts. Open your existing signed-in 8x8 tab and click the saved favourite. This replaces the manual DevTools launch, not the normal queue/group configuration.
+
+The favourite is a percent-encoded `javascript:` URL containing the full, unchanged released prototype. It makes no code-download requests and uses no eval, Function constructor, external script element, extension, policy edit or remote debugging. A strict HTTPS origin guard refuses other sites and lookalike hosts. Startup waits for a document body, merges duplicate pre-load clicks into one callback, and catches startup errors with a short message. The original prototype's rerun cleanup, draft handoff, file reconnect and permissions remain intact. `void` prevents a string completion value replacing the current webpage. Caller details and personal configuration are never embedded in the bookmark.
+
+The installer uses one uppercase single-line Netscape-format bookmark entry, so it doubles as an HTML import file. Its metadata identifies the source version and SHA-256 digest. `npm run build:bookmark` validates the root VERSION/header/runtime version and exact release snapshot, compiles the generated wrapper without executing it, and stages the HTML in `../output/bookmark/`. The committed distributable lives in `docs/bookmark/`; `npm run check` checks it against a deterministic rebuild. The builder rejects URLs over Chromium's 500 KiB bookmark-editor input limit. This upstream limit is a packaging check, not proof of a particular Edge version's drag/import behaviour.
+
+The bookmark pins prototype 1.2.0; install a replacement when updating. Refresh, closing the tab and reopening Edge still require another click. Browser/site restrictions may block JavaScript favourites; do not change organisational controls to enable it. Use the saved snippet or an approved extension instead. Managed Edge bookmark import, bookmark execution, CSP behaviour and physical browser restarts require verification on an authorised workstation. Automated checks exercise the full URL round trip, exact source, origin/readiness guards, duplicate starts, note-draft retention, failures and markup safety in simulated page fixtures.
+
+Browser references: [JavaScript URL behaviour and restrictions](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Schemes/javascript), [Microsoft's favourites import steps](https://support.microsoft.com/en-us/edge/import-your-favorites-and-passwords-in-microsoft-edge), and [Chromium's bookmark editor input limit](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/resources/bookmarks/constants.ts).
 
 ## Automatic Call Notes data file
 
