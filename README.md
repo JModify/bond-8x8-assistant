@@ -12,18 +12,26 @@ This is a **JavaScript prototype** that runs in your 8x8 page. The goal is an **
 
 1. Open your logged-in 8x8 page in **Microsoft Edge**.
 2. Open the [prototype code](Service-Desk-8x8-Assistant.js), select **Raw**, then copy the whole file.
-3. Press **Ctrl+Shift+i** (you may need to do this multiple times consecutively) → **Sources → Click "»" icon → Snippets → New snippet**. Name it **8x8 Assistant**, paste the code and press **Ctrl+S**, then **Ctrl+Enter**.
-4. Open 8x8's **queue information** using the button to the right of your status, next to the bell icon.
+3. Press **Ctrl+Shift+i** (you may need to do this multiple times consecutively as DevTools are supposed to be blocked by organisation)
+4. Locate "Sources" from the top menu. NOTE: sometimes it is not visible, if this is the case, click the + button then find "Sources" from the dropdown menu.
+   
+   <img src="docs/images/devtools-sources.png" width="400" alt="DevTools Sources">
+   
+6. Click "»" icon → Snippets
+   
+   <img src="docs/images/arrow-then-snippets.png" width="400" alt="Location for snippets">
 
-<a href="docs/images/queue-info.png"><img src="docs/images/queue-info.png" width="215" alt="Queue information button location"></a>
+6. Click New snippet, Name it **8x8 Assistant**, paste the code and press **Ctrl+S**, then **Ctrl+Enter**.
+7. Open 8x8's **queue information** using the button to the right of your status, next to the bell icon.
+   
+   <a href="docs/images/queue-info.png"><img src="docs/images/queue-info.png" width="215" alt="Queue information button location"></a>
 
 5. Under **Groups → Filter**, select **ITS**, tick **every User status**, and leave **Show only favorite agents** off. Match the images below.
 6. Keep **ITS Academic Hotline**, **ITS Internal TRNFR** and **ITS Service Desk** visible in the queue list. These are monitored automatically.
 7. In the assistant, tick **G1** for agents covering phones, including **Me** when you are covering phones. Unticked agents are **G2**.
-
-| Group: select ITS | User status: tick every status |
-| --- | --- |
-| <a href="docs/images/filter-group.png"><img src="docs/images/filter-group.png" width="215" alt="8x8 group filter with ITS selected and favorite-only filtering off"></a> | <a href="docs/images/filter-user-status.png"><img src="docs/images/filter-user-status.png" width="215" alt="8x8 user status filter with every status selected"></a> |
+   | Group: select ITS | User status: tick every status |
+   | --- | --- |
+   | <a href="docs/images/filter-group.png"><img src="docs/images/filter-group.png" width="215" alt="8x8 group filter with ITS selected and favorite-only filtering off"></a> | <a href="docs/images/filter-user-status.png"><img src="docs/images/filter-user-status.png" width="215" alt="8x8 user status filter with every status selected"></a> |
 
 After refreshing or reopening 8x8, run the prototype from your saved snippet again with **Ctrl+Enter**.
 
