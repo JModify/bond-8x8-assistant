@@ -4,7 +4,7 @@ const path = require('node:path')
 const os = require('node:os')
 const assert = require('node:assert/strict')
 const { spawnSync } = require('node:child_process')
-const { prepareRelease, publishRelease, githubRequest, releaseAdded } = require('../tools/publish-prototype-release.cjs')
+const { prepareRelease, publishRelease, githubRequest } = require('../tools/publish-prototype-release.cjs')
 const { buildBookmark } = require('../tools/build-bookmark.cjs')
 const root = path.resolve(__dirname, '..')
 const commit = 'a'.repeat(40)
@@ -121,7 +121,7 @@ check('An altered bookmark cannot publish alongside a valid JavaScript snapshot'
     assert.throws(() => prepareRelease(folder, info.repository, commit), /bookmark download must match/)
   })
 })
-check('A future version is supported when all source, bookmark and note metadata agrees', () => {
+check('Later versions remain blocked even with otherwise matching source, bookmark and notes', () => {
   withTemporaryRelease((folder) => {
     const version = info.version.split('.').map(Number)
     version[2]++
@@ -144,9 +144,7 @@ check('A future version is supported when all source, bookmark and note metadata
     fs.appendFileSync(path.join(folder, 'CHANGELOG.md'), '\n## ' + future + ' (Prototype) — 2026-10-16\n\n- Fixture.\n')
     const built = buildBookmark(folder)
     fs.writeFileSync(path.join(folder, 'docs/bookmark/' + built.fileName), built.html)
-    const next = prepareRelease(folder, info.repository, commit)
-    assert.equal(next.version, future)
-    assert.equal(next.assets.length, 2)
+    assert.throws(() => prepareRelease(folder, info.repository, commit), /limited to prototype v1.2.1/)
   })
 })
 check('Missing or incorrectly versioned short release notes cannot publish', () => {
@@ -157,19 +155,6 @@ check('Missing or incorrectly versioned short release notes cannot publish', () 
     fs.unlinkSync(file)
     assert.throws(() => prepareRelease(folder, info.repository, commit))
   })
-})
-check('Only adding the current prototype snapshot enables publication', () => {
-  const snapshot = 'releases/edge-prototype/' + info.version + '/Service-Desk-8x8-Assistant.js'
-  assert(releaseAdded(info.version, [{ filename: snapshot, status: 'added' }]))
-  for (const files of [
-    undefined,
-    [],
-    [{ filename: 'README.md', status: 'modified' }],
-    [{ filename: snapshot, status: 'modified' }],
-    [{ filename: snapshot, status: 'removed' }],
-    [{ filename: 'releases/edge-extension/1.0.0/extension/assistant.js', status: 'added' }],
-    [{ filename: 'releases/edge-prototype/1.2.0/Service-Desk-8x8-Assistant.js', status: 'added' }]
-  ]) assert(!releaseAdded(info.version, files))
 })
 check('New release pins the tag and verifies both draft uploads before publishing', async () => {
   const api = fakeGitHub()

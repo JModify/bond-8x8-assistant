@@ -1,8 +1,9 @@
-/* Publish tested prototype releases with a JavaScript file and an offline bookmark. */
+/* Publish the authorised v1.2.1 prototype with both verified downloads. */
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { buildBookmark } = require('./build-bookmark.cjs')
+const RELEASE_VERSION = '1.2.1'
 
 function prepareRelease (root, repository, commit) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repository || '') || !/^[a-f0-9]{40}$/.test(commit || '')) {
@@ -16,6 +17,8 @@ function prepareRelease (root, repository, commit) {
       parts[0] < 1 || (parts[0] === 1 && (parts[1] < 2 || (parts[1] === 2 && parts[2] < 1)))) {
     throw new Error('Automated prototype releases start at version 1.2.1.')
   }
+  // Future updates need their own version-scoped publisher and workflow.
+  if (version !== RELEASE_VERSION) throw new Error('This publisher is limited to prototype v1.2.1.')
   const source = read('Service-Desk-8x8-Assistant.js')
   const snapshot = read('releases/edge-prototype/' + version + '/Service-Desk-8x8-Assistant.js')
   const metadata = JSON.parse(read('package.json'))
@@ -62,12 +65,6 @@ function prepareRelease (root, repository, commit) {
     'Both downloads run the same prototype. The organisation-approved Microsoft Edge extension remains the intended deployment.'
   ].join('\n\n')
   return { repository, commit, version, tag, name: 'Service Desk 8x8 Assistant - Prototype v' + version, body, assets }
-}
-
-function releaseAdded (version, files) {
-  // Only a newly added prototype snapshot requests publication; ordinary edits do not.
-  const snapshot = 'releases/edge-prototype/' + version + '/Service-Desk-8x8-Assistant.js'
-  return Array.isArray(files) && files.some((file) => file.filename === snapshot && file.status === 'added')
 }
 
 async function githubRequest (resource, options = {}) {
@@ -163,15 +160,16 @@ async function publishRelease (info, request = githubRequest) {
   return release.html_url
 }
 
-module.exports = { prepareRelease, publishRelease, githubRequest, releaseAdded }
+module.exports = { prepareRelease, publishRelease, githubRequest }
 if (require.main === module) {
   const info = prepareRelease(path.resolve(__dirname, '..'), process.env.GITHUB_REPOSITORY || 'JModify/bond-8x8-assistant', process.env.GITHUB_SHA || '0'.repeat(40))
   if (process.argv.includes('--check')) {
     console.log('Verified release inputs: prototype v' + info.version + ', JavaScript and bookmark.')
   } else {
-    // The user authorised ongoing releases. Only a tested main push adding a snapshot publishes.
+    // Only the fixed v1.2.1 snapshot workflow can publish; there is no future release trigger.
     if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_EVENT_NAME !== 'push' ||
-        process.env.PROTOTYPE_RELEASE_VERSION !== info.version || process.env.PROTOTYPE_RELEASE_APPROVED !== 'added-snapshot') {
+        info.version !== RELEASE_VERSION || process.env.PROTOTYPE_RELEASE_VERSION !== RELEASE_VERSION ||
+        process.env.PROTOTYPE_RELEASE_APPROVED !== 'v1.2.1-snapshot') {
       throw new Error('Prototype publication requires a main-branch GitHub Actions run adding its release snapshot.')
     }
     publishRelease(info).then((url) => console.log('Published prototype:', url)).catch((error) => { console.error(error.message); process.exitCode = 1 })
