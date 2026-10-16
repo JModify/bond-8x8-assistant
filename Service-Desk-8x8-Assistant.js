@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.2.0
+/* Service Desk 8x8 Assistant — Prototype v1.2.1
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -67,7 +67,7 @@
   const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.2.0'
+  const VERSION = deployment?.version || '1.2.1'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -679,6 +679,7 @@
       border-radius: 50%;
     }
     .data-location-status { white-space: pre-line; overflow-wrap: anywhere; }
+    .data-location > .data-location-help { margin-top: 14px; }
     .panel.main-panel {
       display: flex;
       flex-direction: column;
@@ -891,6 +892,7 @@
       font-size: 11px;
       line-height: 1.4;
     }
+    .menu-view > .data-warning { margin-bottom: 16px; }
     .data-warning strong {
       display: block;
       color: #81500c;
@@ -2357,7 +2359,7 @@
   const dataReconnect = createElement('button', 'Reconnect', dataLocation, 'hidden')
   const dataSave = createElement('button', 'Save now', dataLocation, 'hidden')
   const dataDisconnect = createElement('button', 'Disconnect', dataLocation, 'hidden')
-  createElement('p', 'Use Edge’s file picker to choose the folder. Edge may ask for access again after reopening. A crash or power loss can interrupt the latest save.', dataLocation, 'settings-description')
+  createElement('p', 'Use Edge’s file picker to choose the folder. The assistant reconnects when it starts; Edge may ask for access when you next click in 8x8. A crash or power loss can interrupt the latest save.', dataLocation, 'settings-description data-location-help')
   dataChoose.disabled = !!deployment || typeof root.showSaveFilePicker !== 'function'
   if (dataChoose.disabled) {
     dataLocationInfo.textContent = deployment
@@ -3553,6 +3555,9 @@
     let lastSavedAt = 0
     let remembered = true
     let needsAccess = false
+    // Re-authorise a remembered file at most once automatically, within a genuine page gesture.
+    let startupPermissionPending = false
+    let startupPermissionAttempted = false
     let cleanRevision = historyRevision
     let inheritedChanges = resumedDataFile?.uncheckpointed === true
     let parentCheckpointRead = false
@@ -3764,21 +3769,35 @@
             : error?.message || 'Auto-save stopped. Your notes are still available in this tab.'
       status(message, true)
     }
-    async function connect (candidate, token) {
+    async function connect (candidate, token, startup = false) {
       loading = true
       try {
         if (!candidate || candidate.kind !== 'file' || typeof candidate.queryPermission !== 'function' ||
             typeof candidate.getFile !== 'function' || typeof candidate.createWritable !== 'function') {
           throw new Error('Choose your data file again. Its saved connection is no longer valid.')
         }
-        if (await candidate.queryPermission({ mode: 'readwrite' }) !== 'granted') {
-          if (!active(token)) return
+        let permission = await candidate.queryPermission({ mode: 'readwrite' })
+        if (!active(token)) return
+        if (permission === 'prompt' && startup && !startupPermissionAttempted) {
+          startupPermissionPending = true
+          // A bookmark may retain transient activation. Check it now, after the asynchronous reads.
+          if (root.navigator.userActivation?.isActive === true) {
+            startupPermissionPending = false
+            startupPermissionAttempted = true
+            permission = await candidate.requestPermission({ mode: 'readwrite' })
+            if (!active(token)) return
+          }
+        }
+        if (permission !== 'granted') {
           handle = candidate
           ready = false
           needsAccess = true
-          status('File access needed. Click Reconnect.', true)
+          status(startupPermissionPending
+            ? 'File access needed. Click in 8x8 to reconnect, or use Reconnect.'
+            : 'File access needed. Click Reconnect.', true)
           return
         }
+        startupPermissionPending = false
         const text = await readNotesFile(await candidate.getFile())
         const digest = await fileDigest(text)
         if (!active(token)) return
@@ -3895,6 +3914,8 @@
     async function choose () {
       if (destroyed || stopping || dataChoose.disabled) return
       if (transferBusy) { status('Finish the TXT import or export before changing your data file.'); return }
+      startupPermissionPending = false
+      startupPermissionAttempted = true
       let token = epoch
       const selection = ++pickerEpoch
       const wasReady = ready
@@ -3923,12 +3944,24 @@
         if (error.name !== 'AbortError') status(error.message || 'The data file could not be selected.', true)
       } finally { if (active(token)) changed() }
     }
+    function onInteraction (event) {
+      if (!startupPermissionPending || startupPermissionAttempted || !event?.isTrusted ||
+          root.navigator.userActivation?.isActive !== true || stopping || destroyed) return
+      // Keep assistant file/device buttons dedicated to their own requested action.
+      if (event.target === host || event.composedPath?.().includes(host)) return
+      // Use the existing trusted page-input handlers; no synthetic click or unattended prompt.
+      startupPermissionPending = false
+      startupPermissionAttempted = true
+      return resume()
+    }
     async function resume () {
       if (!handle || stopping || destroyed) return
+      startupPermissionPending = false
+      startupPermissionAttempted = true
       const token = ++epoch
       ready = false
       try {
-        // Re-authorisation must begin inside this real button click; never prompt on startup.
+        // Start the request directly in the real Reconnect click or trusted page interaction.
         const permission = await handle.requestPermission({ mode: 'readwrite' })
         if (!active(token)) return
         if (permission !== 'granted') { needsAccess = true; status('File access was not allowed. Your notes stay in this tab.', true); return }
@@ -3939,6 +3972,8 @@
       } catch (error) { if (active(token)) problem(error) }
     }
     async function disconnect () {
+      startupPermissionPending = false
+      startupPermissionAttempted = true
       const token = ++epoch
       parentCheckpointRead = true
       ready = false
@@ -3972,7 +4007,7 @@
         if (!handle && disabled) return
         if (!handle && root.indexedDB) handle = await connection('get') || null
         if (!active(token)) return
-        if (handle) await connect(handle, token)
+        if (handle) await connect(handle, token, true)
         else if (settingsStorage.getItem(ENABLED) === 'true') status('Choose your data file again to restore Call Notes.', true)
       } catch (error) {
         if (active(token)) {
@@ -3983,6 +4018,7 @@
       }
     }
     function stop () {
+      startupPermissionPending = false
       stopping = true
       root.clearTimeout(timer)
       root.clearTimeout(databaseTimeout)
@@ -4015,6 +4051,7 @@
       changed,
       flush,
       stop,
+      onInteraction,
       usesFile,
       // Opaque checkpoint metadata also survives a rerun when session storage is blocked.
       session: () => ({
@@ -4687,6 +4724,7 @@
   function enableAlerts (event) {
     // Only real keyboard or pointer actions can satisfy browser audio restrictions.
     if (!event?.isTrusted || destroyed) return
+    automaticData?.onInteraction(event)
     if (event.type === 'pointerdown') saveHistoryOutside(event)
     prepareSound()
   }

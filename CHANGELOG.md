@@ -2,6 +2,14 @@
 
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
+## 1.2.1 (Prototype) — 2026-10-16
+
+- Automatically restore the remembered Data location at startup. Retained permission imports notes immediately. When permission needs renewal, use an active launch gesture or the next trusted, activated interaction in 8x8 for one request. Keep explicit Reconnect, respect declines/disconnection, guard stale results and preserve the existing TXT conflict and recovery protections.
+- Add space below the frozen-agent warning in Call Notes, Assistant Settings and Sound Settings, without changing main-menu spacing. Separate the Data location buttons from their help text.
+- Split README setup into recommended Bookmark Prototype and DevTools Script Prototype, with brief benefits, direct downloads, preserved setup images and shared 8x8 configuration.
+- Start ongoing GitHub Release publication as explicitly requested: concise versioned release notes, the exact JavaScript file and its deterministic HTML bookmark, with automatic source ZIP/tar.gz links supplied by GitHub. Validate before publishing, verify both upload digests and sizes, resume matching drafts, and never overwrite old releases, tags or downloads.
+- Validation runs on GitHub Actions because this session's local workspace is unavailable. Existing behaviour and targeted startup/release scenarios must pass before the release publishes. Managed Edge permission prompts and visual spacing remain to be checked on a workstation.
+
 ## Bookmark launcher — 2026-10-15
 
 - Packaged the unchanged prototype 1.2.0 as a self-contained JavaScript favourite. The downloadable HTML supports dragging onto Edge's favourites bar or importing as a bookmarks HTML file; no runtime code download or installed extension is needed.

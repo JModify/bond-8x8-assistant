@@ -4,9 +4,9 @@ See phone coverage, keep call notes and get reminders to finish wrap-up or retur
 
 This is a **JavaScript prototype** that runs in your 8x8 page.
 
-**Author:** Joshua Lavagna-Slater · **Prototype version:** 1.2.0
+**Author:** Joshua Lavagna-Slater · **Prototype version:** 1.2.1
 
-[Prototype code](Service-Desk-8x8-Assistant.js) · [Download release](https://github.com/JModify/bond-8x8-assistant/releases/tag/v1.2.0) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
+[Prototype code](Service-Desk-8x8-Assistant.js) · [Download release](https://github.com/JModify/bond-8x8-assistant/releases/tag/v1.2.1) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
 
 ## Future direction
 
@@ -19,34 +19,53 @@ The extension package is currently for development and testing, pending approval
 
 ## Prototype setup
 
-**Bookmark option:** open the [bookmark installer file](docs/bookmark/Service-Desk-8x8-Assistant-Bookmark-1.2.0.html) and use GitHub’s **Download raw file** button. Open the downloaded HTML in Edge, then drag **8x8 Assistant** onto your favourites bar. Click that favourite from your signed-in 8x8 tab to start the assistant. The file also includes an import option. Managed Edge compatibility still needs checking; the saved snippet below remains available.
+Choose either launch method. Both run the same assistant.
 
-1. Open your logged-in 8x8 page in **Microsoft Edge**.
-2. Open the [prototype code](Service-Desk-8x8-Assistant.js), select **Raw**, then copy the whole file.
-3. Press **Ctrl+Shift+i** (you may need to do this multiple times consecutively as DevTools are supposed to be blocked by organisation)
-4. Locate "Sources" from the top menu. NOTE: sometimes it is not visible, if this is the case, click the + button then find "Sources" from the dropdown menu.
-   
+### Bookmark Prototype
+
+**Recommended.** Start the assistant with one click from Edge’s favourites bar.
+
+1. [Download the bookmark installer (.html)](https://github.com/JModify/bond-8x8-assistant/releases/download/v1.2.1/Service-Desk-8x8-Assistant-Bookmark-1.2.1.html).
+2. Open the downloaded file in **Microsoft Edge**. Press **Ctrl+Shift+B** to show the favourites bar.
+3. Drag **8x8 Assistant** onto the bar. The file also includes an import option.
+4. Open your signed-in **8x8 tab**, then click the saved **8x8 Assistant** favourite.
+
+After refreshing or reopening 8x8, click the favourite again. Replace it with the new download when updating.
+
+### DevTools Script Prototype
+
+Save an editable copy in Edge’s DevTools and run it from the Snippets menu.
+
+1. [Download the JavaScript file (.js)](https://github.com/JModify/bond-8x8-assistant/releases/download/v1.2.1/Service-Desk-8x8-Assistant-Prototype-1.2.1.js). Open it in **Notepad** and copy all the code.
+2. Open your signed-in **8x8 tab** and press **Ctrl+Shift+I**.
+3. Open **Sources**. If it is hidden, click **+** and choose **Sources**.
+
    <img src="docs/images/devtools-sources.png" width="400" alt="DevTools Sources">
-   
-6. Click "»" icon → Snippets
-   
+
+4. Click **» → Snippets**, then **New snippet**.
+
    <img src="docs/images/arrow-then-snippets.png" width="400" alt="Location for snippets">
 
-6. Click New snippet, Name it **8x8 Assistant**, paste the code and press **Ctrl+S**, then **Ctrl+Enter**.
-7. Open 8x8's **queue information** using the button to the right of your status, next to the bell icon.
-   
+5. Name it **8x8 Assistant**, paste the code, press **Ctrl+S**, then **Ctrl+Enter**.
+
+After refreshing or reopening 8x8, open the saved snippet and press **Ctrl+Enter** again.
+
+### Configure 8x8 — both methods
+
+1. Open **queue information** using the button to the right of your status, next to the bell icon.
+
    <a href="docs/images/queue-info.png"><img src="docs/images/queue-info.png" width="215" alt="Queue information button location"></a>
 
-5. Under **Groups → Filter**, select **ITS**, tick **every User status**, and leave **Show only favorite agents** off. Match the images below.
-6. Keep **ITS Academic Hotline**, **ITS Internal TRNFR** and **ITS Service Desk** visible in the queue list. These are monitored automatically.
-7. In the assistant, tick **G1** for agents covering phones, including **Me** when you are covering phones. Unticked agents are **G2**.
+2. Under **Groups → Filter**, select **ITS**, tick **every User status**, and leave **Show only favorite agents** off.
+
    | Group: select ITS | User status: tick every status |
    | --- | --- |
    | <a href="docs/images/filter-group.png"><img src="docs/images/filter-group.png" width="215" alt="8x8 group filter with ITS selected and favorite-only filtering off"></a> | <a href="docs/images/filter-user-status.png"><img src="docs/images/filter-user-status.png" width="215" alt="8x8 user status filter with every status selected"></a> |
 
-After refreshing or reopening 8x8, click your **8x8 Assistant** favourite or run your saved snippet again with **Ctrl+Enter**.
+3. Keep **ITS Academic Hotline**, **ITS Internal TRNFR** and **ITS Service Desk** visible in the queue list.
+4. Tick **G1** for agents covering phones, including **Me** when you are covering phones. Unticked agents are **G2**.
 
-**Optional auto-save:** open **Settings → Data location → Choose data file**, choose a TXT file and allow access. Call Notes restore when the prototype starts. Use **Reconnect** if Edge asks for access again.
+**Optional auto-save:** open **Settings → Data location → Choose data file**, choose a TXT file and allow access. The assistant reconnects and restores Call Notes when it starts. Edge may ask for access again on your next click in 8x8; **Reconnect** remains available in Settings.
 
 ## Assistant views
 

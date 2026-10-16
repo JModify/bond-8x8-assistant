@@ -801,6 +801,135 @@ check('Unsupported automatic access leaves ordinary Call Notes imports available
   assert(m.status().includes('unavailable'))
 })
 
+check('Startup renews a remembered data file during an active launch gesture and imports it', async () => {
+  const first = make()
+  importNote(first.e, 'Startup Permission Example')
+  await first.choose()
+  await first.e.window.__itsCallAssist.destroy()
+  first.disk.permission = 'prompt'
+  const next = make(first.disk, first.database, {
+    beforeStart: ({ window }) => { window.navigator.userActivation = { isActive: true } }
+  })
+  await settle()
+  assert.equal(next.disk.requests, 1)
+  assert.equal(next.picks(), 0)
+  assert.equal(records(next.e)[0].caller, 'Startup Permission Example')
+  assert(!next.status().includes('File access needed'))
+})
+check('Startup waits for a genuine activated interaction when launch permission cannot be requested yet', async () => {
+  const first = make()
+  importNote(first.e, 'Page Interaction Example')
+  await first.choose()
+  await first.e.window.__itsCallAssist.destroy()
+  first.disk.permission = 'prompt'
+  const activation = { isActive: false }
+  const next = make(first.disk, first.database, {
+    beforeStart: ({ window }) => { window.navigator.userActivation = activation }
+  })
+  await settle()
+  assert.equal(records(next.e).length, 0)
+  assert.equal(next.disk.requests, 0)
+  assert(next.status().includes('Click in 8x8'))
+  const listeners = [...next.e.window.document.listeners.get('pointerdown')]
+  activation.isActive = true
+  for (const listener of listeners) listener({ type: 'pointerdown', isTrusted: false })
+  assert.equal(next.disk.requests, 0)
+  activation.isActive = false
+  next.e.pointerDown(next.e.window.document.body)
+  assert.equal(next.disk.requests, 0)
+  activation.isActive = true
+  next.e.pointerDown(next.e.window.document.body)
+  assert.equal(next.disk.requests, 1)
+  await settle()
+  assert.equal(records(next.e)[0].caller, 'Page Interaction Example')
+  next.e.pointerDown(next.e.window.document.body)
+  assert.equal(next.disk.requests, 1)
+})
+check('An expired launch gesture is rechecked after permission lookup and can reconnect on the next page click', async () => {
+  const first = make()
+  importNote(first.e, 'Expired Gesture Example')
+  await first.choose()
+  await first.e.window.__itsCallAssist.destroy()
+  first.disk.permission = 'prompt'
+  const activation = { isActive: true }
+  let initialQuery = true
+  first.disk.handle.queryPermission = async () => {
+    if (initialQuery) { activation.isActive = false; initialQuery = false }
+    return first.disk.permission
+  }
+  const next = make(first.disk, first.database, {
+    beforeStart: ({ window }) => { window.navigator.userActivation = activation }
+  })
+  await settle()
+  assert.equal(next.disk.requests, 0)
+  activation.isActive = true
+  next.e.pointerDown(next.e.window.document.body)
+  await settle()
+  assert.equal(next.disk.requests, 1)
+  assert.equal(records(next.e)[0].caller, 'Expired Gesture Example')
+})
+check('Declining automatic reconnection never loops permission requests or reads the file', async () => {
+  const disk = fakeDisk()
+  disk.permission = 'prompt'
+  disk.nextPermission = 'denied'
+  const activation = { isActive: true }
+  const m = make(disk, fakeDatabase(disk.handle), {
+    beforeStart: ({ window }) => { window.navigator.userActivation = activation }
+  })
+  await settle()
+  assert.equal(disk.requests, 1)
+  assert.equal(disk.reads, 0)
+  assert.equal(disk.writes.length, 0)
+  m.e.pointerDown(m.e.window.document.body)
+  m.e.pointerDown(m.e.window.document.body)
+  await settle()
+  assert.equal(disk.requests, 1)
+  disk.nextPermission = 'granted'
+  await m.e.button('Reconnect').onclick()
+  assert.equal(disk.requests, 2)
+})
+check('Disconnect invalidates a delayed startup permission result without restoring old notes', async () => {
+  const first = make()
+  importNote(first.e, 'Disconnected Startup Example')
+  await first.choose()
+  await first.e.window.__itsCallAssist.destroy()
+  first.disk.permission = 'prompt'
+  let allow
+  first.disk.handle.requestPermission = () => {
+    first.disk.requests++
+    return new Promise((resolve) => { allow = () => { first.disk.permission = 'granted'; resolve('granted') } })
+  }
+  const next = make(first.disk, first.database, {
+    beforeStart: ({ window }) => { window.navigator.userActivation = { isActive: true } }
+  })
+  await settle()
+  assert.equal(first.disk.requests, 1)
+  await next.e.button('Disconnect').onclick()
+  allow()
+  await settle()
+  assert.equal(records(next.e).length, 0)
+  assert.equal(next.database.handle, null)
+  assert(next.status().includes('Disconnected'))
+})
+check('Automatic reconnect leaves assistant controls and an explicitly disconnected file alone', async () => {
+  const disk = fakeDisk()
+  disk.permission = 'prompt'
+  const activation = { isActive: false }
+  const m = make(disk, fakeDatabase(disk.handle), {
+    beforeStart: ({ window }) => { window.navigator.userActivation = activation }
+  })
+  await settle()
+  activation.isActive = true
+  const host = m.e.window.document.body.querySelector('#its-call-assist-panel')
+  m.e.pointerDown(host)
+  assert.equal(disk.requests, 0)
+  await m.e.button('Disconnect').onclick()
+  m.e.pointerDown(m.e.window.document.body)
+  await settle()
+  assert.equal(disk.requests, 0)
+  assert.equal(disk.reads, 0)
+})
+
 ;(async () => {
   for (const { name, fn } of checks) {
     await fn()
