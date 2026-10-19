@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.2.1
+/* Service Desk 8x8 Assistant — Prototype v1.2.2
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -67,15 +67,18 @@
   const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.2.1'
+  const VERSION = deployment?.version || '1.2.2'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
   const SECONDS_PER_MINUTE = 60
   const MILLISECONDS_PER_SECOND = 1000
   const MAX_NOTES_LENGTH = 20000
-  const MAX_IMPORT_BYTES = 5 * 1024 * 1024
-  const MAX_IMPORT_RECORDS = 2000
+  // Bound whole-file parsing and rewriting; note size matters as well as record count.
+  const MAX_IMPORT_BYTES = 20 * 1024 * 1024
+  const MAX_IMPORT_RECORDS = 10000
+  const HISTORY_PAGE_SIZE = Math.min(100, Math.max(10,
+    Number.isSafeInteger(deployment?.historyPageSize) ? deployment.historyPageSize : 50))
   let wrapUpSession = resumedWrapUp || null
   // Page labels may contain repeated whitespace or missing text nodes.
   const normaliseText = (value) =>
@@ -112,7 +115,7 @@
   }
   function isVisible (node) {
     // A detached or collapsed row is not evidence of an agent's current status.
-    if (!node || !node.getClientRects().length) return false
+    if (!node || node.isConnected === false || !node.getClientRects().length) return false
     const view = node.ownerDocument.defaultView
     // A visible-looking child can still belong to a hidden parent panel.
     for (let ancestor = node; ancestor?.nodeType === 1; ancestor = ancestor.parentElement) {
@@ -327,7 +330,7 @@
       row.querySelector('[data-test-id="agent-name-label"]')?.getAttribute('title') ||
         row.getAttribute('aria-label')
     )
-  function readAgentAndQueues (docs, name) {
+  function readAgentAndQueues (docs, name, queueData = null) {
     const errors = []
     // A unique name match is required; duplicate rows must not choose an agent at random.
     const candidates = agentRows(docs).filter((r) => agentName(r) === name)
@@ -353,6 +356,10 @@
     }
     // Separate roster errors from queue errors: scrolling queues must not conceal the controls.
     const agentErrors = [...errors]
+    const { queues, queueErrors } = queueData || readQueues(docs)
+    return { agent, queues, agentErrors, queueErrors, errors: [...agentErrors, ...queueErrors] }
+  }
+  function readQueues (docs) {
     const queueErrors = []
     // Only the three exact configured inbound names are read; outbound rows are ignored.
     const rows = docs.flatMap((d) =>
@@ -370,7 +377,7 @@
         return { name, waiting: null }
       }
       // Accessible cell titles identify the waiting count without assuming column order.
-      const cells = [...matches[0].querySelectorAll('[role="gridcell"][title]')]
+      const cells = [...matches[0].querySelectorAll('[role="gridcell"][title]')].filter(isVisible)
       const cellsWaiting = cells.filter((c) =>
         /^\d+\s+Interactions? waiting$/i.test(normaliseText(c.getAttribute('title')))
       )
@@ -381,7 +388,7 @@
           : null
       const titleCount =
         cellsWaiting.length === 1
-          ? Number(cellsWaiting[0].getAttribute('title').match(/^\d+/)?.[0])
+          ? Number(normaliseText(cellsWaiting[0].getAttribute('title')).match(/^\d+/)?.[0])
           : null
       // Mismatched text and title can occur midway through a page update.
       if (waiting === null || waiting !== titleCount || !Number.isSafeInteger(waiting)) {
@@ -398,7 +405,9 @@
         const labelled = parseDuration(
           normaliseText(waits[0].getAttribute('title')).replace(/\sLongest waiting time$/i, '')
         )
-        const displayed = parseDuration(normaliseText(waits[0].textContent))
+        const displayed = parseDuration(
+          normaliseText(waits[0].textContent).replace(/\sLongest waiting time$/i, '')
+        )
         // Require both representations to agree before enabling a timed queue alert.
         if (labelled !== null && displayed !== null && labelled === displayed) {
           waitSeconds = labelled
@@ -406,7 +415,7 @@
       }
       return { name, waiting, waitSeconds }
     })
-    return { agent, queues, agentErrors, queueErrors, errors: [...agentErrors, ...queueErrors] }
+    return { queues, queueErrors }
   }
   function readMyPresence (docs) {
     const page = readPersonalPage(docs)
@@ -2191,13 +2200,11 @@
   historyList.setAttribute('role', 'region')
   historyList.setAttribute('aria-label', deployment?.persistent ? 'Saved calls, newest first' : 'Calls saved this session, newest first')
   historyList.tabIndex = 0
-  // Persistent histories can span many days; keep each rendered page responsive.
-  const historyPager = deployment?.historyPageSize
-    ? createElement('div', '', historyPanel, 'history-summary hidden')
-    : null
-  const historyPrevious = historyPager ? createElement('button', 'Previous', historyPager) : null
-  const historyPageLabel = historyPager ? createElement('span', '', historyPager, 'small') : null
-  const historyNext = historyPager ? createElement('button', 'Next', historyPager) : null
+  // The prototype can restore years of notes too. Only one page owns live card/input nodes.
+  const historyPager = createElement('div', '', historyPanel, 'history-summary hidden')
+  const historyPrevious = createElement('button', 'Previous', historyPager)
+  const historyPageLabel = createElement('span', '', historyPager, 'small')
+  const historyNext = createElement('button', 'Next', historyPager)
   createElement(
     'p',
     deployment?.persistent
@@ -2538,6 +2545,10 @@
     renderStatistics()
   }
   const CALL_HISTORY_KEY = 'service-desk-8x8-call-history-v1'
+  const CALL_HISTORY_LIVE_KEY = CALL_HISTORY_KEY + '-live'
+  let historyBackupGeneration = null
+  let historyBackupRevision = -1
+  let historyBackupFailed = false
   const callHistory = {
     startedAt: Date.now(),
     nextId: 1,
@@ -2560,6 +2571,25 @@
     .map(([id, fields]) => [id, new Set(fields.filter((key) => ['callerInput', 'notesInput'].includes(key)))]))
   const historyWidgets = new Map()
   const historyDays = new Map()
+  const historySearchIndex = new WeakMap()
+  function searchableNote (record) {
+    const fields = [record.caller, record.notes, record.jobNumber, record.number, record.queue, record.transactionId]
+    let cached = historySearchIndex.get(record)
+    // Reuse normalised long notes while their editable fields are unchanged. Weak keys
+    // release deleted/replaced records instead of keeping an unbounded search cache.
+    if (!cached || fields.some((value, index) => value !== cached.fields[index])) {
+      cached = { fields, text: normaliseStatus(fields.join(' ')), digits: phoneDigits(record.number) }
+      historySearchIndex.set(record, cached)
+    }
+    return cached
+  }
+  function copyHistoryRecord (record, changes = {}) {
+    const copy = { ...record, ...changes }
+    const cached = historySearchIndex.get(record)
+    // File restoration reassigns local row numbers; the unchanged search fields can share their index.
+    if (cached) historySearchIndex.set(copy, cached)
+    return copy
+  }
   let historyEmpty = null
   let transferBusy = false
   // Keep internal line breaks/indentation, normalise Windows endings and cap the editable size.
@@ -2634,12 +2664,24 @@
       call.jobNumber = cleanJobNumber(text('jobNumber', 80))
       call.completedAt = value.completedAt
       call.durationComplete = value.durationComplete === true
+      // File parsing runs in batches; build its search index there rather than on the first keypress.
+      searchableNote(call)
     }
     return call
   }
   try {
     const stored = historyStorage?.getItem(CALL_HISTORY_KEY)
-    const saved = stored ? JSON.parse(stored) : resumedCallHistory
+    // A rerun's in-memory handoff is newer than a potentially quota-limited tab backup.
+    let saved = resumedCallHistory || (stored ? JSON.parse(stored) : null)
+    if (!resumedCallHistory && saved?.backupGeneration) {
+      try {
+        const live = JSON.parse(historyStorage.getItem(CALL_HISTORY_LIVE_KEY) || 'null')
+        // An interrupted base write must never attach another generation's pending caller.
+        if (live?.backupGeneration === saved.backupGeneration && live.startedAt === saved.startedAt) {
+          saved = { ...saved, ...live, records: saved.records }
+        }
+      } catch {}
+    }
     if (saved && typeof saved === 'object') {
       if (validCallTime(saved.startedAt)) callHistory.startedAt = saved.startedAt
       const ids = new Set()
@@ -2731,8 +2773,27 @@
         deployment.saveHistory(callHistory, historyRevision)
         return
       }
-      // Keep the tab copy separate from preferences; the optional file writer runs independently.
-      historyStorage?.setItem(CALL_HISTORY_KEY, JSON.stringify(callHistory))
+      const wasFailed = historyBackupFailed
+      if (historyBackupRevision !== historyRevision) {
+        historyBackupRevision = historyRevision
+        try {
+          // Completed notes are immutable between revisions. Do not serialise/rewrite
+          // the entire archive for every second of a live call or every typed character.
+          const generation = newNoteKey()
+          historyStorage?.setItem(CALL_HISTORY_KEY, JSON.stringify({ ...callHistory, backupGeneration: generation }))
+          historyBackupGeneration = generation
+          historyBackupFailed = false
+        } catch { historyBackupFailed = true }
+      }
+      if (historyBackupGeneration) {
+        try {
+          const { records, ...live } = callHistory
+          historyStorage?.setItem(CALL_HISTORY_LIVE_KEY, JSON.stringify({ ...live, backupGeneration: historyBackupGeneration }))
+        } catch { historyBackupFailed = true }
+      }
+      if (historyBackupFailed && !wasFailed) {
+        transferMessage('The browser tab backup is full or unavailable. Keep your data file connected and export a copy before closing.', true)
+      }
     } catch {
       // History and draft editing remain usable in memory when storage is blocked or full.
     }
@@ -3169,6 +3230,8 @@
     ['Full duration recorded', 'durationComplete', 'boolean'],
     ['Recovered draft', 'recovered', 'boolean']
   ]
+  // Resolve each labelled field once; large imports must not repeat every label comparison per row.
+  const NOTE_FIELDS_BY_LABEL = new Map(NOTE_TEXT_FIELDS.map((field) => [normaliseStatus(field[0]), field]))
   const isNoteSeparator = (line) => /^\s*-{20,}\s*$/.test(line)
   function escapedNoteLine (line) {
     // Protect delimiter-like notes and leading backslashes without flattening multiline text.
@@ -3261,7 +3324,7 @@
         const colon = line.indexOf(':')
         if (colon < 0) continue
         const label = normaliseStatus(line.slice(0, colon))
-        const field = NOTE_TEXT_FIELDS.find(([name]) => normaliseStatus(name) === label)
+        const field = NOTE_FIELDS_BY_LABEL.get(label)
         if (!field) continue
         const [, key, type] = field
         if (seen.has(key)) throw new Error('A call detail appears twice in one record.')
@@ -3304,17 +3367,15 @@
     record.originalId = fields.originalId || null
     return record
   }
-  function parseCallNotesText (text, allowEmpty = false) {
+  function callNoteBlocks (text) {
     if (typeof text !== 'string' || text.length > MAX_IMPORT_BYTES) {
-      throw new Error('Choose a text file no larger than 5 MB.')
+      throw new Error('Choose a text file no larger than 20 MB.')
     }
     const normalised = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
     // Reject binary control bytes while allowing Notepad's tabs and line breaks.
-    for (const character of normalised) {
-      const code = character.charCodeAt(0)
-      if (code < 32 && ![9, 10].includes(code)) {
-        throw new Error('The selected file is not readable plain text.')
-      }
+    // eslint-disable-next-line no-control-regex -- These exact forbidden bytes are the validation target.
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(normalised)) {
+      throw new Error('The selected file is not readable plain text.')
     }
     // Consume the delimiter's own newline once. A second blank first line is a missing
     // name, so retain it as Unknown rather than stealing the first line of notes.
@@ -3326,8 +3387,28 @@
       if (!blocks[0].includes('(TXT v1)')) throw new Error('This Call Notes file uses a newer format.')
       blocks.shift()
     }
-    if (blocks.length > MAX_IMPORT_RECORDS) throw new Error('Import up to 2,000 records at a time.')
+    if (blocks.length > MAX_IMPORT_RECORDS) throw new Error('Import up to 10,000 records at a time.')
+    return blocks
+  }
+  function parseCallNotesText (text, allowEmpty = false) {
+    const blocks = callNoteBlocks(text)
     const records = blocks.map(readTextNote).filter(Boolean)
+    if (!records.length && !allowEmpty) throw new Error('No call notes were found in the selected file.')
+    return records
+  }
+  async function parseCallNotesFile (text, allowEmpty = false, isCurrent = () => !destroyed) {
+    const blocks = callNoteBlocks(text)
+    const records = []
+    for (let first = 0; first < blocks.length; first += 100) {
+      // Yield between validated batches so Edge can paint and accept input during a large file read.
+      if (first) {
+        if (typeof root.scheduler?.yield === 'function') await root.scheduler.yield()
+        else await new Promise((resolve) => root.setTimeout(resolve, 0))
+      }
+      if (!isCurrent()) throw Object.assign(new Error('File import cancelled.'), { name: 'AbortError' })
+      records.push(...blocks.slice(first, first + 100).map(readTextNote).filter(Boolean))
+    }
+    if (!isCurrent()) throw Object.assign(new Error('File import cancelled.'), { name: 'AbortError' })
     if (!records.length && !allowEmpty) throw new Error('No call notes were found in the selected file.')
     return records
   }
@@ -3338,8 +3419,7 @@
       .map(([, key]) => record[key])
     return JSON.stringify([record.caller, record.notes, record.jobNumber, ...details])
   }
-  function importCallNotesText (text) {
-    const records = parseCallNotesText(text)
+  function importCallNotesText (text, records = parseCallNotesText(text)) {
     saveHistoryEdit(false)
     const knownKeys = new Set([...callHistory.records, ...callHistory.pending].map((call) => call.recordKey))
     const legacyCounts = new Map()
@@ -3471,7 +3551,9 @@
       const text = await readNotesFile(file)
       // A closed/replaced assistant must not accept a late file-read result.
       if (destroyed) return
-      const { added, skipped } = importCallNotesText(text)
+      const records = await parseCallNotesFile(text)
+      if (destroyed) return
+      const { added, skipped } = importCallNotesText(text, records)
       transferMessage(`${added} ${added === 1 ? 'call note' : 'call notes'} imported.${skipped ? ` ${skipped} already present.` : ''}`)
     } catch (error) {
       transferMessage(error instanceof TypeError ? 'The file could not be read as a Notepad text file.' : error.message || 'The file could not be imported. Try selecting it again.', true)
@@ -3481,7 +3563,7 @@
     }
   }
   async function readNotesFile (file) {
-    if (file.size > MAX_IMPORT_BYTES) throw new Error('Choose a text file no larger than 5 MB.')
+    if (file.size > MAX_IMPORT_BYTES) throw new Error('Choose a text file no larger than 20 MB.')
     if (root.TextDecoder && file.arrayBuffer) {
       // Share the manual import encoding rules, including Notepad UTF-16 and invalid-byte rejection.
       const bytes = new Uint8Array(await file.arrayBuffer())
@@ -3552,9 +3634,17 @@
     let fileId = ''
     let generation = ''
     let lastSignature = ''
+    let lastModelVersion = ''
     let lastSavedAt = 0
     let remembered = true
     let needsAccess = false
+    let wantsConnection = !!handle
+    let explicitlyDisconnected = resumedDataFile?.disconnected === true
+    let choosing = false
+    let recoveryTimer = null
+    let recoveryDelay = 2000
+    let lastProblem = ''
+    try { wantsConnection ||= settingsStorage.getItem(ENABLED) === 'true' } catch {}
     // Re-authorise a remembered file at most once automatically, within a genuine page gesture.
     let startupPermissionPending = false
     let startupPermissionAttempted = false
@@ -3578,6 +3668,55 @@
       inheritedChanges = parent.uncheckpointed === true
     }
     const active = (token) => token === epoch && !stopping && !destroyed
+    const modelVersion = () => JSON.stringify([historyRevision, callHistory.pending, historyEdit, newManualRecord])
+    function cancelRecovery () {
+      root.clearTimeout(recoveryTimer)
+      recoveryTimer = null
+    }
+    function scheduleRecovery (immediate = false) {
+      if (!wantsConnection || ready || stopping || destroyed) return
+      if (recoveryTimer !== null && !immediate) return
+      cancelRecovery()
+      const delay = immediate ? 0 : recoveryDelay
+      recoveryDelay = Math.min(30000, recoveryDelay * 2)
+      // Retrying a permission query is quiet; renewal still needs a genuine user gesture.
+      recoveryTimer = root.setTimeout(recover, delay)
+    }
+    async function recover () {
+      recoveryTimer = null
+      if (!wantsConnection || ready || stopping || destroyed) return
+      if (loading || choosing || transferBusy) { scheduleRecovery(); return }
+      const token = epoch
+      loading = true
+      try {
+        await flight.catch(() => {})
+        if (!active(token)) return
+        if (!handle && root.indexedDB) handle = await connection('get') || null
+        if (!active(token)) return
+        if (handle) {
+          await connect(handle, token, true)
+          if (active(token) && ready) await flush()
+        } else status('Trying to reconnect. Choose your data file again if Edge has forgotten its location.', true, false)
+      } catch (error) { if (active(token)) problem(error) } finally {
+        if (active(token)) { loading = false; if (!ready) scheduleRecovery() }
+      }
+    }
+    async function wakeConnection () {
+      if (doc.visibilityState === 'hidden' || !wantsConnection || stopping || destroyed) return
+      if (!ready || !handle) { scheduleRecovery(true); return }
+      const token = epoch
+      const target = handle
+      try {
+        // A returning tab may have lost permission while idle. Check metadata only;
+        // do not read/parse the entire history every time the window gains focus.
+        const permission = await target.queryPermission({ mode: 'readwrite' })
+        if (!active(token) || target !== handle) return
+        if (permission !== 'granted') throw Object.assign(new Error('File access needed.'), { name: 'NotAllowedError' })
+        await target.getFile()
+      } catch (error) {
+        if (active(token) && target === handle) { problem(error); scheduleRecovery(true) }
+      }
+    }
     function status (message, attention = false, feedback = true) {
       if (destroyed) return
       setText(dataLocationInfo, (handle ? handle.name + '\n' : '') + message)
@@ -3659,7 +3798,7 @@
         transaction.onerror = transaction.onabort = () => reject(new Error('Edge could not remember the data location.'))
       })
     }
-    function readData (text) {
+    async function readData (text, isCurrent) {
       if (!text.trim()) return { records: [], meta: null }
       // An arbitrary text document must not be silently converted into an assistant data file.
       if (!/^\uFEFF?Service Desk 8x8 Assistant.*Call Notes \(TXT v/m.test(text) && !/^\s*-{20,}\s*$/m.test(text)) {
@@ -3673,7 +3812,7 @@
           typeof meta.generation !== 'string' || !meta.generation || meta.generation.length > 180)) {
         throw new Error('This data file uses unrecognised backup information. It has not been changed.')
       }
-      const records = parseCallNotesText(text, true)
+      const records = await parseCallNotesFile(text, true, isCurrent)
       const keys = new Set()
       for (const record of records) {
         record.recordKey ||= newNoteKey()
@@ -3700,7 +3839,7 @@
       }
       const previousKeys = new Set(sameFile && Array.isArray(checkpoint.keys) ? checkpoint.keys : [])
       const fileKeys = new Set(records.map((record) => record.recordKey))
-      const local = new Map(callHistory.records.map((record) => [record.recordKey, { ...record }]))
+      const local = new Map(callHistory.records.map((record) => [record.recordKey, copyHistoryRecord(record)]))
       // Apply an externally saved deletion only to a known, clean checkpoint, never to new local notes.
       if (sameFile && !sameGeneration && !dirty && !historyEdit) {
         for (const key of previousKeys) if (!fileKeys.has(key)) local.delete(key)
@@ -3723,7 +3862,7 @@
           const cleanCheckpoint = sameFile && !dirty && previousKeys.has(record.recordKey) && !historyEdit
           if (!cleanCheckpoint) throw new Error('This file and this tab have different edits to the same note. Choose a new data file to keep both copies.')
         }
-        local.set(record.recordKey, { ...record, id: existing?.id || 0 })
+        local.set(record.recordKey, copyHistoryRecord(record, { id: existing?.id || 0 }))
       }
       // Validation/conflict checks finish before any live record or call field is changed.
       for (const record of local.values()) {
@@ -3758,16 +3897,22 @@
       renderHistory()
     }
     function problem (error) {
+      const wasReady = ready
       ready = false
       needsAccess = ['NotAllowedError', 'SecurityError'].includes(error?.name)
+      // A later revocation is a new permission episode, independent of the launch prompt.
+      if (needsAccess && wasReady) startupPermissionAttempted = false
+      if (needsAccess && !startupPermissionAttempted) startupPermissionPending = true
       const message = needsAccess
-        ? 'File access needed. Click Reconnect.'
+        ? 'File access needed. Click in 8x8 to reconnect, or use Reconnect.'
         : error?.name === 'NotFoundError'
-          ? 'File moved or deleted. Choose its new location.'
+          ? 'File moved or deleted. Trying to reconnect; choose its new location if it moved.'
           : error?.name === 'NoModificationAllowedError'
-            ? 'Another window is saving this file. Reconnect to try again.'
+            ? 'Another window is saving this file. The assistant will retry automatically.'
             : error?.message || 'Auto-save stopped. Your notes are still available in this tab.'
-      status(message, true)
+      status(message, true, message !== lastProblem)
+      lastProblem = message
+      scheduleRecovery()
     }
     async function connect (candidate, token, startup = false) {
       loading = true
@@ -3789,6 +3934,7 @@
           }
         }
         if (permission !== 'granted') {
+          if (permission !== 'prompt') startupPermissionPending = false
           handle = candidate
           ready = false
           needsAccess = true
@@ -3798,10 +3944,12 @@
           return
         }
         startupPermissionPending = false
+        startupPermissionAttempted = false
         const text = await readNotesFile(await candidate.getFile())
         const digest = await fileDigest(text)
         if (!active(token)) return
-        const { records, meta } = readData(text)
+        const { records, meta } = await readData(text, () => active(token))
+        if (!active(token)) return
         restoreData(records, meta, digest)
         if (!active(token)) return
         handle = candidate
@@ -3810,11 +3958,14 @@
         generation = meta?.generation || ''
         lastSignature = dataSignature(records)
         const dirty = dataSignature(dataSnapshot()) !== lastSignature
+        lastModelVersion = dirty ? '' : modelVersion()
         if (!dirty) { cleanRevision = historyRevision; inheritedChanges = false }
         checkpoint = { fileId, generation, keys: records.map((record) => record.recordKey), digest, dirty }
         rememberCheckpoint(dirty)
         ready = true
         needsAccess = false
+        cancelRecovery()
+        if (!dirty) { recoveryDelay = 2000; lastProblem = '' }
         remembered = true
         try {
           await connection('put', candidate)
@@ -3824,15 +3975,18 @@
         rememberCheckpoint(dataSignature(dataSnapshot()) !== lastSignature)
         status(remembered ? 'Connected. Changes save automatically.' : 'Connected for this session. Choose this file again after reopening Edge.', !remembered)
       } finally {
-        if (active(token)) { loading = false; changed() }
+        if (active(token)) { loading = false; changed(); if (!ready) scheduleRecovery() }
       }
     }
     function changed () {
       if (stopping || destroyed || !handle || !ready || loading) return
-      const dirty = dataSignature(dataSnapshot()) !== lastSignature
-      if (!dirty) { cleanRevision = historyRevision; inheritedChanges = false }
-      rememberCheckpoint(dirty)
-      if (!dirty || timer) return
+      // Only the small live draft/editor and a saved-record revision change while typing.
+      // Defer full-archive comparisons to the coalesced save instead of every keypress/clock tick.
+      const version = modelVersion()
+      if (version === lastModelVersion) return
+      lastModelVersion = version
+      rememberCheckpoint(true)
+      if (timer) return
       // Coalesce typing and native timer updates without postponing the save indefinitely.
       const delay = Math.max(750, 5000 - (Date.now() - lastSavedAt))
       timer = root.setTimeout(() => { timer = null; flush() }, delay)
@@ -3844,7 +3998,13 @@
       if (!handle || !ready || loading) return flight
       const records = dataSnapshot()
       const signature = dataSignature(records)
-      if (signature === lastSignature) return flight
+      if (signature === lastSignature) {
+        cleanRevision = historyRevision
+        inheritedChanges = false
+        lastModelVersion = modelVersion()
+        rememberCheckpoint(false)
+        return flight
+      }
       const token = epoch
       const target = handle
       const targetId = fileId
@@ -3853,7 +4013,7 @@
       const text = exportCallNotesText(records).replace(/(Exported: [^\r\n]+)(\r?\n)/,
         '$1$2' + HEADER + JSON.stringify(meta) + '\r\n')
       if (records.length > MAX_IMPORT_RECORDS || new root.Blob([text]).size > MAX_IMPORT_BYTES) {
-        problem(new Error('Auto-save limit reached: 2,000 notes or 5 MB. Export a copy and remove older notes before reconnecting.'))
+        problem(new Error('Auto-save limit reached: 10,000 notes or 20 MB. Export an archive before starting a new data file.'))
         return flight
       }
       const current = () => token === epoch && target === handle
@@ -3893,9 +4053,18 @@
             generation = nextGeneration
             lastSignature = signature
             lastSavedAt = Date.now()
+            recoveryDelay = 2000
+            lastProblem = ''
             checkpoint = { fileId: targetId, generation, keys: records.map((record) => record.recordKey), digest, dirty: false }
             rememberCheckpoint(dataSignature(dataSnapshot()) !== signature)
-            if (!checkpoint.dirty) { cleanRevision = historyRevision; inheritedChanges = false }
+            if (!checkpoint.dirty) {
+              cleanRevision = historyRevision
+              inheritedChanges = false
+              lastModelVersion = modelVersion()
+            } else {
+              // A committing close can finish after Escape. Recheck even without another keypress.
+              lastModelVersion = ''
+            }
             status(remembered ? 'Saved ' + new Date(lastSavedAt).toLocaleTimeString('en-AU') : 'Saved. Reconnect this file next browser session.', !remembered)
           } catch (error) {
             if (writable) await writable.abort().catch(() => {})
@@ -3919,6 +4088,9 @@
       let token = epoch
       const selection = ++pickerEpoch
       const wasReady = ready
+      let chosen = false
+      choosing = true
+      cancelRecovery()
       try {
         // Open the picker directly in the click gesture, before any awaited I/O.
         const candidate = await root.showSaveFilePicker({
@@ -3936,19 +4108,36 @@
         ready = false
         root.clearTimeout(timer)
         timer = null
+        chosen = true
+        handle = candidate
+        explicitlyDisconnected = false
+        wantsConnection = true
+        try { settingsStorage.setItem(ENABLED, 'true') } catch {}
+        // Keep the selected handle even if its first read encounters a transient error.
+        try { await connection('put', candidate) } catch { remembered = false }
+        if (!active(token)) return
         await connect(candidate, token)
         if (active(token)) await flush()
       } catch (error) {
         if (!active(token)) return
-        ready = wasReady
-        if (error.name !== 'AbortError') status(error.message || 'The data file could not be selected.', true)
-      } finally { if (active(token)) changed() }
+        if (chosen) problem(error)
+        else {
+          ready = wasReady
+          if (error.name !== 'AbortError') status(error.message || 'The data file could not be selected.', true)
+        }
+      } finally {
+        if (selection === pickerEpoch) choosing = false
+        if (active(token)) { changed(); if (!ready) scheduleRecovery() }
+      }
     }
     function onInteraction (event) {
-      if (!startupPermissionPending || startupPermissionAttempted || !event?.isTrusted ||
-          root.navigator.userActivation?.isActive !== true || stopping || destroyed) return
+      if (!event?.isTrusted || stopping || destroyed || !wantsConnection) return
       // Keep assistant file/device buttons dedicated to their own requested action.
       if (event.target === host || event.composedPath?.().includes(host)) return
+      if (!startupPermissionPending || startupPermissionAttempted || root.navigator.userActivation?.isActive !== true) {
+        if (!ready) scheduleRecovery(true)
+        return
+      }
       // Use the existing trusted page-input handlers; no synthetic click or unattended prompt.
       startupPermissionPending = false
       startupPermissionAttempted = true
@@ -3956,6 +4145,9 @@
     }
     async function resume () {
       if (!handle || stopping || destroyed) return
+      explicitlyDisconnected = false
+      wantsConnection = true
+      cancelRecovery()
       startupPermissionPending = false
       startupPermissionAttempted = true
       const token = ++epoch
@@ -3969,9 +4161,12 @@
         await Promise.resolve(previousShutdown).catch(() => {})
         if (active(token)) inheritFinalCheckpoint()
         if (active(token)) { await connect(handle, token); await flush() }
-      } catch (error) { if (active(token)) problem(error) }
+      } catch (error) { if (active(token)) problem(error) } finally { if (active(token) && !ready) scheduleRecovery() }
     }
     async function disconnect () {
+      explicitlyDisconnected = true
+      wantsConnection = false
+      cancelRecovery()
       startupPermissionPending = false
       startupPermissionAttempted = true
       const token = ++epoch
@@ -3997,6 +4192,7 @@
     async function start () {
       const token = epoch
       try {
+        if (explicitlyDisconnected) { wantsConnection = false; return }
         // A rerun waits for the previous instance’s final file commit before reading it back.
         await Promise.resolve(previousShutdown).catch(() => {})
         if (!active(token)) return
@@ -4007,19 +4203,23 @@
         if (!handle && disabled) return
         if (!handle && root.indexedDB) handle = await connection('get') || null
         if (!active(token)) return
-        if (handle) await connect(handle, token, true)
-        else if (settingsStorage.getItem(ENABLED) === 'true') status('Choose your data file again to restore Call Notes.', true)
+        if (handle) { wantsConnection = true; await connect(handle, token, true) } else if (settingsStorage.getItem(ENABLED) === 'true') status('Choose your data file again to restore Call Notes.', true)
       } catch (error) {
         if (active(token)) {
           let enabled = !!handle
           try { enabled ||= settingsStorage.getItem(ENABLED) === 'true' } catch {}
           if (enabled) problem(error)
         }
-      }
+      } finally { if (active(token) && !ready) scheduleRecovery() }
     }
     function stop () {
       startupPermissionPending = false
       stopping = true
+      cancelRecovery()
+      root.removeEventListener?.('focus', wakeConnection)
+      root.removeEventListener?.('pageshow', wakeConnection)
+      root.removeEventListener?.('online', wakeConnection)
+      doc.removeEventListener?.('visibilitychange', wakeConnection)
       root.clearTimeout(timer)
       root.clearTimeout(databaseTimeout)
       root.clearTimeout(feedbackTimer)
@@ -4046,6 +4246,10 @@
     async function usesFile (candidate) {
       return !!handle && (candidate === handle || !!(await handle.isSameEntry?.(candidate)))
     }
+    root.addEventListener?.('focus', wakeConnection)
+    root.addEventListener?.('pageshow', wakeConnection)
+    root.addEventListener?.('online', wakeConnection)
+    doc.addEventListener?.('visibilitychange', wakeConnection)
     return {
       start,
       changed,
@@ -4056,6 +4260,7 @@
       // Opaque checkpoint metadata also survives a rerun when session storage is blocked.
       session: () => ({
         handle,
+        disconnected: explicitlyDisconnected,
         checkpoint: checkpoint && { ...checkpoint, keys: [...(checkpoint.keys || [])] },
         uncheckpointed: inheritedChanges || historyRevision !== cleanRevision || checkpoint?.dirty === true,
         touched: [...touchedCallFields].map(([id, fields]) => [id, [...fields]])
@@ -4162,6 +4367,16 @@
     return widget
   }
   function renderHistory () {
+    // Hidden menus must not build thousands of cards during calls, imports or polling.
+    if (activeView !== 'history') {
+      for (const widget of historyWidgets.values()) widget.card.remove()
+      for (const heading of historyDays.values()) heading.remove()
+      historyEmpty?.remove()
+      historyWidgets.clear()
+      historyDays.clear()
+      historyRenderKey = ''
+      return
+    }
     const query = normaliseStatus(historySearch.value)
     // A new search leaves the current record; save before evaluating its edited contents.
     if (historyEdit && historyRenderedQuery !== query) saveHistoryEdit(false)
@@ -4176,13 +4391,12 @@
       (a, b) => (b.detectedAt ?? -Infinity) - (a.detectedAt ?? -Infinity) || b.id - a.id
     )
     const filtered = records.filter((call) => {
-      const text = normaliseStatus(
-        [call.caller, call.notes, call.jobNumber, call.number, call.queue, call.transactionId].join(' ')
-      )
+      if (!query) return true
+      const indexed = searchableNote(call)
       // Telephone searches accept the user's spaces and punctuation as well as native formatting.
       const numberMatch =
-        readablePhone(query) && phoneDigits(call.number).includes(phoneDigits(query))
-      return !query || text.includes(query) || numberMatch
+        readablePhone(query) && indexed.digits.includes(phoneDigits(query))
+      return indexed.text.includes(query) || numberMatch
     })
     // These totals describe every saved note, regardless of search or rendered page.
     setText(historyTotal, String(records.length))
@@ -4193,10 +4407,10 @@
     historyExport.disabled = transferBusy || !records.length
     historyDownload.disabled = transferBusy || !records.length
     historyAdd.disabled = transferBusy
-    const pageSize = deployment?.historyPageSize || Infinity
+    const pageSize = HISTORY_PAGE_SIZE
     const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
     historyPage = Math.min(historyPage, pageCount - 1)
-    const visibleRecords = historyPager ? filtered.slice(historyPage * pageSize, (historyPage + 1) * pageSize) : filtered
+    const visibleRecords = filtered.slice(historyPage * pageSize, (historyPage + 1) * pageSize)
     if (historyPager) {
       historyPager.classList.toggle('hidden', pageCount <= 1)
       historyPrevious.disabled = historyPage === 0
@@ -4269,6 +4483,8 @@
       const visibleIds = new Set(visibleRecords.map((record) => record.id))
       if (newManualRecord) visibleIds.add(newManualRecord.id)
       for (const id of historyWidgets.keys()) if (!visibleIds.has(id)) historyWidgets.delete(id)
+      // Day headings also belong to the visible page, rather than the entire imported archive.
+      for (const [day, heading] of historyDays) if (!retained.has(heading)) historyDays.delete(day)
     }
   }
   function changeHistoryPage (direction) {
@@ -4444,11 +4660,24 @@
     if (rows.length) {
       rosterRoot = rows[0].closest('[data-test-id="virtuoso-item-list"]') || rows[0].parentElement
     }
+    // Empty Groups lists can be remounted when the final other agent signs out.
+    // A stale reference must not prevent discovering the replacement empty list.
+    const mountedRoot = rosterRoot && docs.includes(rosterRoot.ownerDocument) && isVisible(rosterRoot) &&
+      (rosterRoot.isConnected !== false)
+    if (!rows.length && !mountedRoot) rosterRoot = null
     if (!rosterRoot) {
       // A uniquely identifiable empty Groups list can still prove that only Me is signed in.
       const lists = docs.flatMap((d) => [...d.querySelectorAll('[data-test-id="virtuoso-item-list"]')])
         .filter((list) => isVisible(list) && !list.querySelector('[data-test-id="queue-item"]'))
       if (lists.length === 1) rosterRoot = lists[0]
+    }
+    if (!rosterRoot && !rows.length) {
+      // Some empty Groups views replace Virtuoso entirely with a native empty-state label.
+      // Do not infer sign-out merely from a missing/hidden panel or an empty queue.
+      const emptyStates = docs.flatMap((d) => [...d.querySelectorAll('div,p,span')])
+        .filter((node) => isVisible(node) && !node.closest('[data-test-id="queue-item"]') &&
+          /^(?:there are )?no (?:other )?(?:agents|users)(?: (?:found|available|online|signed in|to display|in this group))?[.!]?$/i.test(normaliseText(node.textContent)))
+      if (emptyStates.length) rosterRoot = emptyStates[0]
     }
     // An empty visible list differs from a hidden Groups panel during navigation.
     rosterVisible =
@@ -4674,6 +4903,7 @@
     if (activeView === 'sounds' && view !== 'sounds') stopSound('preview')
     activeView = view
     syncViews()
+    if (view === 'history') renderHistory()
     panel.scrollTop = 0
     if (view === 'sounds') refreshAudioDevices()
   }
@@ -5817,7 +6047,7 @@
     syncReminderBox()
   }
 
-  function coverReminder (me, covering, selfInG1) {
+  function coverReminder (me, covering, selfInG1, queue) {
     // Explain the actual group and own status instead of showing a generic alarm message.
     const group = selfInG1 ? 'G1' : 'G2'
     const ownReason = `You are "${me.status}" in ${group}.`
@@ -5829,7 +6059,9 @@
     }
     // The wording mirrors the strict G1 and inclusive G2 caller-wait boundaries.
     const waitingBoundary = selfInG1 ? 'longer than' : 'at least'
-    const callerReason = `A caller has waited ${waitingBoundary} ${timeWords(waitingAlertSeconds, 'second')}.`
+    const callerReason = queue
+      ? `The longest-waiting caller in "${queue.name}" has waited ${timeWords(queue.waitSeconds, 'second')} (${waitingBoundary} ${timeWords(waitingAlertSeconds, 'second')}).`
+      : `A caller has waited ${waitingBoundary} ${timeWords(waitingAlertSeconds, 'second')}.`
     const action = 'Change your status to "Available" to take the call.'
     return {
       kind: 'critical',
@@ -6014,12 +6246,15 @@
     freshness.delete('personal')
     // Remember all choices, but read only G1 agents present in this live roster.
     const presentG1 = [...selected].filter((name) => current.has(name))
+    // Queue ages are read once from the queue component, independently of every agent clock.
+    const queueData = readQueues(docs)
     const sample = readAgentAndQueues(
       docs,
-      presentG1[0] || [...current.keys()].find((name) => name !== 'Me') || 'Me'
+      presentG1[0] || [...current.keys()].find((name) => name !== 'Me') || 'Me',
+      queueData
     )
     // Validate each live selected agent; a missing saved name remains a preference only.
-    const samples = presentG1.map((name) => readAgentAndQueues(docs, name))
+    const samples = presentG1.map((name) => readAgentAndQueues(docs, name, queueData))
     const agents = samples.map((s) => s.agent).filter(Boolean)
     // An incomplete or virtualised list cannot prove an absent selected member signed out.
     const missingG1 = [...selected].some((name) => name !== 'Me' && !current.has(name))
@@ -6055,6 +6290,8 @@
     renderMonitoring(sample)
     showFrozenAgents(tableFrozen, !!missing)
     if (missing) {
+      // Recovery needs a new native queue observation; a cached caller age cannot restart an alarm.
+      for (const queue of sample.queues) freshness.delete('queue:' + queue.name)
       return
     }
     if (gap > FRESHNESS_WINDOW_MS) freshness.clear()
@@ -6072,7 +6309,7 @@
     }
     // Valid agent reads still update the footer when queue rows alone are unavailable.
     setText(lastUpdated, new Date().toLocaleTimeString('en-AU', { hour12: false }))
-    if (!alertsFresh || offline) {
+    if (offline) {
       clearAlert('lunch')
       syncReminder(null)
       return
@@ -6101,13 +6338,10 @@
     // Only selected, signed-in G1 members determine whether phone cover is needed.
     const covering = selfInG1 ? agents.filter((agent) => agent.name !== 'Me') : agents
     // Missing saved members may have signed out, but not during a list remount.
-    let coverageFresh = (selfInG1 || covering.length > 0) && (!missingG1 || rosterSettled)
-    // Keep cover checks separate from personal/header freshness observations.
-    for (const agent of [me, ...covering]) {
-      const key = 'coverage:' + agent.name
-      const signature = agent.status + '|' + agent.timer
-      if (!observeFreshSample(key, signature, now)) coverageFresh = false
-    }
+    // Status determines who can answer. Busy/Offline elapsed times never set or gate
+    // the caller delay: minute/hour clocks may legitimately remain unchanged for a long time.
+    const coverageFresh = rosterComplete && !rosterUnreadable &&
+      (selfInG1 || covering.length > 0) && (!missingG1 || rosterSettled)
     let waitingFresh = false
     for (const queue of queuesReadable ? sample.queues : []) {
       const key = 'queue:' + queue.name
@@ -6121,9 +6355,11 @@
     decision.critical = decision.critical && queuesReadable && coverageFresh && waitingFresh
     if (decision.critical) {
       clearAlert('lunch')
-      syncReminder(coverReminder(me, covering, selfInG1))
+      const waitingQueue = sample.queues.find((queue) => callerWaitReached(queue, waitingAlertSeconds, selfInG1))
+      syncReminder(coverReminder(me, covering, selfInG1, waitingQueue))
     } else syncReminder(null)
     if (selfInG1) return
+    if (!alertsFresh) { clearAlert('lunch'); return }
     // Informational break sounds occur once per observed break episode, only in G2.
     const newBreaks = decision.lunch.filter((name) => !lunchLatched.has(name))
     for (const name of [...lunchLatched]) {

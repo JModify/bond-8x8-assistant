@@ -2,6 +2,15 @@
 
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
+## 1.2.2 (Prototype) — 2026-10-19
+
+- Page prototype Call Notes at 50 records, release off-page cards/headings, build the list only when opened, and keep search, totals and export global. Index normalised search text by record without retaining deleted records. Parse file imports/restores in batches of 100, validating the entire file before applying it. Raise the per-file guardrails to 10,000 records and 20 MiB; retain the readable TXT v1 format and every stable key.
+- Write changing call drafts to a small generation-matched tab backup instead of rewriting the entire archive every second. Prefer the newest in-memory handoff on reruns after a storage-quota failure, warn about unavailable tab backups, and defer full-file comparisons to coalesced saves. Preserve Escape, conflict detection, stale-operation guards and repair after an already-committing close.
+- Retry remembered data files after transient errors with a 2–30 second backoff and on tab return, online and page-show events. Renew revoked access on a genuine activated page interaction without repeated declined prompts. Explicit Disconnect cancels queued work and survives reruns even if Edge cannot persist that preference. Conflicting edits remain protected; retries never silently overwrite either copy.
+- Read the three inbound queues once per scan. Caller waiting thresholds and freshness use the native Longest waiting time, cross-checked with its displayed duration. Agent Busy/Offline elapsed clocks no longer gate caller alerts. Include the actual queue/wait in the reason; missing required data still clears the alert and recovery requires a new queue update.
+- Rediscover a replacement empty Groups list after the final other agent signs out; accept explicit native no-agent states while retaining hidden/partial-roster protection and saved G1 choices.
+- Add reproducible fictional-data benchmarks and a capacity/archiving guide. Keep earlier prototype releases, bookmark downloads and extension 1.0.0 unchanged. Publish this version through its own scoped workflow with both downloads.
+
 ## 1.2.1 (Prototype) — 2026-10-16
 
 - Automatically restore the remembered Data location at startup. Retained permission imports notes immediately. When permission needs renewal, use an active launch gesture or the next trusted, activated interaction in 8x8 for one request. Keep explicit Reconnect, respect declines/disconnection, guard stale results and preserve the existing TXT conflict and recovery protections.

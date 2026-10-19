@@ -166,6 +166,10 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
       return this.hidden ? [] : [{}]
     }
 
+    get isConnected () {
+      return this === document.body || document.body?.contains(this) === true
+    }
+
     contains (target) {
       for (let node = target; node; node = node.parentElement) if (node === this) return true
       return false
@@ -402,6 +406,7 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
     Notification,
     Blob,
     TextDecoder,
+    scheduler: { yield: () => Promise.resolve() },
     URL: {
       createObjectURL: (blob) => {
         const url = 'blob:fixture-' + blobs.size
@@ -470,7 +475,9 @@ function environment (preferences = { g1: ['Me'], lunchMinutes: 30 }, sounds = {
         audioOutput: audio?.sinkId,
         secondaryOutput: secondaryAudio?.sinkId,
         secondaryEnabled: secondaryRingerEnabled,
-        secondaryReady: secondaryOutputReady
+        secondaryReady: secondaryOutputReady,
+        historyCards: historyWidgets.size,
+        historyDays: historyDays.size
       }),
       groupRules,
       parseCallNotesText,
@@ -1079,10 +1086,10 @@ check('A hidden roster freezes agent data while Settings stays accessible and re
 })
 
 check(
-  'Prototype reports version 1.2.1 and bottom controls put Call Notes before accessible mute and settings icons',
+  'Prototype reports version 1.2.2 and bottom controls put Call Notes before accessible mute and settings icons',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.2.1')
+    assert.equal(e.window.__itsCallAssist.version, '1.2.2')
     assert.deepEqual(
       e
         .ui()
@@ -1101,10 +1108,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.2.1'
+      '1.2.2'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.2.1'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.2.2'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -1959,7 +1966,7 @@ check(
   }
 )
 check(
-  'A Live badge never bypasses a stale G1 status when the own clock and caller age keep updating',
+  'A live caller clock does not depend on an unchanged G1 Busy clock',
   () => {
     const e = environment({ g1: ['Alex Agent'], waitingAlertSeconds: 5 })
     coveragePulse(e, 6, 1)
@@ -1970,7 +1977,7 @@ check(
       e.setMe('Work Offline', tick)
       assert.equal(monitoringState(e), 'Live')
     }
-    assert.equal(e.debug().activeReminder, null)
+    assert.equal(e.debug().activeReminder.kind, 'critical')
     assert.equal(e.notifications.length, 1)
   }
 )
@@ -4328,8 +4335,8 @@ check(
 )
 check('Search saves the current draft before filtering and includes its updated identifier', () => {
   const e = editableHistory(['Alex', 'Casey'])
-  const card = historyCard(e)
-  const button = card.querySelector('.history-edit-toggle')
+  let card = historyCard(e)
+  let button = card.querySelector('.history-edit-toggle')
   const search = e.ui().querySelector('.history-search')
   button.onclick()
   editIdentifier(card, 'Updated Alex')
@@ -4342,14 +4349,16 @@ check('Search saves the current draft before filtering and includes its updated 
   assert.equal(button.textContent, '✎')
   search.value = 'Updated Alex'
   search.oninput()
+  // Filtering releases detached cards; the newly visible row owns its current editor.
+  card = historyCard(e)
+  button = card.querySelector('.history-edit-toggle')
   button.onclick()
   editIdentifier(card, '00123456')
   button.onclick()
   assert(!historyCard(e))
   search.value = '00123456'
   search.oninput()
-  assert.equal(historyCard(e), card)
-  assert.equal(card.querySelector('.history-caller').textContent, '00123456')
+  assert.equal(historyCard(e).querySelector('.history-caller').textContent, '00123456')
 })
 check(
   'Disposition saves a history edit without overwriting the current caller or creating another count',
@@ -4695,7 +4704,7 @@ check('Import limits and contradictory detail types reject the whole file before
   const e = editableHistory()
   const exportText = e.window.__itsCallAssist.exportCallNotesText()
   for (const text of [
-    ('--------------------\nAlex\nNO JOB NUMBER\n').repeat(2001),
+    ('--------------------\nAlex\nNO JOB NUMBER\n').repeat(10001),
     exportText.replace('Full duration recorded: Yes', 'Full duration recorded: Maybe'),
     exportText.replace('First detected:', 'First detected: invalid date\nUnrecognised label:'),
     exportText.replace('Queue:', 'Queue: {"bad":true}\nUnrecognised label:').replace('Queue: {"bad":true}', 'Queue: "unfinished')
@@ -4791,7 +4800,7 @@ check('Malformed or oversized imports fail atomically and never evaluate caller 
   const controller = e.window.__itsCallAssist
   const count = controller.callHistorySession().records.length
   const exported = controller.exportCallNotesText()
-  for (const bad of ['', '--------------------\n--------------------', 'a\u0000b', 'a'.repeat(5 * 1024 * 1024 + 1), exported.replace('Duration seconds: 20', 'Duration seconds: -1'), exported.replace('(TXT v1)', '(TXT v99)'), 'Alex\n' + 'x'.repeat(20001) + '\nNO JOB NUMBER', exported.replace('[Call details]', '[Call details]\nSource: text')]) {
+  for (const bad of ['', '--------------------\n--------------------', 'a\u0000b', 'a'.repeat(20 * 1024 * 1024 + 1), exported.replace('Duration seconds: 20', 'Duration seconds: -1'), exported.replace('(TXT v1)', '(TXT v99)'), 'Alex\n' + 'x'.repeat(20001) + '\nNO JOB NUMBER', exported.replace('[Call details]', '[Call details]\nSource: text')]) {
     assert.throws(() => controller.importCallNotesText(bad))
     assert.equal(controller.callHistorySession().records.length, count)
   }
@@ -5073,7 +5082,8 @@ check('An unreadable G1 timer freezes the table and stops a repeating alert unti
   e.scan()
   assert.equal(e.debug().activeReminder, null)
   coveragePulse(e, 8, 100)
-  assert.equal(e.debug().activeReminder, null)
+  // A newly advancing queue age, rather than a second agent-clock change, proves recovery.
+  assert.equal(e.debug().activeReminder.kind, 'critical')
   coveragePulse(e, 9, 101)
   assert.equal(e.debug().activeReminder.kind, 'critical')
 })
@@ -5287,6 +5297,232 @@ asyncCheck('Frozen Call Notes still imports and exports local TXT without depend
   assert(exported.includes('Imported while frozen'))
   assert.equal(e.window.__itsCallAssist.statistics().total, 1)
   assert(e.window.__itsCallAssist.inspect().agentsFrozen)
+})
+function performanceNotes (e, count) {
+  // Stable fictional keys cover imports, paging, searching and repeat imports without private fixtures.
+  const entries = Array.from({ length: count }, (_, index) => ({
+    id: index + 1,
+    originalId: index + 1,
+    recordKey: 'large-history-' + index,
+    caller: 'Load Test Person ' + index,
+    callerPrediction: 'Staff',
+    notes: 'Fictional note ' + index,
+    jobNumber: 'INC' + (9000000 + index),
+    origin: 'text',
+    detectedAt: 100000 + index * 1000,
+    completedAt: null
+  }))
+  return e.window.__itsCallAssist.exportCallNotesText(entries)
+}
+check('Large prototype histories build only one page and search/export the entire archive', () => {
+  const e = environment({ g1: [] })
+  const api = e.window.__itsCallAssist
+  const text = performanceNotes(e, 10000)
+  assert.equal(api.importCallNotesText(text).added, 10000)
+  assert.equal(e.debug().historyCards, 0)
+  e.button('Call Notes').onclick()
+  assert.equal(e.ui().querySelectorAll('.history-card').length, 50)
+  assert.equal(e.debug().historyCards, 50)
+  assert.equal(e.ui().querySelector('.notes-total').textContent, '10000')
+  for (let page = 0; page < 4; page++) e.button('Next').onclick()
+  assert.equal(e.debug().historyCards, 50)
+  assert(e.debug().historyDays <= 50)
+  const search = e.ui().querySelector('.history-search')
+  search.value = 'Fictional note 0'
+  search.oninput()
+  assert.equal(e.ui().querySelectorAll('.history-card').length, 1)
+  assert.equal(historyCard(e).querySelector('.history-caller').textContent, 'Load Test Person 0')
+  assert.equal((api.exportCallNotesText().match(/\[Call details\]/g) || []).length, 10000)
+  assert.equal(api.importCallNotesText(text).added, 0)
+  assert.equal(api.statistics().total, 0)
+})
+check('Changing note pages saves the active edit, keeps totals global and reaches the last record', () => {
+  const e = environment({ g1: [] })
+  const api = e.window.__itsCallAssist
+  api.importCallNotesText(performanceNotes(e, 123))
+  e.button('Call Notes').onclick()
+  const first = e.ui().querySelector('.history-card')
+  first.querySelector('.history-edit-toggle').onclick()
+  editIdentifier(first, '00123456')
+  e.button('Next').onclick()
+  assert.equal(api.callHistorySession().records.find((record) => record.recordKey === 'large-history-122').caller, '00123456')
+  assert.equal(e.ui().querySelector('.notes-students').textContent, '1')
+  e.button('Next').onclick()
+  assert.equal(e.ui().querySelectorAll('.history-card').length, 23)
+  assert(e.button('Next').disabled)
+  assert.equal(e.ui().querySelectorAll('.history-caller').at(-1).textContent, 'Load Test Person 0')
+  assert(e.debug().historyCards <= 50)
+})
+check('Busy ages cannot trigger a caller alert and unchanged hour clocks do not gate the queue delay', () => {
+  const e = environment({ g1: ['Alex Agent'], waitingAlertSeconds: 60 })
+  e.other('Alex Agent', 'Busy', 7200)
+  e.setMe('Work Offline', 7200)
+  e.waiting(1, 0)
+  e.advance(65000)
+  e.scan()
+  assert(!e.debug().playing.includes('critical'))
+  e.waiting(1, 59)
+  e.scan()
+  assert(!e.debug().playing.includes('critical'))
+  e.waiting(1, 60)
+  e.scan()
+  assert(e.debug().playing.includes('critical'))
+  assert(e.ui().querySelector('.reminder-reason').textContent.includes('60 seconds'))
+  e.waiting(0, 0)
+  e.scan()
+  assert(!e.debug().playing.includes('critical'))
+})
+check('Longest-wait title and displayed text must agree, including accessible duration labels', () => {
+  const e = environment({ g1: ['Alex Agent'], waitingAlertSeconds: 60 })
+  coveragePulse(e, 59, 1)
+  const cell = e.queues[3].wait
+  cell.setAttribute('title', '1 minute 1 second Longest waiting time')
+  cell.textContent = '0 minutes 0 seconds Longest waiting time'
+  e.scan()
+  assert(!e.debug().playing.includes('critical'))
+  cell.textContent = '1 minute 1 second Longest waiting time'
+  e.scan()
+  assert(e.debug().playing.includes('critical'))
+  assert.equal(e.window.__itsCallAssist.inspect().queues[2].waitSeconds, 61)
+})
+check('The final other agent signing out can replace the Groups list without freezing Me', () => {
+  const e = environment({ g1: ['Me', 'Alex Agent'], waitingAlertSeconds: 5 })
+  e.setMe('Working Offline', 1)
+  e.group.remove()
+  const replacement = e.window.document.createElement('div')
+  replacement.setAttribute('data-test-id', 'virtuoso-item-list')
+  e.window.document.body.append(replacement)
+  e.scan()
+  e.advance(2000)
+  e.waiting(1, 6)
+  e.scan()
+  e.waiting(1, 7)
+  e.scan()
+  const sample = e.window.__itsCallAssist.inspect()
+  assert.equal(sample.unavailable, false)
+  assert.equal(sample.agentsFrozen, false)
+  assert.equal(e.ui().querySelector('tbody').children.length, 1)
+  assert.equal(monitoringState(e), 'Live')
+  assert(e.debug().playing.includes('critical'))
+  assert(JSON.parse(e.storage.get('service-desk-8x8-preferences-v5')).g1.includes('Alex Agent'))
+})
+check('A native no-agents view at startup keeps Me and readable queues live', () => {
+  const e = environment({ g1: ['Me'] }, {}, {
+    beforeStart: ({ group, document }) => {
+      group.remove()
+      const empty = document.createElement('p')
+      empty.textContent = 'No agents found'
+      document.body.append(empty)
+    }
+  })
+  e.scan()
+  assert.equal(e.window.__itsCallAssist.inspect().agentsFrozen, false)
+  assert.equal(e.window.__itsCallAssist.inspect().queuesReadable, true)
+  assert.equal(e.ui().querySelector('tbody').children.length, 1)
+  assert(e.ui().querySelector('.data-warning').classList.contains('hidden'))
+})
+check('Live call typing writes a small generation-bound backup instead of the full archive', () => {
+  let baseWrites = 0
+  const e = environment({ g1: [] }, {}, {
+    beforeStart: ({ window }) => {
+      const write = window.sessionStorage.setItem
+      window.sessionStorage.setItem = (key, value) => {
+        if (key === 'service-desk-8x8-call-history-v1') baseWrites++
+        write(key, value)
+      }
+    }
+  })
+  const api = e.window.__itsCallAssist
+  api.importCallNotesText(performanceNotes(e, 1000))
+  const writesBefore = baseWrites
+  e.showCall({ transactionId: 'fictional-small-draft' })
+  e.caller('Draft Caller Example')
+  e.scan()
+  assert.equal(baseWrites, writesBefore)
+  const live = JSON.parse(e.session.get('service-desk-8x8-call-history-v1-live'))
+  assert.equal(live.pending[0].callerInput, 'Draft Caller Example')
+  assert(!Object.hasOwn(live, 'records'))
+  assert.equal(live.backupGeneration, JSON.parse(e.session.get('service-desk-8x8-call-history-v1')).backupGeneration)
+  e.rerun()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().pending[0].callerInput, 'Draft Caller Example')
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 1000)
+})
+check('A quota-limited tab backup cannot replace a newer in-memory history during a rerun', () => {
+  const e = environment({ g1: [] }, {}, {
+    beforeStart: ({ window }) => {
+      const write = window.sessionStorage.setItem
+      window.sessionStorage.setItem = (key, value) => {
+        if (key === 'service-desk-8x8-call-history-v1' && value.length > 3000) throw new Error('QuotaExceededError')
+        write(key, value)
+      }
+    }
+  })
+  e.window.__itsCallAssist.importCallNotesText('Original Example\nOriginal note\nINC9000000')
+  e.window.__itsCallAssist.importCallNotesText(performanceNotes(e, 120))
+  assert.equal(JSON.parse(e.session.get('service-desk-8x8-call-history-v1')).records.length, 1)
+  e.rerun()
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 121)
+})
+check('Tab restoration accepts live caller fields only from the matching completed-note generation', () => {
+  const e = environment({ g1: [] })
+  e.window.__itsCallAssist.importCallNotesText('Saved Example\nFictional saved note\nINC9000000')
+  e.showCall({ transactionId: 'fictional-generation-check' })
+  e.caller('Latest Draft Example')
+  for (const matching of [true, false]) {
+    const saved = new Map(e.session)
+    if (!matching) {
+      const live = JSON.parse(saved.get('service-desk-8x8-call-history-v1-live'))
+      live.backupGeneration = 'another-fictional-generation'
+      saved.set('service-desk-8x8-call-history-v1-live', JSON.stringify(live))
+    }
+    const next = environment({ g1: [] }, {}, {
+      beforeStart: ({ window }) => { for (const [key, value] of saved) window.sessionStorage.setItem(key, value) }
+    })
+    // A confirmed return to the idle page can finish the restored call; it must retain
+    // its newest name without ever accepting another generation's pending fields.
+    const records = next.window.__itsCallAssist.callHistorySession().records
+    assert.equal(records.some((record) => record.caller === 'Latest Draft Example'), matching)
+    assert.equal(records.length, matching ? 2 : 1)
+  }
+})
+asyncCheck('Large file validation yields in batches and remains atomic when its last record is invalid', async () => {
+  let yielded = 0
+  const e = environment({ g1: [] }, {}, {
+    beforeStart: ({ window }) => { window.scheduler.yield = async () => { yielded++ } }
+  })
+  const text = performanceNotes(e, 250) + 'Bad Example\n' + 'x'.repeat(20001) + '\nNO JOB NUMBER\n--------------------\n'
+  await e.importFile({ size: Buffer.byteLength(text), text: async () => text })
+  assert(yielded >= 2)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 0)
+})
+asyncCheck('Closing during a chunked file read cancels every pending record', async () => {
+  const e = environment({ g1: [] })
+  const api = e.window.__itsCallAssist
+  let yielded = 0
+  e.window.scheduler.yield = async () => { if (++yielded === 2) api.destroy() }
+  const text = performanceNotes(e, 350)
+  await e.importFile({ size: Buffer.byteLength(text), text: async () => text })
+  assert.equal(api.callHistorySession().records.length, 0)
+  assert.equal(e.window.__itsCallAssist, undefined)
+})
+asyncCheck('Chunked imports remain usable when the browser needs the timer-based yield fallback', async () => {
+  let yielded = 0
+  const e = environment({ g1: [] }, {}, {
+    beforeStart: ({ window }) => {
+      window.scheduler = undefined
+      const schedule = window.setTimeout
+      window.setTimeout = (fn, ms) => {
+        if (ms !== 0) return schedule(fn, ms)
+        yielded++
+        Promise.resolve().then(fn)
+        return -yielded
+      }
+    }
+  })
+  const text = performanceNotes(e, 250)
+  await e.importFile({ size: Buffer.byteLength(text), text: async () => text })
+  assert.equal(yielded, 2)
+  assert.equal(e.window.__itsCallAssist.callHistorySession().records.length, 250)
 })
 ;(async () => {
   for (const { name, fn } of asyncChecks) {

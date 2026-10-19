@@ -588,10 +588,10 @@ check('Data files reject duplicate keys, oversized files and invalid backup meta
     assert.equal(m.disk.text, text)
   }
   const m = make()
-  m.disk.reportedSize = 6 * 1024 * 1024
+  m.disk.reportedSize = 21 * 1024 * 1024
   await m.choose()
   assert.equal(m.disk.writes.length, 0)
-  assert(m.status().includes('5 MB'))
+  assert(m.status().includes('20 MB'))
 })
 check('An old unfinished caller never attaches to a different call with the same number', async () => {
   const first = make()
@@ -930,6 +930,218 @@ check('Automatic reconnect leaves assistant controls and an explicitly disconnec
   assert.equal(disk.reads, 0)
 })
 
+async function retryDataFile (m) {
+  // Advance only the file-recovery timeout, leaving sound/message deadlines alone.
+  const entry = [...m.e.jobs].find(([, job]) => job.fn.name === 'recover')
+  assert(entry, 'A disconnected selected file must keep a recovery attempt scheduled')
+  const [id, job] = entry
+  m.e.jobs.delete(id)
+  await job.fn()
+  await settle()
+}
+check('A temporary file read failure reconnects automatically without reopening a picker', async () => {
+  const m = make()
+  importNote(m.e, 'First Example')
+  await m.choose()
+  m.disk.readError = error('NotReadableError', 'Temporary file read failure')
+  importNote(m.e, 'Later Example')
+  await m.save()
+  assert(m.status().includes('Temporary file read failure'))
+  m.disk.readError = null
+  await retryDataFile(m)
+  assert(m.disk.text.includes('First Example'))
+  assert(m.disk.text.includes('Later Example'))
+  assert.equal(m.picks(), 1)
+  assert.equal(records(m.e).length, 2)
+})
+check('Another process holding the data file is retried and unsaved notes survive', async () => {
+  const m = make()
+  await m.choose()
+  m.disk.openError = error('NoModificationAllowedError')
+  importNote(m.e, 'Locked File Example')
+  await m.save()
+  assert(!m.disk.text.includes('Locked File Example'))
+  m.disk.openError = null
+  await retryDataFile(m)
+  assert(m.disk.text.includes('Locked File Example'))
+  assert.equal(records(m.e).length, 1)
+})
+check('Permission revoked during a session can renew on the next genuine page click', async () => {
+  const activation = { isActive: false }
+  const m = make(undefined, undefined, { beforeStart: ({ window }) => { window.navigator.userActivation = activation } })
+  await m.choose()
+  m.disk.permission = 'prompt'
+  importNote(m.e, 'Revoked Access Example')
+  await m.save()
+  assert.equal(m.disk.requests, 0)
+  activation.isActive = true
+  m.e.pointerDown(m.e.window.document.body)
+  await settle()
+  assert.equal(m.disk.requests, 1)
+  assert(m.disk.text.includes('Revoked Access Example'))
+})
+check('Automatic retries never repeat a declined prompt, but recover when browser access is restored', async () => {
+  const disk = fakeDisk()
+  disk.permission = 'prompt'
+  disk.nextPermission = 'denied'
+  const activation = { isActive: false }
+  const m = make(disk, fakeDatabase(disk.handle), { beforeStart: ({ window }) => { window.navigator.userActivation = activation } })
+  await settle()
+  activation.isActive = true
+  m.e.pointerDown(m.e.window.document.body)
+  await settle()
+  assert.equal(disk.requests, 1)
+  await retryDataFile(m)
+  m.e.pointerDown(m.e.window.document.body)
+  await retryDataFile(m)
+  assert.equal(disk.requests, 1)
+  assert.equal(disk.reads, 0)
+  disk.permission = 'granted'
+  await retryDataFile(m)
+  assert(m.status().includes('Connected.'))
+  assert.equal(disk.requests, 1)
+})
+check('Returning to the tab promptly retries an already permitted file', async () => {
+  const disk = fakeDisk()
+  disk.permission = 'denied'
+  const m = make(disk, fakeDatabase(disk.handle))
+  await settle()
+  disk.permission = 'granted'
+  m.dispatch('focus')
+  const next = [...m.e.jobs.values()].find((job) => job.fn.name === 'recover')
+  assert.equal(next.ms, 0)
+  await retryDataFile(m)
+  assert(m.status().includes('Connected.'))
+  assert.equal(disk.requests, 0)
+})
+check('Returning to an idle connected tab detects revoked access before the next note is entered', async () => {
+  const activation = { isActive: false }
+  const m = make(undefined, undefined, { beforeStart: ({ window }) => { window.navigator.userActivation = activation } })
+  await m.choose()
+  m.disk.permission = 'prompt'
+  m.dispatch('focus')
+  await settle()
+  assert(m.status().includes('File access needed'))
+  assert.equal(m.disk.requests, 0)
+  activation.isActive = true
+  m.e.pointerDown(m.e.window.document.body)
+  await settle()
+  assert.equal(m.disk.requests, 1)
+  assert(m.status().includes('Connected.'))
+})
+check('A remembered location survives a failed database open and is recovered automatically', async () => {
+  const disk = fakeDisk('--------------------\nRestored Example\nFictional archived note\nINC9000000\n--------------------\n')
+  const database = fakeDatabase(disk.handle)
+  database.openFails = true
+  const m = make(disk, database, {
+    beforeStart: ({ window }) => window.localStorage.setItem('service-desk-8x8-data-enabled-v1', 'true')
+  })
+  await settle()
+  assert.equal(records(m.e).length, 0)
+  database.openFails = false
+  await retryDataFile(m)
+  assert.equal(records(m.e).length, 1)
+  assert.equal(records(m.e)[0].caller, 'Restored Example')
+  assert.equal(m.picks(), 0)
+})
+check('Repeated recovery attempts cannot overwrite a conflicting external edit', async () => {
+  const m = make()
+  importNote(m.e, 'Original Conflict Example')
+  await m.choose()
+  const external = m.disk.text.replace('Original Conflict Example', 'External Conflict Example')
+  m.disk.text = external
+  importNote(m.e, 'Unsaved Conflict Example')
+  await m.save()
+  for (let count = 0; count < 3; count++) await retryDataFile(m)
+  assert.equal(m.disk.text, external)
+  assert.equal(records(m.e).length, 2)
+  assert.equal(records(m.e)[0].caller, 'Original Conflict Example')
+  assert(m.status().includes('keep both copies'))
+})
+check('Explicit Disconnect cancels retries, lifecycle wakes and an already queued stale callback', async () => {
+  const disk = fakeDisk()
+  disk.permission = 'denied'
+  const m = make(disk, fakeDatabase(disk.handle))
+  await settle()
+  const old = [...m.e.jobs.values()].find((job) => job.fn.name === 'recover')
+  assert(old)
+  await m.e.button('Disconnect').onclick()
+  disk.permission = 'granted'
+  m.dispatch('focus')
+  m.dispatch('online')
+  m.e.pointerDown(m.e.window.document.body)
+  await old.fn()
+  await settle()
+  assert.equal(disk.reads, 0)
+  assert.equal(disk.writes.length, 0)
+  assert(![...m.e.jobs.values()].some((job) => job.fn.name === 'recover'))
+})
+check('A late automatic reconnect cannot import notes after Disconnect or destruction', async () => {
+  for (const mode of ['disconnect', 'destroy']) {
+    const disk = fakeDisk('--------------------\nLate Recovery Example\nFictional note\nINC9000000\n--------------------\n')
+    disk.permission = 'denied'
+    const m = make(disk, fakeDatabase(disk.handle))
+    await settle()
+    disk.permission = 'granted'
+    let release
+    disk.readGate = new Promise((resolve) => { release = resolve })
+    const [id, job] = [...m.e.jobs].find(([, job]) => job.fn.name === 'recover')
+    m.e.jobs.delete(id)
+    const pending = job.fn()
+    await settle()
+    const api = m.e.window.__itsCallAssist
+    if (mode === 'disconnect') await m.e.button('Disconnect').onclick()
+    else await api.destroy()
+    release()
+    await pending
+    await settle()
+    assert.equal(api.callHistorySession().records.length, 0)
+    assert.equal(disk.writes.length, 0)
+  }
+})
+check('Explicit disconnect survives a rerun even when Edge cannot persist that choice', async () => {
+  const m = make()
+  await m.choose()
+  m.database.deleteFails = true
+  const write = m.e.window.localStorage.setItem
+  m.e.window.localStorage.setItem = (key, value) => {
+    if (key === 'service-desk-8x8-data-enabled-v1' && value === 'false') throw error('SecurityError')
+    write(key, value)
+  }
+  await m.e.button('Disconnect').onclick()
+  const reads = m.disk.reads
+  m.e.rerun()
+  await settle()
+  m.dispatch('focus')
+  await settle()
+  assert.equal(m.disk.reads, reads)
+  assert(![...m.e.jobs.values()].some((job) => job.fn.name === 'recover'))
+})
+check('A cancelled edit is repaired automatically even if a previous file close was already committing', async () => {
+  const m = make()
+  importNote(m.e, 'Original Cancel Example')
+  await m.choose()
+  let release
+  m.disk.closeGate = new Promise((resolve) => { release = resolve })
+  const card = editFirst(m.e, 'Cancelled Commit Example')
+  const pending = m.save()
+  await settle()
+  card.querySelector('.history-edit-input').onkeydown({ key: 'Escape', preventDefault () {} })
+  // Let the cancellation's scheduled no-op flush happen before the old close completes.
+  for (const [id, job] of [...m.e.jobs]) {
+    if (job.ms === 5000) { m.e.jobs.delete(id); job.fn() }
+  }
+  release()
+  await pending
+  await settle()
+  m.disk.closeGate = null
+  for (const [id, job] of [...m.e.jobs]) {
+    if (job.ms === 5000) { m.e.jobs.delete(id); job.fn() }
+  }
+  await settle()
+  assert(m.disk.text.includes('Original Cancel Example'))
+  assert(!m.disk.text.includes('Cancelled Commit Example'))
+})
 ;(async () => {
   for (const { name, fn } of checks) {
     await fn()
