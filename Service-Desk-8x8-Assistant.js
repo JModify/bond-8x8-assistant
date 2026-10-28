@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.2.2
+/* Service Desk 8x8 Assistant — Prototype v1.2.3
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -23,11 +23,11 @@
  * Lunch, Short Break and disposition pages have separate compact personal views.
  * Short breaks accumulate today's minutes and never use the lunch reminder.
  * Missing queue rows keep controls open but suspend queue-based cover alerts.
- * Missing agent information freezes the last-read table; menus stay available.
+ * Missing Groups information freezes other agents; Me uses the readable live header.
  * Muting keeps monitoring, timers, notifications and statistics running.
  * Statistics record observed Busy starts, not 8x8's complete historical call totals.
  * Optional caller identifiers and notes are saved at Wrap up.
- * Add in-person notes manually; Call Notes totals describe saved notes, not observed calls.
+ * Add manual notes; filter saved notes and confirm suggestions from previous caller numbers.
  * Finished reminder messages close after the configured notification display time.
  * Drag the top-left corner to resize; double-click it to reset.
  * Call Notes uses this tab's session and an optional chosen Data location TXT file.
@@ -67,7 +67,7 @@
   const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.2.2'
+  const VERSION = deployment?.version || '1.2.3'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -113,9 +113,9 @@
     )
     return Number.isSafeInteger(seconds) ? seconds : null
   }
-  function isVisible (node) {
-    // A detached or collapsed row is not evidence of an agent's current status.
-    if (!node || node.isConnected === false || !node.getClientRects().length) return false
+  function isDisplayed (node) {
+    // Empty list containers can have no rectangle while their visible panel is still open.
+    if (!node || node.isConnected === false) return false
     const view = node.ownerDocument.defaultView
     // A visible-looking child can still belong to a hidden parent panel.
     for (let ancestor = node; ancestor?.nodeType === 1; ancestor = ancestor.parentElement) {
@@ -125,6 +125,16 @@
       if (hidden || invisible) return false
     }
     return true
+  }
+  function isVisible (node) {
+    return isDisplayed(node) && node.getClientRects().length > 0
+  }
+  function isRosterVisible (node) {
+    if (isVisible(node)) return true
+    // Accept a mounted, genuinely empty zero-height list inside a visible parent. Hidden
+    // rows, virtual padding and hidden ancestors remain insufficient evidence of sign-out.
+    return !!(isDisplayed(node) && isVisible(node.parentElement) &&
+      !node.querySelector('[data-test-id="agent-item"],[data-test-id="queue-item"]'))
   }
   function getReadableDocuments () {
     const found = []
@@ -196,6 +206,16 @@
     const text = normaliseText(value)
     // Anonymous labels and channel names must not become guessed telephone numbers.
     return /^[+\d][\d\s()+.-]*$/.test(text) && phoneDigits(text).length >= 3 ? text : null
+  }
+  function studentAssistNumber (number) {
+    // The desk's extension may arrive with a prefix; only the native telephone digits count.
+    return !!readablePhone(number) && phoneDigits(number).endsWith('55858')
+  }
+  function callerNumberKey (number) {
+    if (!readablePhone(number)) return ''
+    const digits = phoneDigits(number)
+    // Match Australian international/local formatting without suffix-matching unrelated callers.
+    return /^61[23478]\d{8}$/.test(digits) ? '0' + digits.slice(2) : digits
   }
   function readCallPage (docs) {
     const cards = docs
@@ -885,8 +905,8 @@
       color: #99520c;
       background: #fff1d9;
     }
-    .agents[data-frozen="true"] .agent-status,
-    .agents[data-frozen="true"] .agent-time {
+    .agents[data-frozen="true"] tr[data-live="false"] .agent-status,
+    .agents[data-frozen="true"] tr[data-live="false"] .agent-time {
       opacity: 0.7;
     }
     .data-warning {
@@ -961,6 +981,17 @@
     .sound-description {
       margin-bottom: 12px;
     }
+    .sound-switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .sound-switch-row button { margin: 0; min-width: 74px; }
+    .sound-state { font-size: 11px; font-weight: 600; color: #147e78; }
+    .sound-category[data-enabled="false"] .sound-state { color: #667085; }
+    .sound-category[data-enabled="false"] { background: #f5f6f9; }
     .sound-description p {
       margin: 0 0 8px;
     }
@@ -1462,6 +1493,23 @@
       margin: 8px 0 0;
       color: #526176;
     }
+    .caller-suggestion {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      margin-top: 9px;
+      background: #f2ecff;
+      border: 1px solid #d8c7f5;
+      border-radius: 9px;
+      color: #54348c;
+    }
+    .caller-suggestion-copy { flex: 1; min-width: 0; }
+    .caller-suggestion-copy strong { display: block; overflow-wrap: anywhere; font-size: 13px; }
+    .caller-suggestion-copy small { display: block; margin-top: 3px; font-size: 10px; line-height: 1.4; }
+    .caller-suggestion-actions { display: flex; gap: 5px; }
+    .caller-suggestion-actions button { margin: 0; padding: 5px 9px; font-size: 14px; }
+    .caller-suggestion-actions .primary { background: #6941a5; border-color: #6941a5; }
     .caller-notes-label {
       display: block;
       margin-top: 12px;
@@ -1565,6 +1613,11 @@
       font-size: 10px;
       font-weight: 600;
     }
+    .history-source.student-assist {
+      background: #eee6ff;
+      color: #6941a5;
+      margin-left: 4px;
+    }
     .history-card.new-note { border-style: dashed; }
     .controls { display: flex; align-items: center; gap: 6px; }
     .controls button { height: var(--assistant-button-height); margin: 0; }
@@ -1606,8 +1659,30 @@
       font: 12px system-ui;
       color: #172235;
       background: white;
-      margin-bottom: 11px;
+      margin: 0;
     }
+    .history-search-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .history-search-tools .history-search { flex: 1; min-width: 0; }
+    .history-search-tools button { margin: 0; flex-shrink: 0; padding: 8px 10px; }
+    .history-filter-toggle[data-active="true"] { color: #245dc1; background: #eaf1ff; border-color: #a4bde9; }
+    .history-filters {
+      padding: 11px;
+      margin-bottom: 11px;
+      background: #f8faff;
+      border: 1px solid #d7e0ec;
+      border-radius: 9px;
+    }
+    .history-filters fieldset { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
+    .history-filters legend { font-size: 11px; font-weight: 650; margin-bottom: 6px; }
+    .history-filter-options { display: flex; flex-wrap: wrap; gap: 7px 12px; }
+    .history-filter-queues { max-height: 105px; overflow: auto; }
+    .history-filter-check { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1.5; }
+    .history-filter-check input { margin: 0; }
+    .history-filter-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+    .history-filter-date { display: grid; gap: 5px; font-size: 11px; font-weight: 600; }
+    .history-filter-date input { font: 12px system-ui; padding: 6px 8px; border: 1px solid #a4b2c7; border-radius: 6px; background: white; color: #172235; }
+    .history-filter-bottom button { margin: 0; }
+    .history-filter-summary { font-size: 10px; line-height: 1.5; color: #245dc1; margin: 0 0 10px; overflow-wrap: anywhere; }
     .history-list {
       min-height: 0;
       max-height: 460px;
@@ -1762,12 +1837,6 @@
       color: #526176;
       font-size: 12px;
       line-height: 1.6;
-    }
-    .history-note {
-      font-size: 10px;
-      line-height: 1.4;
-      color: #526176;
-      margin: 9px 0 0;
     }
     .compact-view[data-kind="disposition"] {
       --progress-colour: #7650a5;
@@ -2052,6 +2121,7 @@
   const callHeadingTitle = createElement('div', '', callHeading, 'call-heading-actions')
   createElement('span', 'On call', callHeadingTitle, 'call-title')
   const callBadge = createElement('span', 'Connected', callHeadingTitle, 'call-badge')
+  const callStudentAssist = createElement('span', 'Student Assist Desk', callHeadingTitle, 'history-source student-assist hidden')
   const callActions = createElement('div', '', callHeading, 'call-heading-actions')
   const callElapsed = createElement('span', '—', callActions, 'call-duration')
   const callHistoryButton = createElement('button', 'Call Notes', callActions)
@@ -2079,6 +2149,20 @@
   callerInput.autocomplete = 'off'
   callerInput.placeholder = 'Staff name or student number'
   callerInput.setAttribute('aria-describedby', 'its-caller-help')
+  const callerSuggestion = createElement('aside', '', callView, 'caller-suggestion hidden')
+  callerSuggestion.setAttribute('aria-label', 'Caller suggestion from previous notes')
+  callerSuggestion.setAttribute('aria-live', 'polite')
+  const suggestionCopy = createElement('div', '', callerSuggestion, 'caller-suggestion-copy')
+  createElement('small', 'Previous notes suggest', suggestionCopy)
+  const suggestionName = createElement('strong', '', suggestionCopy)
+  const suggestionReason = createElement('small', '', suggestionCopy)
+  const suggestionActions = createElement('div', '', callerSuggestion, 'caller-suggestion-actions')
+  const suggestionAccept = createElement('button', '✓', suggestionActions, 'primary')
+  suggestionAccept.title = 'Accept caller suggestion'
+  suggestionAccept.setAttribute('aria-label', 'Accept caller suggestion')
+  const suggestionReject = createElement('button', '×', suggestionActions)
+  suggestionReject.title = 'Dismiss caller suggestion for this call'
+  suggestionReject.setAttribute('aria-label', 'Dismiss caller suggestion for this call')
   const callerHelp = createElement(
     'p',
     'Saves to Call Notes at Wrap up. Leave the name or ID blank for Unknown.',
@@ -2181,7 +2265,7 @@
   const historyResults = createElement('span', '', historySummary, 'small')
   const historyTransfer = createElement('div', '', historyPanel, 'history-transfer')
   const historyAdd = createElement('button', '+ Add note', historyTransfer, 'primary history-add')
-  historyAdd.title = 'Add an in-person note'
+  historyAdd.title = 'Add a manual note'
   const historyImport = createElement('button', 'Import TXT', historyTransfer)
   const historyExport = createElement('button', 'Export TXT', historyTransfer)
   const historyDownload = createElement('button', 'Download TXT', historyTransfer, 'hidden')
@@ -2192,10 +2276,45 @@
   const historyTransferStatus = createElement('p', '', historyPanel, 'history-transfer-status hidden')
   historyTransferStatus.setAttribute('role', 'status')
   historyTransferStatus.setAttribute('aria-live', 'polite')
-  const historySearch = createElement('input', '', historyPanel, 'history-search')
+  const historySearchTools = createElement('div', '', historyPanel, 'history-search-tools')
+  const historySearch = createElement('input', '', historySearchTools, 'history-search')
   historySearch.type = 'search'
   historySearch.placeholder = 'Search name, ID, notes, job number, phone or queue'
   historySearch.setAttribute('aria-label', 'Search Call Notes')
+  const historyFilterToggle = createElement('button', 'Filters', historySearchTools, 'history-filter-toggle')
+  historyFilterToggle.setAttribute('aria-expanded', 'false')
+  historyFilterToggle.setAttribute('aria-controls', 'its-note-filters')
+  const historyFilterPanel = createElement('section', '', historyPanel, 'history-filters hidden')
+  historyFilterPanel.id = 'its-note-filters'
+  historyFilterPanel.setAttribute('aria-label', 'Filter Call Notes')
+  const typeFilters = createElement('fieldset', '', historyFilterPanel)
+  createElement('legend', 'Caller type (prediction)', typeFilters)
+  const typeFilterOptions = createElement('div', '', typeFilters, 'history-filter-options')
+  const historyTypeInputs = new Map()
+  for (const type of ['Staff', 'Student', 'Unknown']) {
+    const label = createElement('label', '', typeFilterOptions, 'history-filter-check')
+    const input = createElement('input', '', label)
+    input.type = 'checkbox'
+    input.setAttribute('aria-label', 'Filter caller type: ' + type)
+    label.append(doc.createTextNode(type))
+    historyTypeInputs.set(type, input)
+  }
+  const queueFilters = createElement('fieldset', '', historyFilterPanel)
+  createElement('legend', 'Queue — select any that apply', queueFilters)
+  const historyQueueOptions = createElement('div', '', queueFilters, 'history-filter-options history-filter-queues')
+  const historyQueueInputs = new Map()
+  const historyFilterBottom = createElement('div', '', historyFilterPanel, 'history-filter-bottom')
+  const missingJobLabel = createElement('label', '', historyFilterBottom, 'history-filter-check')
+  const historyMissingOnly = createElement('input', '', missingJobLabel)
+  historyMissingOnly.type = 'checkbox'
+  historyMissingOnly.setAttribute('aria-label', 'Only notes missing a job number')
+  missingJobLabel.append(doc.createTextNode('Missing job numbers'))
+  const dateLabel = createElement('label', 'Date', historyFilterBottom, 'history-filter-date')
+  const historyDate = createElement('input', '', dateLabel)
+  historyDate.type = 'date'
+  historyDate.setAttribute('aria-label', 'Filter notes by date')
+  const historyClearFilters = createElement('button', 'Clear filters', historyFilterBottom)
+  const historyFilterSummary = createElement('p', '', historyPanel, 'history-filter-summary hidden')
   const historyList = createElement('div', '', historyPanel, 'history-list')
   historyList.setAttribute('role', 'region')
   historyList.setAttribute('aria-label', deployment?.persistent ? 'Saved calls, newest first' : 'Calls saved this session, newest first')
@@ -2205,14 +2324,6 @@
   const historyPrevious = createElement('button', 'Previous', historyPager)
   const historyPageLabel = createElement('span', '', historyPager, 'small')
   const historyNext = createElement('button', 'Next', historyPager)
-  createElement(
-    'p',
-    deployment?.persistent
-      ? 'Saved in this browser. The tick, clicking away or Back saves. Export TXT to keep a backup.'
-      : 'Edit with the pen. The tick, clicking away or Back saves. Export TXT to keep a copy after this session.',
-    historyPanel,
-    'history-note'
-  )
   const soundHeader = createElement('div', '', soundPanel, 'menu-header')
   createElement('h3', 'Sound Settings', soundHeader)
   const soundBack = createElement('button', 'Back', soundHeader)
@@ -2563,6 +2674,11 @@
   let historyPage = 0
   let historyRenderKey = ''
   let historyRenderedQuery = ''
+  const historyFilters = { types: new Set(), queues: new Set(), missingJob: false, date: '' }
+  let historyRenderedFilters = ''
+  let callerIndexRevision = -1
+  let callerNumberIndex = new Map()
+  let offeredCaller = null
   let editingCallId = null
   let historyEdit = null
   let newManualRecord = null
@@ -2573,7 +2689,8 @@
   const historyDays = new Map()
   const historySearchIndex = new WeakMap()
   function searchableNote (record) {
-    const fields = [record.caller, record.notes, record.jobNumber, record.number, record.queue, record.transactionId]
+    const fields = [record.caller, record.notes, record.jobNumber, record.number, record.queue, record.transactionId,
+      record.origin === 'manual' ? 'Manual Note' : '', studentAssistNumber(record.number) ? 'Student Assist Desk' : '']
     let cached = historySearchIndex.get(record)
     // Reuse normalised long notes while their editable fields are unchanged. Weak keys
     // release deleted/replaced records instead of keeping an unbounded search cache.
@@ -2657,6 +2774,10 @@
       call.notesInput = typeof value.notesInput === 'string'
         ? value.notesInput.slice(0, MAX_NOTES_LENGTH)
         : ''
+      // A dismissed suggestion belongs to this draft/number, never to all future callers.
+      if (typeof value.dismissedCallerNumber === 'string' && /^\d{3,80}$/.test(value.dismissedCallerNumber)) {
+        call.dismissedCallerNumber = value.dismissedCallerNumber
+      }
     } else {
       call.caller = text('caller', 160) || 'Unknown'
       call.callerPrediction = predictCaller(call.caller)
@@ -2893,6 +3014,7 @@
     delete record.callerInput
     delete record.notesInput
     delete record.recovered
+    delete record.dismissedCallerNumber
     callHistory.records.push(record)
     callHistory.closedId = record.id
     callHistory.closedCall = { id: record.id, transactionId: record.transactionId, number: record.number }
@@ -3739,9 +3861,6 @@
       settingsButton.title = attention ? 'Settings — Data file needs attention' : 'Assistant settings'
       setText(historySummary.querySelector('.history-session-count'), ready ? 'Auto-save enabled' : handle ? 'Auto-save paused' : 'This session')
       historyList.setAttribute('aria-label', ready ? 'Saved Call Notes, newest first' : 'Call Notes in this tab, newest first')
-      setText(historyPanel.querySelector('.history-note'), ready
-        ? 'The tick, clicking away or Back saves. Your data file updates automatically; Export TXT makes a separate copy.'
-        : 'Edit with the pen. The tick, clicking away or Back saves. Export TXT to keep a copy after this session.')
       dataFileStatus.setAttribute('data-attention', String(attention))
       dataFileStatus.title = (handle?.name || 'Data location') + ' — Open Data location settings'
       dataReconnect.classList.toggle('hidden', !handle)
@@ -4267,13 +4386,119 @@
       })
     }
   }
+  function syncHistoryQueueFilters (records) {
+    // Outbound is a history filter only. Live monitoring still reads the three inbound queues.
+    const choices = new Map([...QUEUES, 'ITS Outbound'].map((queue) => [normaliseStatus(queue), queue]))
+    for (const record of records) if (record.queue) choices.set(normaliseStatus(record.queue), record.queue)
+    // Retain a checked queue after its last record is deleted so its restriction stays visible.
+    for (const [key, input] of historyQueueInputs) {
+      if (!choices.has(key) && !historyFilters.queues.has(key)) {
+        input.parentElement.remove()
+        historyQueueInputs.delete(key)
+      }
+    }
+    for (const [key, queue] of choices) {
+      if (historyQueueInputs.has(key)) continue
+      const label = createElement('label', '', historyQueueOptions, 'history-filter-check')
+      const input = createElement('input', '', label)
+      input.type = 'checkbox'
+      input.setAttribute('aria-label', 'Filter queue: ' + queue)
+      label.append(doc.createTextNode(queue))
+      input.checked = historyFilters.queues.has(key)
+      input.onchange = () => {
+        if (input.checked) historyFilters.queues.add(key)
+        else historyFilters.queues.delete(key)
+        applyHistoryFilters()
+      }
+      historyQueueInputs.set(key, input)
+    }
+  }
+  function historyFilterKey () {
+    // Filter state stays in this assistant session; it never stores caller information in preferences.
+    return JSON.stringify([[...historyFilters.types].sort(), [...historyFilters.queues].sort(), historyFilters.missingJob, historyFilters.date])
+  }
+  function noteMatchesFilters (record) {
+    // Choices within a category are OR; different categories and keyword search are AND.
+    return (!historyFilters.types.size || historyFilters.types.has(record.callerPrediction)) &&
+      (!historyFilters.queues.size || historyFilters.queues.has(normaliseStatus(record.queue))) &&
+      (!historyFilters.missingJob || !cleanJobNumber(record.jobNumber)) &&
+      (!historyFilters.date || (record.detectedAt !== null && dayKey(record.detectedAt) === historyFilters.date))
+  }
+  function syncHistoryFilters () {
+    const categories = Number(!!historyFilters.types.size) + Number(!!historyFilters.queues.size) +
+      Number(historyFilters.missingJob) + Number(!!historyFilters.date)
+    setText(historyFilterToggle, categories ? `Filters (${categories})` : 'Filters')
+    historyFilterToggle.setAttribute('data-active', String(categories > 0))
+    const labels = [...historyFilters.types]
+    if (historyFilters.queues.size) {
+      labels.push([...historyFilters.queues].map((key) =>
+        historyQueueInputs.get(key)?.parentElement.textContent || key).join(' / '))
+    }
+    if (historyFilters.missingJob) labels.push('Missing job numbers')
+    if (historyFilters.date) labels.push(historyFilters.date.split('-').reverse().join('/'))
+    setText(historyFilterSummary, labels.join(' · '))
+    historyFilterSummary.classList.toggle('hidden', !categories)
+    historyClearFilters.disabled = !categories
+  }
+  function applyHistoryFilters () {
+    if (destroyed) return
+    // A filter change leaves the current editor, just like a search or page change.
+    saveHistoryEdit(false)
+    historyPage = 0
+    historyRenderKey = ''
+    renderHistory()
+    historyList.scrollTop = 0
+  }
+  historyFilterToggle.onclick = () => {
+    const open = historyFilterPanel.classList.contains('hidden')
+    historyFilterPanel.classList.toggle('hidden', !open)
+    historyFilterToggle.setAttribute('aria-expanded', String(open))
+  }
+  for (const [type, input] of historyTypeInputs) {
+    input.onchange = () => {
+      if (input.checked) historyFilters.types.add(type)
+      else historyFilters.types.delete(type)
+      applyHistoryFilters()
+    }
+  }
+  historyMissingOnly.onchange = () => {
+    historyFilters.missingJob = historyMissingOnly.checked
+    applyHistoryFilters()
+  }
+  historyDate.onchange = () => {
+    const date = historyDate.value
+    const time = /^\d{4}-\d{2}-\d{2}$/.test(date) ? Date.parse(date + 'T00:00:00Z') : NaN
+    // Reject impossible dates too, including hand-edited input values outside the native picker.
+    historyFilters.date = Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === date ? date : ''
+    historyDate.value = historyFilters.date
+    applyHistoryFilters()
+  }
+  historyClearFilters.onclick = () => {
+    historyFilters.types.clear()
+    historyFilters.queues.clear()
+    historyFilters.missingJob = false
+    historyFilters.date = ''
+    for (const input of [...historyTypeInputs.values(), ...historyQueueInputs.values(), historyMissingOnly]) input.checked = false
+    historyDate.value = ''
+    // Clearing structured filters deliberately preserves the separate keyword search.
+    applyHistoryFilters()
+  }
+  historyFilterPanel.addEventListener('keydown', (event) => {
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      historyFilterPanel.classList.add('hidden')
+      historyFilterToggle.setAttribute('aria-expanded', 'false')
+      historyFilterToggle.focus?.()
+    }
+  })
   function createHistoryWidget (record) {
     const card = createElement('article', '', historyList, 'history-card')
     card.setAttribute('data-call-id', String(record.id))
     const heading = createElement('div', '', card, 'history-card-heading')
     const slot = createElement('div', '', heading, 'history-caller-slot')
     const caller = createElement('h4', record.caller, slot, 'history-caller')
-    if (record.origin === 'manual') createElement('span', 'In person', slot, 'history-source')
+    if (record.origin === 'manual') createElement('span', 'Manual Note', slot, 'history-source')
+    if (studentAssistNumber(record.number)) createElement('span', 'Student Assist Desk', slot, 'history-source student-assist')
     if (record.recovered) createElement('span', 'Recovered', slot, 'history-source')
     const input = createElement('input', '', slot, 'history-edit-input hidden')
     input.type = 'text'
@@ -4378,19 +4603,24 @@
       return
     }
     const query = normaliseStatus(historySearch.value)
+    const filterKey = historyFilterKey()
     // A new search leaves the current record; save before evaluating its edited contents.
-    if (historyEdit && historyRenderedQuery !== query) saveHistoryEdit(false)
-    if (historyRenderedQuery !== query) historyPage = 0
+    if (historyEdit && (historyRenderedQuery !== query || historyRenderedFilters !== filterKey)) saveHistoryEdit(false)
+    if (historyRenderedQuery !== query || historyRenderedFilters !== filterKey) historyPage = 0
     historyRenderedQuery = query
+    historyRenderedFilters = filterKey
     const today = dayKey(Date.now())
-    const key = `${historyRevision}|${query}|${today}|${historyPage}`
+    const key = `${historyRevision}|${query}|${filterKey}|${today}|${historyPage}`
     // Polling updates statistics without rebuilding the scrollable cards or resetting expanded details.
     if (historyRenderKey === key) return
     historyRenderKey = key
     const records = [...callHistory.records].sort(
       (a, b) => (b.detectedAt ?? -Infinity) - (a.detectedAt ?? -Infinity) || b.id - a.id
     )
+    syncHistoryQueueFilters(records)
+    syncHistoryFilters()
     const filtered = records.filter((call) => {
+      if (!noteMatchesFilters(call)) return false
       if (!query) return true
       const indexed = searchableNote(call)
       // Telephone searches accept the user's spaces and punctuation as well as native formatting.
@@ -4403,7 +4633,8 @@
     setText(historyStudents, String(records.filter((record) => record.callerPrediction === 'Student').length))
     setText(historyStaff, String(records.filter((record) => record.callerPrediction === 'Staff').length))
     setText(historyMissingJobs, String(records.filter((record) => !cleanJobNumber(record.jobNumber)).length))
-    setText(historyResults, query ? `${filtered.length} found` : 'Newest first')
+    const scoped = !!query || historyFilters.types.size || historyFilters.queues.size || historyFilters.missingJob || !!historyFilters.date
+    setText(historyResults, scoped ? `${filtered.length} of ${records.length} notes` : 'Newest first')
     historyExport.disabled = transferBusy || !records.length
     historyDownload.disabled = transferBusy || !records.length
     historyAdd.disabled = transferBusy
@@ -4431,9 +4662,9 @@
       if (!historyEmpty) historyEmpty = createElement('div', '', historyList, 'history-empty')
       setText(
         historyEmpty,
-        query
-          ? 'No matching call notes. Try another name, note or job number.'
-          : 'No notes yet. Calls save after Wrap up. Use Add note for an in-person visit, or Import TXT.'
+        scoped
+          ? 'No matching call notes. Adjust your filters or search.'
+          : 'No notes yet. Calls save after Wrap up. Use Add note for a manual record, or Import TXT.'
       )
       desired.push(historyEmpty)
     }
@@ -4495,6 +4726,72 @@
   }
   if (historyPrevious) historyPrevious.onclick = () => changeHistoryPage(-1)
   if (historyNext) historyNext.onclick = () => changeHistoryPage(1)
+  function previousCaller (number) {
+    if (callerIndexRevision !== historyRevision) {
+      // Rebuild once per saved-note revision, never once per call-clock tick. Use all
+      // saved notes irrespective of current filters; manual notes cannot identify a phone.
+      callerNumberIndex = new Map()
+      for (const record of callHistory.records) {
+        const key = callerNumberKey(record.number)
+        const caller = normaliseText(record.caller)
+        if (!key || record.origin === 'manual' || !caller || normaliseStatus(caller) === 'unknown') continue
+        let entry = callerNumberIndex.get(key)
+        if (!entry) {
+          entry = { caller, names: new Set(), at: -Infinity, id: 0 }
+          callerNumberIndex.set(key, entry)
+        }
+        entry.names.add(normaliseStatus(caller))
+        const at = record.detectedAt ?? record.completedAt ?? -Infinity
+        if (at > entry.at || (at === entry.at && record.id > entry.id)) {
+          entry.caller = caller
+          entry.at = at
+          entry.id = record.id
+        }
+      }
+      callerIndexRevision = historyRevision
+    }
+    return callerNumberIndex.get(callerNumberKey(number)) || null
+  }
+  function renderCallerSuggestion (draft, page) {
+    const number = callerNumberKey(draft?.number)
+    const entry = draft && !page.identityConflict && !draft.callerInput.trim() &&
+      draft.dismissedCallerNumber !== number
+      ? previousCaller(draft.number)
+      : null
+    offeredCaller = entry ? { draftId: draft.id, number, caller: entry.caller } : null
+    callerSuggestion.classList.toggle('hidden', !offeredCaller)
+    if (!entry) return
+    setText(suggestionName, entry.caller)
+    setText(suggestionReason, entry.names.size > 1
+      ? `${entry.names.size} names or IDs are saved for this number. Please confirm.`
+      : 'Previously saved for this number. Please confirm the caller’s identity.')
+  }
+  function resolveCallerSuggestion (accept) {
+    if (destroyed || !offeredCaller || callerInput.disabled || callView.classList.contains('hidden')) return
+    const offered = offeredCaller
+    const draft = currentCallDraft()
+    const page = readCallPage(getReadableDocuments())
+    // A delayed click must not fill another interaction, a Wrap up card, or freshly typed text.
+    if (!draft || draft.id !== offered.draftId || draft.callerInput.trim() ||
+      page?.phase !== 'call' || page.identityConflict || matchingCallDraft(page)?.id !== draft.id ||
+      callerNumberKey(draft.number) !== offered.number ||
+      callerNumberKey(page.number || draft.number) !== offered.number ||
+      previousCaller(draft.number)?.caller !== offered.caller) return
+    draft.dismissedCallerNumber = offered.number
+    if (accept) {
+      draft.callerInput = offered.caller
+      callerInput.value = offered.caller
+      // Confirmed suggestions are user input; reconnecting must not replace them with a checkpoint.
+      if (!touchedCallFields.has(draft.id)) touchedCallFields.set(draft.id, new Set())
+      touchedCallFields.get(draft.id).add('callerInput')
+    }
+    offeredCaller = null
+    callerSuggestion.classList.add('hidden')
+    saveCallHistory()
+    if (accept) callerInput.focus?.({ preventScroll: true })
+  }
+  suggestionAccept.onclick = () => resolveCallerSuggestion(true)
+  suggestionReject.onclick = () => resolveCallerSuggestion(false)
   function renderCall (page) {
     const draft = currentCallDraft()
     compactKind = 'call'
@@ -4503,6 +4800,7 @@
     setText(callElapsed, callClock(page.durationSeconds))
     setText(callNumber, page.number || draft?.number || 'Unavailable')
     setText(callQueue, page.queue || draft?.queue || 'Unavailable')
+    callStudentAssist.classList.toggle('hidden', !studentAssistNumber(page.number || draft?.number))
     callerInput.disabled = !draft || page.identityConflict
     notesInput.disabled = callerInput.disabled
     if (editingCallId !== draft?.id || callerInput.value !== (draft?.callerInput || '')) {
@@ -4512,6 +4810,7 @@
       editingCallId = draft?.id || null
     }
     if (notesInput.value !== (draft?.notesInput || '')) notesInput.value = draft?.notesInput || ''
+    renderCallerSuggestion(draft, page)
     syncViews()
   }
   function saveOnCallInput (input, key, limit) {
@@ -4527,6 +4826,12 @@
       return
     }
     draft[key] = input.value.slice(0, limit)
+    if (key === 'callerInput') {
+      // Typing is an explicit identity choice. Clearing the field later must not nag again.
+      draft.dismissedCallerNumber = callerNumberKey(draft.number)
+      offeredCaller = null
+      callerSuggestion.classList.add('hidden')
+    }
     if (!touchedCallFields.has(draft.id)) touchedCallFields.set(draft.id, new Set())
     touchedCallFields.get(draft.id).add(key)
     saveCallHistory()
@@ -4630,6 +4935,9 @@
   }
   function entireRosterRendered (list, rows) {
     if (!list) return false
+    if (list.getAttribute('aria-busy') === 'true' || list.querySelector('[role="progressbar"]')) return false
+    // Mounted hidden rows are not a confirmed empty roster or evidence of sign-out.
+    if (list.querySelectorAll('[data-test-id="agent-item"]').length !== rows.length) return false
     const css = list.ownerDocument.defaultView.getComputedStyle(list)
     // Virtuoso pads the list for rows outside the viewport. A scrolled,
     // partial list cannot prove that an absent selected agent signed out.
@@ -4662,14 +4970,25 @@
     }
     // Empty Groups lists can be remounted when the final other agent signs out.
     // A stale reference must not prevent discovering the replacement empty list.
-    const mountedRoot = rosterRoot && docs.includes(rosterRoot.ownerDocument) && isVisible(rosterRoot) &&
+    const mountedRoot = rosterRoot && docs.includes(rosterRoot.ownerDocument) && isRosterVisible(rosterRoot) &&
       (rosterRoot.isConnected !== false)
     if (!rows.length && !mountedRoot) rosterRoot = null
     if (!rosterRoot) {
       // A uniquely identifiable empty Groups list can still prove that only Me is signed in.
       const lists = docs.flatMap((d) => [...d.querySelectorAll('[data-test-id="virtuoso-item-list"]')])
-        .filter((list) => isVisible(list) && !list.querySelector('[data-test-id="queue-item"]'))
+        .filter((list) => isRosterVisible(list) && !list.querySelector('[data-test-id="queue-item"]'))
       if (lists.length === 1) rosterRoot = lists[0]
+    }
+    if (!rosterRoot && !rows.length) {
+      // 8x8 may omit Virtuoso entirely for an empty Groups component. Accept an
+      // explicitly identified, open Groups region; a title/tab alone proves nothing.
+      const panels = docs.flatMap((d) => [...d.querySelectorAll(
+        '[data-test-id="groups-panel"],[data-test-id="groups-list"],[data-test-id="agents-list"],' +
+        '[role="region"][aria-label="Groups"],[role="tabpanel"][aria-label="Groups"]'
+      )]).filter((node) => isRosterVisible(node) &&
+        !node.querySelector('[data-test-id="agent-item"],[data-test-id="queue-item"]') &&
+        node.getAttribute('aria-busy') !== 'true' && !node.querySelector('[role="progressbar"]'))
+      if (panels.length === 1) rosterRoot = panels[0]
     }
     if (!rosterRoot && !rows.length) {
       // Some empty Groups views replace Virtuoso entirely with a native empty-state label.
@@ -4682,7 +5001,7 @@
     // An empty visible list differs from a hidden Groups panel during navigation.
     rosterVisible =
       rows.length > 0 ||
-      !!(rosterRoot && docs.includes(rosterRoot.ownerDocument) && isVisible(rosterRoot))
+      !!(rosterRoot && docs.includes(rosterRoot.ownerDocument) && isRosterVisible(rosterRoot))
     rosterComplete = rosterVisible && entireRosterRendered(rosterRoot, rows)
     // Names alone identify membership changes; advancing timers must not delay pruning.
     const signature = JSON.stringify(rows.map(agentName).sort())
@@ -4713,8 +5032,8 @@
     return current
   }
   function renderAgents (current, frozen) {
-    // Read and validate the entire snapshot before touching any displayed status or timer.
-    // Cached rows are display-only; alert rules always receive the independent fresh map.
+    // Other agents need a complete roster. Me has an independently verified header and
+    // must keep updating even if Groups is missing, empty or temporarily unreadable.
     const personal = !!personalPageKind(current.get('Me'))
     if (!frozen && rosterSettled && !personal) {
       // Saved membership is a user choice, separate from current sign-in.
@@ -4767,7 +5086,9 @@
       // Cached sign-in information cannot enable another agent's checkbox. Me can still
       // change their own role when the native personal/header presence is readable.
       widget.box.disabled = name === 'Me' ? !agent : frozen || !agent
-      if (!frozen) {
+      const live = !frozen || (name === 'Me' && !!agent?.status && Number.isSafeInteger(agent.seconds))
+      widget.row.setAttribute('data-live', String(live))
+      if (live) {
         setText(widget.state, agent?.status || 'Not yet read')
         setText(widget.timer, agent?.timer || '—')
         widget.state.setAttribute('data-state', normaliseStatus(agent?.status))
@@ -4780,12 +5101,20 @@
   }
   function showFrozenAgents (value, alertsUnavailable = value) {
     agentsFrozen = value
-    setText(agentDataBadge, value ? 'Last read' : 'Live')
+    const liveMe = !!lastSample?.me?.status && Number.isSafeInteger(lastSample.me.seconds)
+    setText(agentDataBadge, value ? (liveMe ? 'Me live · Others last read' : 'Last read') : 'Live')
     agentDataBadge.setAttribute('data-frozen', String(value))
-    agentDataBadge.title = value ? 'Agent statuses and times are frozen until live information returns.' : 'Agent information can be read from 8x8.'
+    agentDataBadge.title = value
+      ? (liveMe ? 'Your status is live. Other agents retain their last readable information.' : 'Agent statuses and times are frozen until live information returns.')
+      : 'Agent information can be read from 8x8.'
+    setText(dataWarning.querySelector('strong'), value && liveMe ? 'Other agent information unavailable' : 'Agent information frozen')
+    setText(dataWarning.querySelector('p'), value && liveMe
+      ? 'Your status is live. Open 8x8 Groups for updates on other agents.'
+      : 'Open 8x8 queue information for live updates.')
     const readTime = lastReadableAgentsAt === null
-      ? 'No live agent information has been read yet.'
-      : 'Last read at ' + new Date(lastReadableAgentsAt).toLocaleTimeString('en-AU', { hour12: false }) + '.'
+      ? (liveMe ? 'Other agents have not been read yet.' : 'No live agent information has been read yet.')
+      : (liveMe ? 'Other agents last read at ' : 'Last read at ') +
+        new Date(lastReadableAgentsAt).toLocaleTimeString('en-AU', { hour12: false }) + '.'
     setText(dataLastRead, readTime + ' Call Notes is still available.')
     dataWarning.classList.toggle('hidden', !value)
     syncViews()
@@ -5043,6 +5372,7 @@
     const configured = saved[kind] || {}
     // Validate each saved field independently so adding an option preserves old choices.
     soundSettings[kind] = {
+      enabled: typeof configured.enabled === 'boolean' ? configured.enabled : true,
       preset: PRESETS[configured.preset] ? configured.preset : definition.preset,
       volume: Number.isFinite(configured.volume)
         ? Math.max(0, Math.min(100, configured.volume))
@@ -5108,6 +5438,7 @@
   function soundPlaybackState (kind, soundKind) {
     // An active reminder can remain visible while its finite sound has ended.
     const configuration = soundSettings[soundKind]
+    if (!configuration.enabled) return 'Sound disabled'
     if (muted) return 'Sound muted'
     if (!configuration.volume) return 'Sound volume is 0%'
     if (sounds.has(kind)) return 'Sound playing'
@@ -5257,7 +5588,7 @@
   }
   function playSound (kind, preview = false) {
     // Browser gesture restrictions and output switching can temporarily block audio.
-    if (muted || destroyed || !audioOutputReady || audio?.state !== 'running') return
+    if (muted || destroyed || !soundSettings[kind].enabled || !audioOutputReady || audio?.state !== 'running') return
     // A single preview may coexist with the actual reminder without replacing its job.
     const key = preview ? 'preview' : kind
     stopSound(key)
@@ -5370,6 +5701,34 @@
   for (const [kind, definition] of Object.entries(definitions)) {
     const section = createElement('fieldset', '', soundPanel, 'sound-category')
     createElement('legend', definition.label, section)
+    section.setAttribute('data-sound-kind', kind)
+    const switchRow = createElement('div', '', section, 'sound-switch-row')
+    const soundState = createElement('span', '', switchRow, 'sound-state')
+    const soundToggle = createElement('button', '', switchRow, 'sound-enable-toggle')
+    const syncEnabled = () => {
+      const enabled = soundSettings[kind].enabled
+      section.setAttribute('data-enabled', String(enabled))
+      setText(soundState, enabled ? 'Sound enabled' : 'Sound disabled')
+      setText(soundToggle, enabled ? 'Disable' : 'Enable')
+      soundToggle.setAttribute('aria-pressed', String(enabled))
+      soundToggle.setAttribute('aria-label', `${enabled ? 'Disable' : 'Enable'} sound: ${definition.label}`)
+    }
+    soundToggle.title = 'Controls this sound. Visual reminders and desktop notifications have separate settings.'
+    soundToggle.onclick = () => {
+      if (destroyed) return
+      soundSettings[kind].enabled = !soundSettings[kind].enabled
+      saveSounds()
+      stopSound(kind)
+      if (reminders.get('preview')?.soundKind === kind) stopSound('preview')
+      syncEnabled()
+      syncMute()
+      // Re-enable a currently repeating condition without sending another notification.
+      if (soundSettings[kind].enabled && soundSettings[kind].repeat && activeReminder?.kind === kind) {
+        prepareSound()
+        playSound(kind)
+      }
+    }
+    syncEnabled()
     soundDescriptions.set(kind, createElement('div', '', section, 'small sound-description'))
     const choice = createElement(
       'select',
@@ -5432,6 +5791,7 @@
     const update = () => {
       // Save the complete card configuration without losing its notification preference.
       soundSettings[kind] = {
+        enabled: soundSettings[kind].enabled,
         preset: choice.value,
         volume: Number(volume.value),
         seconds: Math.max(1, Math.min(120, Number(seconds.value) || 1)),
@@ -5452,8 +5812,8 @@
     seconds.onchange = update
     repeat.onchange = update
     const preview = createElement('button', 'Preview', section)
-    preview.disabled = muted
-    previewButtons.push(preview)
+    preview.disabled = muted || !soundSettings[kind].enabled
+    previewButtons.push({ button: preview, kind })
     preview.onclick = () => {
       prepareSound()
       playSound(kind, true)
@@ -5995,7 +6355,7 @@
           body,
           tag: `its-call-assist-${kind}`,
           requireInteraction: true,
-          silent: muted
+          silent: muted || !soundSettings[kind].enabled
         })
         notices.set(kind, notice)
         noticeTimes.set(kind, Date.now())
@@ -6264,8 +6624,8 @@
       (missingG1 && (!rosterComplete || rosterUnreadable)) ||
       sample.agentErrors.length > 0 ||
       samples.some((s) => s.agentErrors.length)
-    // Freeze the whole displayed table for a partial snapshot, even when the fresh subset
-    // still contains everything needed by a particular alert or by queue monitoring.
+    // Freeze the other-agent display for a partial roster. Me's independently readable
+    // header still updates; alert and queue decisions continue using their required native data.
     const tableFrozen = !!missing || !rosterComplete || rosterUnreadable ||
       [...current.values()].some((agent) => !agent.status || agent.seconds === null) ||
       (!rosterSettled && [...agentWidgets.keys()].some((name) => name !== 'Me' && !current.has(name)))
@@ -6420,7 +6780,7 @@
       button.setAttribute('aria-pressed', String(muted))
       button.title = muted ? 'Unmute assistant sounds' : 'Mute assistant sounds'
     }
-    for (const preview of previewButtons) preview.disabled = muted || !audioOutputReady
+    for (const { button, kind } of previewButtons) button.disabled = muted || !audioOutputReady || !soundSettings[kind].enabled
     syncReminderBox()
   }
   function toggleMute () {

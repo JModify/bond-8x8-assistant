@@ -2,6 +2,15 @@
 
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
+## 1.2.3 (Prototype) — 2026-10-28
+
+- Keep Me's status, clock and G1 control independent of Groups readability. Recognise mounted empty lists with no rectangle and explicitly identified empty Groups regions, including solo sessions and final sign-outs. Preserve hidden/loading/virtualised-roster checks, cached other-agent rows and saved G1 preferences; keep queue alert eligibility separate from displayed Me updates.
+- Mark native phone numbers ending in 55858 as Student Assist Desk with a purple badge on calls and saved notes. Derive the badge again on import without altering caller identity or TXT metadata. Rename the existing manual-source badge to Manual Note.
+- Add Call Notes filters for predicted Staff/Student/Unknown, one or more queues, missing job numbers and a specific Brisbane date using the native date picker. Combine categories, scope keyword search to the filtered set, page matching results and retain global totals/full TXT export. Include the four standard queues and other queues already present in saved notes; outbound remains excluded from live monitoring.
+- Suggest a caller name/ID from prior named phone notes with the same normalised number. Require explicit acceptance, preserve leading zeros and typed fields, remember a rejection for its current call, and indicate when a number has multiple saved names. Rebuild the number index only after saved-note changes; ignore manual/Unknown records and never use suffix matches to infer identity.
+- Add a persistent Enable/Disable control to each Sound Settings card. Disabling stops both assistant outputs and previews while retaining the visual reminder and separately configured silent desktop notification. Re-enabling an ongoing repeating condition resumes its tone without resending a popup.
+- Remove the unnecessary Call Notes save/export help sentence. Preserve the TXT format, existing notes/counters, prior releases, bookmarks and development extension. Publish this version through its own scoped two-download release workflow.
+
 ## 1.2.2 (Prototype) — 2026-10-19
 
 - Page prototype Call Notes at 50 records, release off-page cards/headings, build the list only when opened, and keep search, totals and export global. Index normalised search text by record without retaining deleted records. Parse file imports/restores in batches of 100, validating the entire file before applying it. Raise the per-file guardrails to 10,000 records and 20 MiB; retain the readable TXT v1 format and every stable key.

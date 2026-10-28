@@ -898,7 +898,7 @@ check('G1 Other Work and Working Offline stay silent without an aged waiting cal
 })
 check('New sound settings have separate defaults and disabled repeat durations', () => {
   const e = environment()
-  const cards = e.ui().querySelectorAll('fieldset')
+  const cards = e.ui().querySelectorAll('.sound-category')
   assert.equal(cards.length, 4)
   for (const [label, preset, volume] of [
     ['Alert: Complete Disposition', 'Urgent pulse', '80'],
@@ -1041,7 +1041,7 @@ check('Disposition delay and descriptions update immediately', () => {
   assert.equal(e.debug().activeReminder.kind, 'disposition')
   const card = e
     .ui()
-    .querySelectorAll('fieldset')
+    .querySelectorAll('.sound-category')
     .find((n) => n.querySelector('legend').textContent === 'Alert: Complete Disposition')
   assert(card.querySelector('.sound-description').textContent.includes('more than 5 seconds'))
   input.value = '20'
@@ -1076,8 +1076,8 @@ check('A hidden roster freezes agent data while Settings stays accessible and re
   assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
   assert(e.ui().querySelector('.sound-settings').classList.contains('hidden'))
   assert(!e.ui().querySelector('.data-warning').classList.contains('hidden'))
-  assert(e.ui().querySelector('.data-warning').textContent.includes('Agent information frozen'))
-  assert(e.ui().querySelector('.data-warning').textContent.includes('Open 8x8 queue information'))
+  assert(e.ui().querySelector('.data-warning').textContent.includes('Other agent information unavailable'))
+  assert(e.ui().querySelector('.data-warning').textContent.includes('Open 8x8 Groups'))
   assert(e.ui().querySelector('.data-warning').closest('.assistant-settings'))
   e.group.hidden = false
   e.scan()
@@ -1086,10 +1086,10 @@ check('A hidden roster freezes agent data while Settings stays accessible and re
 })
 
 check(
-  'Prototype reports version 1.2.2 and bottom controls put Call Notes before accessible mute and settings icons',
+  'Prototype reports version 1.2.3 and bottom controls put Call Notes before accessible mute and settings icons',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.2.2')
+    assert.equal(e.window.__itsCallAssist.version, '1.2.3')
     assert.deepEqual(
       e
         .ui()
@@ -1108,10 +1108,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.2.2'
+      '1.2.3'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.2.2'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.2.3'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
@@ -1130,7 +1130,7 @@ check('G2 explanation appears below Agents and the two finite-sound stop lines a
   for (const label of ['Info: G1 On Break']) {
     const card = e
       .ui()
-      .querySelectorAll('fieldset')
+      .querySelectorAll('.sound-category')
       .find((n) => n.querySelector('legend').textContent === label)
     assert(!card.querySelector('.sound-description').textContent.includes('Stops when'))
     assert(card.querySelector('.sound-description').textContent.includes('G2'))
@@ -1588,7 +1588,7 @@ check('Minute lunch input and slider agree, while delay settings and sound choic
   assert.equal(saved.dispositionSeconds, 15)
   const card = e
     .ui()
-    .querySelectorAll('fieldset')
+    .querySelectorAll('.sound-category')
     .find((n) => n.querySelector('legend').textContent === 'Alert: Change Status To Available')
   assert.equal(card.querySelector('select').value, 'Soft bell')
   assert(card.querySelector('.sound-description').textContent.includes('at least 7 seconds'))
@@ -1597,7 +1597,7 @@ check('Minute lunch input and slider agree, while delay settings and sound choic
   assert(
     !e
       .ui()
-      .querySelectorAll('fieldset')
+      .querySelectorAll('.sound-category')
       .some((n) => n.querySelector('legend').textContent === 'Info: Caller Waiting')
   )
 })
@@ -2040,6 +2040,7 @@ check(
     }
     const cfg = JSON.parse(e.storage.get('service-desk-8x8-sounds-v4')).critical
     assert.deepEqual(cfg, {
+      enabled: true,
       preset: 'Soft bell',
       volume: 32,
       seconds: 4,
@@ -2173,7 +2174,7 @@ check(
     e.setMe('Wrap Up', 11)
     const count = e.notifications.length
     e.ui()
-      .querySelector('fieldset')
+      .querySelector('.sound-category')
       .querySelectorAll('button')
       .find((b) => b.textContent === 'Preview')
       .onclick()
@@ -2852,7 +2853,7 @@ asyncCheck(
     const e = environment({ secondaryDeviceId: 'headset' })
     await e.button('Refresh devices').onclick()
     e.ui()
-      .querySelector('fieldset')
+      .querySelector('.sound-category')
       .querySelectorAll('button')
       .find((b) => b.textContent === 'Preview')
       .onclick()
@@ -4963,7 +4964,7 @@ function agentSnapshot (e) {
     colour: row.querySelector('.agent-status').getAttribute('data-state')
   }))
 }
-check('Missing Groups freezes names, statuses, timers and colours, then catches up without losing G1', () => {
+check('Missing Groups freezes other agents while Me stays live, then catches up without losing G1', () => {
   const e = environment({ g1: ['Me', 'Alex Agent'] })
   e.other('Alex Agent', 'Working Offline', 75)
   e.setMe('Available', 50)
@@ -4974,10 +4975,12 @@ check('Missing Groups freezes names, statuses, timers and colours, then catches 
   e.other('Alex Agent', 'Busy', 2)
   e.setMe('Busy', 3)
   e.advance(60000)
-  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.deepEqual(agentSnapshot(e).slice(1), snapshot.slice(1))
+  assert.equal(agentSnapshot(e)[0].status, 'Busy')
+  assert.equal(agentSnapshot(e)[0].timer, '3s')
   assert.equal(e.checkbox('Alex Agent').closest('tr'), row)
   assert.equal(e.ui().querySelector('.data-last-read').textContent, lastRead)
-  assert.equal(e.ui().querySelector('.agent-data-badge').textContent, 'Last read')
+  assert.equal(e.ui().querySelector('.agent-data-badge').textContent, 'Me live · Others last read')
   assert.equal(e.ui().querySelector('.agents').getAttribute('data-frozen'), 'true')
   assert(e.checkbox('Alex Agent').checked)
   assert(e.checkbox('Alex Agent').disabled)
@@ -5075,7 +5078,8 @@ check('An unreadable G1 timer freezes the table and stops a repeating alert unti
   const snapshot = agentSnapshot(e)
   e.agents['Alex Agent'].timer.textContent = 'unreadable'
   e.setMe('Working Offline', 99)
-  assert.deepEqual(agentSnapshot(e), snapshot)
+  assert.deepEqual(agentSnapshot(e).slice(1), snapshot.slice(1))
+  assert.equal(agentSnapshot(e)[0].timer, '99s')
   assert.equal(e.debug().activeReminder, null)
   assert(!e.debug().playing.includes('critical'))
   e.agents['Alex Agent'].timer.textContent = '3s'
@@ -5167,7 +5171,7 @@ check('Sound Settings and manual previews remain usable while monitoring lacks a
   e.scan()
   e.button('Settings').onclick()
   e.button('Open Sound Settings').onclick()
-  const preview = e.ui().querySelector('fieldset').querySelectorAll('button').find((button) => button.textContent === 'Preview')
+  const preview = e.ui().querySelector('.sound-category').querySelectorAll('button').find((button) => button.textContent === 'Preview')
   preview.onclick()
   assert(e.debug().playing.includes('preview'))
   e.scan()

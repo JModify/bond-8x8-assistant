@@ -50,11 +50,11 @@ function startManualNote (e) {
 function noteTotals (e) {
   return Array.from(e.ui().querySelector('.history-statistics').querySelectorAll('.stat-value'), (node) => node.textContent)
 }
-check('A manual in-person draft uses the existing editor and does not invent call details', () => {
+check('A manual note draft uses the existing editor and does not invent call details', () => {
   const e = environment()
   const card = startManualNote(e)
   assert(card.classList.contains('editing'))
-  assert.equal(card.querySelector('.history-source').textContent, 'In person')
+  assert.equal(card.querySelector('.history-source').textContent, 'Manual Note')
   assert.equal(card.querySelector('.history-information'), null)
   assert.equal(card.querySelector('.history-timings'), null)
   assert.equal(card.querySelector('.history-edit-toggle').textContent, '✓')
@@ -178,7 +178,7 @@ check('Manual notes round-trip through TXT and session restoration without guess
   for (const key of Object.keys(before).filter((key) => key !== 'id')) assert.equal(imported[key], before[key], key)
   target.rerun()
   target.button('Call Notes').onclick()
-  assert.equal(historyCard(target).querySelector('.history-source').textContent, 'In person')
+  assert.equal(historyCard(target).querySelector('.history-source').textContent, 'Manual Note')
   assert.equal(target.window.__itsCallAssist.statistics().total, 0)
   assert.equal(target.window.__itsCallAssist.callHistorySession().completedTransactions.length, 0)
   for (const saved of e.storage.values()) assert(!saved.includes('First line'))
@@ -331,7 +331,7 @@ check('Finished preview messages expire and an obsolete preview timeout cannot s
   const e = environment({ notificationDisplaySeconds: 2 })
   e.button('Settings').onclick()
   e.button('Open Sound Settings').onclick()
-  const preview = e.ui().querySelector('fieldset').querySelectorAll('button').find((button) => button.textContent === 'Preview')
+  const preview = e.ui().querySelector('.sound-category').querySelectorAll('button').find((button) => button.textContent === 'Preview')
   preview.onclick()
   const old = [...e.jobs.values()].find((job) => job.ms === 2000)
   preview.onclick()
