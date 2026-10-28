@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.6 (Prototype) — 2026-10-29
+
+- Tighten vertical queue/tag filter options. Collapse the filter panel when leaving Call Notes, including automatic call/break/disposition views, while retaining criteria and keyword search.
+- Place each record's exclusive tag at the far right of Duration / Queue wait; manual notes share their existing job-number summary. Preserve tag colours, shape and classification.
+- Keep caller suggestions visible while focusing, typing or clearing the identifier. The tick accepts the suggestion, including replacing entered text; cross dismisses it while preserving typed text. Retain current-call and stale-action checks.
+- Use the latest matching saved name at Wrap up when the caller field was never edited and the suggestion was not dismissed. Save it as ordinary caller text, retaining notes, native details and the separate caller-type guess. Preserve deliberate clears through reruns/tab restoration and delayed recovery; unmatched callers remain Unknown.
+- Keep the TXT format, existing notes/counters, previous releases/bookmarks and extension 1.0.0 intact. Publish this exact prototype and bookmark through its scoped release workflow.
+
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
 ## 1.2.5 (Prototype) — 2026-10-29

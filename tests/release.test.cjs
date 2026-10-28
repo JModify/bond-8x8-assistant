@@ -144,7 +144,7 @@ check('Later versions remain blocked even with otherwise matching source, bookma
     fs.appendFileSync(path.join(folder, 'CHANGELOG.md'), '\n## ' + future + ' (Prototype) — 2026-10-16\n\n- Fixture.\n')
     const built = buildBookmark(folder)
     fs.writeFileSync(path.join(folder, 'docs/bookmark/' + built.fileName), built.html)
-    assert.throws(() => prepareRelease(folder, info.repository, commit), /limited to prototype v1.2.5/)
+    assert.throws(() => prepareRelease(folder, info.repository, commit), /limited to prototype v1.2.6/)
   })
 })
 check('Missing or incorrectly versioned short release notes cannot publish', () => {

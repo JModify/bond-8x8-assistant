@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.2.5
+/* Service Desk 8x8 Assistant — Prototype v1.2.6
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -67,7 +67,7 @@
   const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.2.5'
+  const VERSION = deployment?.version || '1.2.6'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -1627,9 +1627,11 @@
       margin-left: 4px;
     }
     .history-source.call-source { background: #eaf1ff; color: #245dc1; }
-    .history-card-footer { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 10px; }
-    .history-card-footer .history-source { margin: 0; }
-    .history-recovery-status { margin-right: auto; color: #667085; font-size: 10px; }
+    .history-record-meta { display: flex; align-items: center; gap: 8px; padding-top: 8px; margin-top: 8px; border-top: 1px solid #e4eaf2; }
+    .history-record-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; flex: 1; min-width: 0; }
+    .history-record-meta > .history-source { margin: 0 0 0 auto; flex-shrink: 0; }
+    .history-record-meta .history-job { margin: 0; }
+    .history-recovery-status { color: #667085; font-size: 10px; }
     .history-card.new-note { border-style: dashed; }
     .controls { display: flex; align-items: center; gap: 6px; }
     .controls button { height: var(--assistant-button-height); margin: 0; }
@@ -1692,11 +1694,12 @@
     .history-filters legend { padding: 0 4px; font-size: 11px; font-weight: 650; color: #334155; }
     .history-filter-wide { grid-column: 1 / -1; }
     .history-filter-options { display: flex; flex-wrap: wrap; gap: 6px; }
-    .history-filter-vertical { display: flex; flex-direction: column; }
+    .history-filter-vertical { display: flex; flex-direction: column; gap: 2px; }
     .history-filter-queues { max-height: 220px; overflow: auto; }
     .history-filter-check { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border: 1px solid #e1e7ef; border-radius: 6px; background: #f8fafc; font-size: 11px; line-height: 1.5; cursor: pointer; }
     .history-filter-check:has(input:checked) { background: #eaf1ff; border-color: #b5cbed; color: #245dc1; }
     .history-filter-check input { margin: 0; flex-shrink: 0; accent-color: #245dc1; }
+    .history-filter-vertical .history-filter-check { padding: 1px 6px; }
     .history-filter-date { display: block; }
     .history-filter-date input { display: block; width: 100%; min-width: 0; box-sizing: border-box; font: 12px system-ui; padding: 5px 6px; border: 1px solid #c7d3e2; border-radius: 6px; background: #f8fafc; color: #172235; }
     .history-result-bar { padding: 9px 10px; border: 1px solid #dce4ef; border-radius: 8px; background: #f8faff; }
@@ -1823,15 +1826,13 @@
     }
     .history-timings {
       display: flex;
-      gap: 6px 12px;
+      gap: 4px 8px;
       flex-wrap: wrap;
-      padding-top: 9px;
-      margin-top: 9px;
-      border-top: 1px solid #e4eaf2;
       font-size: 10px;
       color: #526176;
       font-variant-numeric: tabular-nums;
     }
+    .history-duration, .history-wait { white-space: nowrap; }
     .history-extra {
       font-size: 10px;
       color: #526176;
@@ -2842,6 +2843,8 @@
       if (typeof value.dismissedCallerNumber === 'string' && /^\d{3,80}$/.test(value.dismissedCallerNumber)) {
         call.dismissedCallerNumber = value.dismissedCallerNumber
       }
+      // An explicitly edited-and-cleared name stays intentional after a tab restore or rerun.
+      if (value.callerInputEdited === true) call.callerInputEdited = true
     } else {
       call.caller = text('caller', 160) || 'Unknown'
       call.callerPrediction = predictCaller(call.caller)
@@ -3065,10 +3068,17 @@
       Number.isFinite(page.durationSeconds) &&
       page.durationSeconds >= (draft.durationSeconds || 0)
     if (page) updateCallDetails(draft, page)
+    const enteredCaller = normaliseText(draft.callerInput)
+    const number = callerNumberKey(draft.number)
+    // Resolve only the current call's untouched field. A rejection or an intentional empty
+    // edit must not silently acquire a name; no identity marker is added to the saved record.
+    const mayAssumeCaller = !!number && !enteredCaller && !draft.callerInputEdited &&
+      !touchedCallFields.get(draft.id)?.has('callerInput') && draft.dismissedCallerNumber !== number
+    const caller = enteredCaller || (mayAssumeCaller ? previousCaller(draft.number)?.caller : '') || 'Unknown'
     const record = {
       ...draft,
-      caller: normaliseText(draft.callerInput) || 'Unknown',
-      callerPrediction: predictCaller(draft.callerInput),
+      caller,
+      callerPrediction: predictCaller(caller),
       notes: cleanNotes(draft.notesInput),
       jobNumber: '',
       completedAt: Math.max(Date.now(), draft.detectedAt),
@@ -3079,6 +3089,7 @@
     delete record.notesInput
     delete record.recovered
     delete record.dismissedCallerNumber
+    delete record.callerInputEdited
     callHistory.records.push(record)
     callHistory.closedId = record.id
     callHistory.closedCall = { id: record.id, transactionId: record.transactionId, number: record.number }
@@ -4070,7 +4081,7 @@
           if (record.durationSeconds !== null) pending.durationSeconds = Math.max(pending.durationSeconds || 0, record.durationSeconds)
           // An explicit empty edit is intentional too. A delayed restore must not fill it back in.
           const touched = touchedCallFields.get(pending.id)
-          if (!(sameGeneration && dirty) && !pending.callerInput && !touched?.has('callerInput')) {
+          if (!(sameGeneration && dirty) && !pending.callerInput && !pending.callerInputEdited && !touched?.has('callerInput')) {
             pending.callerInput = record.caller === 'Unknown' ? '' : record.caller
           }
           if (!(sameGeneration && dirty) && !pending.notesInput && !touched?.has('notesInput')) pending.notesInput = record.notes
@@ -4632,14 +4643,22 @@
         record.number || 'Unavailable'
       )
       setText(createCallDetail(information, 'Queue', 'history-queue'), record.queue || 'Unavailable')
-      const timings = createElement('div', '', card, 'history-timings')
+    }
+    // Share the real timing row with the tag. Manual entries use their existing job summary
+    // on the left instead of inventing call timings; normal layout never overlays record text.
+    const metadata = createElement('div', '', card, 'history-record-meta')
+    const summary = createElement('div', '', metadata, 'history-record-summary')
+    if (record.origin !== 'manual') {
+      const timings = createElement('div', '', summary, 'history-timings')
       const duration =
       record.durationSeconds === null
         ? '—'
         : (record.durationComplete ? '' : '≥ ') + callClock(record.durationSeconds)
       createElement('span', 'Duration ' + duration, timings, 'history-duration')
       createElement('span', 'Queue wait ' + callClock(record.waitSeconds), timings, 'history-wait')
-    }
+    } else summary.append(job)
+    const recovery = createElement('span', 'Recovered', summary, 'history-recovery-status hidden')
+    const tag = createElement('span', '', metadata, 'history-source')
     const details = createElement('details', '', card, 'history-extra')
     createElement('summary', 'More details', details)
     const prediction = createElement('p', '', details, 'history-prediction')
@@ -4652,11 +4671,6 @@
     }
     const savedAt = createElement('p', 'Saved at: ' + historyTime(record.completedAt), details)
     if (record.origin === 'text') createElement('p', 'Imported from a text file. Missing details remain unknown.', details)
-    // A normal-flow footer stays below expanded details and editors, without covering their text.
-    // Recovery is an independent status, so every record still has exactly one classification tag.
-    const footer = createElement('div', '', card, 'history-card-footer')
-    const recovery = createElement('span', 'Recovered', footer, 'history-recovery-status hidden')
-    const tag = createElement('span', '', footer, 'history-source')
     const widget = { card, caller, input, button, deleteButton, prediction, savedAt, notes, job, fields, notesInput, jobInput, tag, recovery }
     button.onclick = () =>
       historyEdit?.id === record.id ? saveHistoryEdit() : beginHistoryEdit(record, widget)
@@ -4856,7 +4870,7 @@
   }
   function renderCallerSuggestion (draft, page) {
     const number = callerNumberKey(draft?.number)
-    const entry = draft && !page.identityConflict && !draft.callerInput.trim() &&
+    const entry = draft && number && !page.identityConflict &&
       draft.dismissedCallerNumber !== number
       ? previousCaller(draft.number)
       : null
@@ -4873,8 +4887,9 @@
     const offered = offeredCaller
     const draft = currentCallDraft()
     const page = readCallPage(getReadableDocuments())
-    // A delayed click must not fill another interaction, a Wrap up card, or freshly typed text.
-    if (!draft || draft.id !== offered.draftId || draft.callerInput.trim() ||
+    // Only an explicit tick may replace typed text. Late clicks still cannot fill another
+    // interaction, a completed card or an identity that no longer matches the offered number.
+    if (!draft || draft.id !== offered.draftId ||
       page?.phase !== 'call' || page.identityConflict || matchingCallDraft(page)?.id !== draft.id ||
       callerNumberKey(draft.number) !== offered.number ||
       callerNumberKey(page.number || draft.number) !== offered.number ||
@@ -4882,6 +4897,7 @@
     draft.dismissedCallerNumber = offered.number
     if (accept) {
       draft.callerInput = offered.caller
+      draft.callerInputEdited = true
       callerInput.value = offered.caller
       // Confirmed suggestions are user input; reconnecting must not replace them with a checkpoint.
       if (!touchedCallFields.has(draft.id)) touchedCallFields.set(draft.id, new Set())
@@ -4929,10 +4945,8 @@
     }
     draft[key] = input.value.slice(0, limit)
     if (key === 'callerInput') {
-      // Typing is an explicit identity choice. Clearing the field later must not nag again.
-      draft.dismissedCallerNumber = callerNumberKey(draft.number)
-      offeredCaller = null
-      callerSuggestion.classList.add('hidden')
+      // Editing controls automatic finalisation, but the suggestion stays until tick or cross.
+      draft.callerInputEdited = true
     }
     if (!touchedCallFields.has(draft.id)) touchedCallFields.set(draft.id, new Set())
     touchedCallFields.get(draft.id).add(key)
@@ -5231,6 +5245,12 @@
     const callHistoryOpen = compactKind === 'call' && historyDuringCall && activeView === 'history'
     const compact = !!compactKind && !agentsFrozen && !callHistoryOpen
     const onCall = compactKind === 'call' && compact
+    // Collapse the filter drawer on both user navigation and automatic personal-view changes.
+    // Selected criteria and keyword search remain available when Call Notes is opened again.
+    if (compact || activeView !== 'history') {
+      historyFilterPanel.classList.add('hidden')
+      historyFilterToggle.setAttribute('aria-expanded', 'false')
+    }
     // Keep the shared warning beneath the current menu's heading, including when minimised.
     // Moving only on a menu switch leaves active note inputs, focus and scroll untouched.
     const warningParent = activeView === 'history'

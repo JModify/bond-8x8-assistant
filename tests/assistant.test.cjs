@@ -1086,10 +1086,10 @@ check('A hidden roster freezes agent data while Settings stays accessible and re
 })
 
 check(
-  'Prototype reports version 1.2.5 and bottom controls put Call Notes before accessible mute and settings icons',
+  'Prototype reports version 1.2.6 and bottom controls put Call Notes before accessible mute and settings icons',
   () => {
     const e = environment()
-    assert.equal(e.window.__itsCallAssist.version, '1.2.5')
+    assert.equal(e.window.__itsCallAssist.version, '1.2.6')
     assert.deepEqual(
       e
         .ui()
@@ -1108,10 +1108,10 @@ check(
     )
     assert.equal(
       e.ui().querySelector('.release-version').querySelector('.footer-value').textContent,
-      '1.2.5'
+      '1.2.6'
     )
     assert(e.ui().querySelector('.release-version').closest('.footer'))
-    assert(!e.ui().querySelector('.title-block').textContent.includes('1.2.5'))
+    assert(!e.ui().querySelector('.title-block').textContent.includes('1.2.6'))
   }
 )
 check('Minimise and restore use the top button; close removes the assistant', () => {
