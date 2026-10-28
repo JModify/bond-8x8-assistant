@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.2.4
+/* Service Desk 8x8 Assistant — Prototype v1.2.5
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -67,7 +67,7 @@
   const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.2.4'
+  const VERSION = deployment?.version || '1.2.5'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -89,6 +89,8 @@
   const normaliseStatus = (value) => normaliseText(value).toLowerCase()
   // Monitor exactly these inbound queues; saved settings cannot redirect monitoring.
   const QUEUES = Object.freeze(['ITS Academic Hotline', 'ITS Internal TRNFR', 'ITS Service Desk'])
+  const NOTE_TAGS = Object.freeze({ call: 'Call', studentAssist: 'Student Assist Desk', manual: 'Manual Note' })
+  const JOB_PREFIXES = Object.freeze(['IMS', 'REQ', 'INC', 'SCTASK'])
   function parseDuration (text) {
     const value = normaliseStatus(text)
     if (!value) return null
@@ -210,6 +212,12 @@
   function studentAssistNumber (number) {
     // The desk's extension may arrive with a prefix; only the native telephone digits count.
     return !!readablePhone(number) && phoneDigits(number).endsWith('55848')
+  }
+  function noteTag (record) {
+    // One derived tag is shared by rendering, filters and search, including older imports.
+    // A manual source wins over any stray phone metadata; all other non-desk notes are Calls.
+    if (record.origin === 'manual') return 'manual'
+    return studentAssistNumber(record.number) ? 'studentAssist' : 'call'
   }
   function callerNumberKey (number) {
     if (!readablePhone(number)) return ''
@@ -1618,6 +1626,10 @@
       color: #6941a5;
       margin-left: 4px;
     }
+    .history-source.call-source { background: #eaf1ff; color: #245dc1; }
+    .history-card-footer { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 10px; }
+    .history-card-footer .history-source { margin: 0; }
+    .history-recovery-status { margin-right: auto; color: #667085; font-size: 10px; }
     .history-card.new-note { border-style: dashed; }
     .controls { display: flex; align-items: center; gap: 6px; }
     .controls button { height: var(--assistant-button-height); margin: 0; }
@@ -1680,7 +1692,8 @@
     .history-filters legend { padding: 0 4px; font-size: 11px; font-weight: 650; color: #334155; }
     .history-filter-wide { grid-column: 1 / -1; }
     .history-filter-options { display: flex; flex-wrap: wrap; gap: 6px; }
-    .history-filter-queues { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 110px; overflow: auto; }
+    .history-filter-vertical { display: flex; flex-direction: column; }
+    .history-filter-queues { max-height: 220px; overflow: auto; }
     .history-filter-check { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border: 1px solid #e1e7ef; border-radius: 6px; background: #f8fafc; font-size: 11px; line-height: 1.5; cursor: pointer; }
     .history-filter-check:has(input:checked) { background: #eaf1ff; border-color: #b5cbed; color: #245dc1; }
     .history-filter-check input { margin: 0; flex-shrink: 0; accent-color: #245dc1; }
@@ -2307,7 +2320,7 @@
   const historyClearFilters = createElement('button', 'Clear filters', historyFilterHeading)
   const historyFilterGrid = createElement('div', '', historyFilterPanel, 'history-filter-grid')
   const typeFilters = createElement('fieldset', '', historyFilterGrid, 'history-filter-wide')
-  createElement('legend', 'Caller type', typeFilters)
+  createElement('legend', 'By Caller Type', typeFilters)
   const typeFilterOptions = createElement('div', '', typeFilters, 'history-filter-options')
   const historyTypeInputs = new Map()
   for (const type of ['Staff', 'Student', 'Unknown']) {
@@ -2318,19 +2331,41 @@
     label.append(doc.createTextNode(type))
     historyTypeInputs.set(type, input)
   }
-  const queueFilters = createElement('fieldset', '', historyFilterGrid, 'history-filter-wide')
-  createElement('legend', 'Queue', queueFilters)
-  const historyQueueOptions = createElement('div', '', queueFilters, 'history-filter-options history-filter-queues')
+  const queueFilters = createElement('fieldset', '', historyFilterGrid)
+  createElement('legend', 'By Queue', queueFilters)
+  const historyQueueOptions = createElement('div', '', queueFilters, 'history-filter-options history-filter-vertical history-filter-queues')
   const historyQueueInputs = new Map()
-  const jobFilters = createElement('fieldset', '', historyFilterGrid)
-  createElement('legend', 'Job number', jobFilters)
-  const missingJobLabel = createElement('label', '', jobFilters, 'history-filter-check')
+  const tagFilters = createElement('fieldset', '', historyFilterGrid)
+  createElement('legend', 'By Tag', tagFilters)
+  const historyTagOptions = createElement('div', '', tagFilters, 'history-filter-options history-filter-vertical')
+  const historyTagInputs = new Map()
+  for (const [key, tag] of Object.entries(NOTE_TAGS)) {
+    const label = createElement('label', '', historyTagOptions, 'history-filter-check')
+    const input = createElement('input', '', label)
+    input.type = 'checkbox'
+    input.setAttribute('aria-label', 'Filter tag: ' + tag)
+    label.append(doc.createTextNode(tag))
+    historyTagInputs.set(key, input)
+  }
+  const jobFilters = createElement('fieldset', '', historyFilterGrid, 'history-filter-wide')
+  createElement('legend', 'By Job Number', jobFilters)
+  const historyJobOptions = createElement('div', '', jobFilters, 'history-filter-options')
+  const historyJobInputs = new Map()
+  for (const prefix of [...JOB_PREFIXES, 'Other']) {
+    const label = createElement('label', '', historyJobOptions, 'history-filter-check')
+    const input = createElement('input', '', label)
+    input.type = 'checkbox'
+    input.setAttribute('aria-label', 'Filter job number: ' + prefix)
+    label.append(doc.createTextNode(prefix))
+    historyJobInputs.set(prefix, input)
+  }
+  const missingJobLabel = createElement('label', '', historyJobOptions, 'history-filter-check')
   const historyMissingOnly = createElement('input', '', missingJobLabel)
   historyMissingOnly.type = 'checkbox'
-  historyMissingOnly.setAttribute('aria-label', 'Only notes missing a job number')
-  missingJobLabel.append(doc.createTextNode('Missing only'))
-  const dateFilters = createElement('fieldset', '', historyFilterGrid)
-  createElement('legend', 'Date', dateFilters)
+  historyMissingOnly.setAttribute('aria-label', 'Filter job number: Missing')
+  missingJobLabel.append(doc.createTextNode('Missing'))
+  const dateFilters = createElement('fieldset', '', historyFilterGrid, 'history-filter-wide')
+  createElement('legend', 'By Date', dateFilters)
   const dateLabel = createElement('label', '', dateFilters, 'history-filter-date')
   const historyDate = createElement('input', '', dateLabel)
   historyDate.type = 'date'
@@ -2697,7 +2732,7 @@
   let historyPage = 0
   let historyRenderKey = ''
   let historyRenderedQuery = ''
-  const historyFilters = { types: new Set(), queues: new Set(), missingJob: false, date: '' }
+  const historyFilters = { types: new Set(), queues: new Set(), tags: new Set(), jobTypes: new Set(), missingJob: false, date: '' }
   let historyRenderedFilters = ''
   let callerIndexRevision = -1
   let callerNumberIndex = new Map()
@@ -2713,7 +2748,7 @@
   const historySearchIndex = new WeakMap()
   function searchableNote (record) {
     const fields = [record.caller, record.notes, record.jobNumber, record.number, record.queue, record.transactionId,
-      record.origin === 'manual' ? 'Manual Note' : '', studentAssistNumber(record.number) ? 'Student Assist Desk' : '']
+      NOTE_TAGS[noteTag(record)]]
     let cached = historySearchIndex.get(record)
     // Reuse normalised long notes while their editable fields are unchanged. Weak keys
     // release deleted/replaced records instead of keeping an unbounded search cache.
@@ -2739,6 +2774,12 @@
     // The readable TXT placeholder represents an absent ticket, not a literal job number.
     const text = normaliseText(value).slice(0, 80)
     return /^no\s+(?:job|ticket)(?:\s+number)?\.?$/i.test(text) ? '' : text
+  }
+  function jobNumberType (value) {
+    const job = cleanJobNumber(value).toUpperCase()
+    // Missing is separate from Other. Prefix matching accepts mixed case without altering saved text.
+    if (!job) return 'Missing'
+    return JOB_PREFIXES.find((prefix) => job.startsWith(prefix)) || 'Other'
   }
   function newNoteKey () {
     // Exported keys identify records across tabs without relying on their local row numbers.
@@ -3184,6 +3225,12 @@
     setText(widget.notes, record.notes || '')
     setText(widget.job, record.jobNumber ? 'Job: ' + record.jobNumber : 'No job number')
     setText(widget.savedAt, 'Saved at: ' + historyTime(record.completedAt))
+    const tag = noteTag(record)
+    setText(widget.tag, NOTE_TAGS[tag])
+    widget.tag.setAttribute('data-note-tag', tag)
+    widget.tag.classList.toggle('student-assist', tag === 'studentAssist')
+    widget.tag.classList.toggle('call-source', tag === 'call')
+    widget.recovery.classList.toggle('hidden', !record.recovered)
     // Polling must leave the active editor's text, selection and caret untouched.
     if (!editing) {
       widget.input.value = record.caller === 'Unknown' ? '' : record.caller
@@ -4438,18 +4485,24 @@
   }
   function historyFilterKey () {
     // Filter state stays in this assistant session; it never stores caller information in preferences.
-    return JSON.stringify([[...historyFilters.types].sort(), [...historyFilters.queues].sort(), historyFilters.missingJob, historyFilters.date])
+    return JSON.stringify([[...historyFilters.types].sort(), [...historyFilters.queues].sort(),
+      [...historyFilters.tags].sort(), [...historyFilters.jobTypes].sort(), historyFilters.missingJob, historyFilters.date])
   }
   function noteMatchesFilters (record) {
     // Choices within a category are OR; different categories and keyword search are AND.
+    const filteringJobs = historyFilters.jobTypes.size > 0 || historyFilters.missingJob
+    // Leave unrestricted jobs alone instead of classifying every saved entry on each search.
+    const jobType = filteringJobs ? jobNumberType(record.jobNumber) : ''
+    const jobMatches = !filteringJobs ||
+      historyFilters.jobTypes.has(jobType) || (historyFilters.missingJob && jobType === 'Missing')
     return (!historyFilters.types.size || historyFilters.types.has(record.callerPrediction)) &&
       (!historyFilters.queues.size || historyFilters.queues.has(normaliseStatus(record.queue))) &&
-      (!historyFilters.missingJob || !cleanJobNumber(record.jobNumber)) &&
+      (!historyFilters.tags.size || historyFilters.tags.has(noteTag(record))) && jobMatches &&
       (!historyFilters.date || (record.detectedAt !== null && dayKey(record.detectedAt) === historyFilters.date))
   }
   function syncHistoryFilters () {
     const categories = Number(!!historyFilters.types.size) + Number(!!historyFilters.queues.size) +
-      Number(historyFilters.missingJob) + Number(!!historyFilters.date)
+      Number(!!historyFilters.tags.size) + Number(!!historyFilters.jobTypes.size || historyFilters.missingJob) + Number(!!historyFilters.date)
     setText(historyFilterToggle, categories ? `Filters (${categories})` : 'Filters')
     historyFilterToggle.setAttribute('data-active', String(categories > 0))
     const labels = [...historyFilters.types]
@@ -4457,7 +4510,9 @@
       labels.push([...historyFilters.queues].map((key) =>
         historyQueueInputs.get(key)?.parentElement.textContent || key).join(' / '))
     }
-    if (historyFilters.missingJob) labels.push('Missing job numbers')
+    if (historyFilters.tags.size) labels.push([...historyFilters.tags].map((key) => NOTE_TAGS[key]).join(' / '))
+    const jobs = [...historyFilters.jobTypes, ...(historyFilters.missingJob ? ['Missing'] : [])]
+    if (jobs.length) labels.push('Job: ' + jobs.join(' / '))
     if (historyFilters.date) labels.push(historyFilters.date.split('-').reverse().join('/'))
     setText(historyFilterSummary, labels.join(' · '))
     historyFilterSummary.classList.toggle('hidden', !categories)
@@ -4484,6 +4539,20 @@
       applyHistoryFilters()
     }
   }
+  for (const [key, input] of historyTagInputs) {
+    input.onchange = () => {
+      if (input.checked) historyFilters.tags.add(key)
+      else historyFilters.tags.delete(key)
+      applyHistoryFilters()
+    }
+  }
+  for (const [prefix, input] of historyJobInputs) {
+    input.onchange = () => {
+      if (input.checked) historyFilters.jobTypes.add(prefix)
+      else historyFilters.jobTypes.delete(prefix)
+      applyHistoryFilters()
+    }
+  }
   historyMissingOnly.onchange = () => {
     historyFilters.missingJob = historyMissingOnly.checked
     applyHistoryFilters()
@@ -4499,9 +4568,12 @@
   historyClearFilters.onclick = () => {
     historyFilters.types.clear()
     historyFilters.queues.clear()
+    historyFilters.tags.clear()
+    historyFilters.jobTypes.clear()
     historyFilters.missingJob = false
     historyFilters.date = ''
-    for (const input of [...historyTypeInputs.values(), ...historyQueueInputs.values(), historyMissingOnly]) input.checked = false
+    for (const input of [...historyTypeInputs.values(), ...historyQueueInputs.values(),
+      ...historyTagInputs.values(), ...historyJobInputs.values(), historyMissingOnly]) input.checked = false
     historyDate.value = ''
     // Clearing structured filters deliberately preserves the separate keyword search.
     applyHistoryFilters()
@@ -4520,9 +4592,6 @@
     const heading = createElement('div', '', card, 'history-card-heading')
     const slot = createElement('div', '', heading, 'history-caller-slot')
     const caller = createElement('h4', record.caller, slot, 'history-caller')
-    if (record.origin === 'manual') createElement('span', 'Manual Note', slot, 'history-source')
-    if (studentAssistNumber(record.number)) createElement('span', 'Student Assist Desk', slot, 'history-source student-assist')
-    if (record.recovered) createElement('span', 'Recovered', slot, 'history-source')
     const input = createElement('input', '', slot, 'history-edit-input hidden')
     input.type = 'text'
     input.maxLength = 160
@@ -4583,7 +4652,12 @@
     }
     const savedAt = createElement('p', 'Saved at: ' + historyTime(record.completedAt), details)
     if (record.origin === 'text') createElement('p', 'Imported from a text file. Missing details remain unknown.', details)
-    const widget = { card, caller, input, button, deleteButton, prediction, savedAt, notes, job, fields, notesInput, jobInput }
+    // A normal-flow footer stays below expanded details and editors, without covering their text.
+    // Recovery is an independent status, so every record still has exactly one classification tag.
+    const footer = createElement('div', '', card, 'history-card-footer')
+    const recovery = createElement('span', 'Recovered', footer, 'history-recovery-status hidden')
+    const tag = createElement('span', '', footer, 'history-source')
+    const widget = { card, caller, input, button, deleteButton, prediction, savedAt, notes, job, fields, notesInput, jobInput, tag, recovery }
     button.onclick = () =>
       historyEdit?.id === record.id ? saveHistoryEdit() : beginHistoryEdit(record, widget)
     input.oninput = () => {
@@ -4656,7 +4730,8 @@
     setText(historyStudents, String(records.filter((record) => record.callerPrediction === 'Student').length))
     setText(historyStaff, String(records.filter((record) => record.callerPrediction === 'Staff').length))
     setText(historyMissingJobs, String(records.filter((record) => !cleanJobNumber(record.jobNumber)).length))
-    const scoped = !!query || historyFilters.types.size || historyFilters.queues.size || historyFilters.missingJob || !!historyFilters.date
+    const scoped = !!query || historyFilters.types.size || historyFilters.queues.size || historyFilters.tags.size ||
+      historyFilters.jobTypes.size || historyFilters.missingJob || !!historyFilters.date
     // Count the complete matching set before paging; totals/export still include every saved note.
     const resultCount = scoped ? filtered.length : records.length
     setText(historyResults, `${resultCount}${scoped ? ' matching' : ''} ${resultCount === 1 ? 'note' : 'notes'}`)

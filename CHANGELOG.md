@@ -2,6 +2,13 @@
 
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
+## 1.2.5 (Prototype) — 2026-10-29
+
+- Place one classification tag in the bottom-right footer of every Call Note. Preserve the Manual Note and Student Assist Desk colours/pill shape, and add a blue Call tag for other records. Manual source wins over stray phone metadata; Student Assist Desk replaces Call for numbers ending in 55848. Legacy imports receive a derived Call tag without fabricating native details. Keep recovery information as a separate plain status.
+- Add multi-choice By Tag filtering, sharing the tag classifier with record rendering and search. Put the four standard queue choices and three tag choices in adjacent vertical lists, and rename all headings to By Caller Type, By Queue, By Tag, By Job Number and By Date.
+- Extend By Job Number with IMS, REQ, INC, SCTASK, Other and Missing choices. Match prefixes case-insensitively without changing stored text; separate nonempty unknown prefixes from missing values. Combine choices within a category and intersect categories/keyword search, keeping matching counts, paging, global statistics and full export behaviour.
+- Keep source/phone metadata, TXT format, stable keys, call counters, earlier releases/bookmarks and extension 1.0.0 intact. Publish this exact version and bookmark through its scoped release workflow.
+
 ## 1.2.4 (Prototype) — 2026-10-29
 
 - Correct Student Assist Desk matching to phone numbers ending in 55848. Reject the previously supplied 55858 suffix without changing recorded telephone data; saved/imported badges and searchable labels derive from the corrected rule.

@@ -258,7 +258,7 @@ check('Multiple queue checkboxes form a union, and caller type restricts that un
 })
 check('Missing job numbers combines with date, caller type and queue while totals stay global', () => {
   const e = filteredNotes()
-  choose(input(e, 'Only notes missing a job number'))
+  choose(input(e, 'Filter job number: Missing'))
   assert.equal(cards(e).length, 4)
   date(e, '2026-10-27')
   choose(input(e, 'Filter caller type: Student'))
@@ -294,7 +294,7 @@ check('The visible result count follows combined filters, keyword search and zer
   search(e, 'Transfer')
   assert.equal(count.textContent, '0 matching notes')
   search(e, '')
-  choose(input(e, 'Only notes missing a job number'))
+  choose(input(e, 'Filter job number: Missing'))
   assert.equal(count.textContent, '1 matching note')
   e.button('Clear filters').onclick()
   assert.equal(count.textContent, '6 notes')
@@ -613,5 +613,192 @@ check('Turning off one tone does not disable another sound or its notification p
   e.setMe('On Break', 1801)
   assert(e.debug().playing.includes('lunchOverdue'))
   assert.equal(e.notifications.length, 1)
+})
+function taggedNotes () {
+  return loadNotes([
+    record(1, 'Call Example', 'ITS Academic Hotline', '2026-10-27', { jobNumber: 'inc9000001' }),
+    record(2, '00123456', 'ITS Service Desk', '2026-10-27', { number: '+15550155848', jobNumber: 'IMS9000002' }),
+    record(3, 'Manual Example', null, '2026-10-27', { origin: 'manual', number: null, jobNumber: 'req9000003' }),
+    record(4, 'Second Call', 'ITS Internal TRNFR', '2026-10-28', { jobNumber: 'sctask9000004' }),
+    record(5, 'Legacy Example', 'ITS Outbound', '2026-10-27', { origin: 'text', number: null, jobNumber: 'CASE9000005' }),
+    record(6, 'Missing Example', 'ITS Academic Hotline')
+  ])
+}
+check('Each call, desk, manual and legacy note receives exactly one exclusive tag', () => {
+  const e = taggedNotes()
+  const expected = { 'Call Example': 'Call', '00123456': 'Student Assist Desk', 'Manual Example': 'Manual Note', 'Second Call': 'Call', 'Legacy Example': 'Call', 'Missing Example': 'Call' }
+  for (const card of cards(e)) {
+    const tags = card.querySelectorAll('.history-source')
+    assert.equal(tags.length, 1)
+    assert.equal(tags[0].textContent, expected[card.querySelector('.history-caller').textContent])
+    assert.equal(card.querySelector('.history-card-heading').querySelector('.history-source'), null)
+  }
+  assert.equal(api(e).statistics().total, 0)
+})
+check('A manual source takes precedence over stray Student Assist phone metadata', () => {
+  const e = loadNotes([record(1, 'Manual Example', null, '2026-10-27', { origin: 'manual', number: '55848' })])
+  assert.equal(cards(e)[0].querySelectorAll('.history-source').length, 1)
+  assert.equal(cards(e)[0].querySelector('.history-source').textContent, 'Manual Note')
+  assert.equal(cards(e)[0].querySelector('.student-assist'), null)
+  choose(input(e, 'Filter tag: Student Assist Desk'))
+  assert.equal(cards(e).length, 0)
+  choose(input(e, 'Filter tag: Manual Note'))
+  assert.equal(cards(e).length, 1)
+})
+check('New connected calls get Call or Student Assist Desk without changing their native counter', () => {
+  const e = environment()
+  for (const [number, transactionId] of [['5551234', 'fictional-tagged-call'], ['55848', 'fictional-tagged-desk']]) {
+    e.showCall({ number, transactionId })
+    e.showWrapUp(120, { number, transactionId, seconds: 20 })
+    e.restoreMain()
+  }
+  e.ui().querySelector('.notes-shortcut').onclick()
+  assert.deepEqual(Array.from(cards(e), card => card.querySelector('.history-source').textContent).sort(), ['Call', 'Student Assist Desk'])
+  assert.equal(api(e).callHistorySession().records.length, 2)
+  assert.equal(api(e).statistics().total, 2)
+})
+check('Recovered status remains visible while a restored note still has only one classification tag', () => {
+  const e = environment({ g1: [] }, {}, {
+    callHistory: { records: [record(1, 'Recovered Example', null, '2026-10-27', { recovered: true })], pending: [], nextId: 2 }
+  })
+  for (let run = 0; run < 2; run++) {
+    if (run) e.rerun()
+    e.ui().querySelector('.notes-shortcut').onclick()
+    const card = cards(e)[0]
+    assert.equal(card.querySelectorAll('.history-source').length, 1)
+    assert.equal(card.querySelector('.history-source').textContent, 'Call')
+    assert(!card.querySelector('.history-recovery-status').classList.contains('hidden'))
+    assert.equal(card.querySelector('.history-recovery-status').textContent, 'Recovered')
+    assert.equal(api(e).callHistorySession().records[0].recovered, true)
+  }
+})
+check('Legacy TXT imports gain a Call tag without inventing phone, queue or timing data', () => {
+  const e = environment({ g1: [] })
+  api(e).importCallNotesText('Legacy Example\nFictional archived call notes\nNO JOB NUMBER')
+  e.ui().querySelector('.notes-shortcut').onclick()
+  const saved = api(e).callHistorySession().records[0]
+  assert.equal(saved.origin, 'text')
+  for (const field of ['number', 'queue', 'detectedAt', 'durationSeconds']) assert.equal(saved[field], null)
+  assert.equal(cards(e)[0].querySelector('.history-source').textContent, 'Call')
+  const restored = loadNotes(api(e).parseCallNotesText(api(e).exportCallNotesText()))
+  assert.equal(cards(restored)[0].querySelector('.history-source').textContent, 'Call')
+  assert.equal(api(restored).callHistorySession().records[0].number, null)
+  assert.equal(api(e).statistics().total, 0)
+})
+check('Tag choices form a union and Student Assist Desk never also matches Call', () => {
+  const e = taggedNotes()
+  choose(input(e, 'Filter tag: Call'))
+  assert.deepEqual(names(e).sort(), ['Call Example', 'Legacy Example', 'Missing Example', 'Second Call'])
+  choose(input(e, 'Filter tag: Manual Note'))
+  assert.equal(cards(e).length, 5)
+  choose(input(e, 'Filter tag: Call'), false)
+  assert.deepEqual(names(e), ['Manual Example'])
+  choose(input(e, 'Filter tag: Student Assist Desk'))
+  assert.deepEqual(names(e).sort(), ['00123456', 'Manual Example'])
+  assert(e.ui().querySelector('.history-filter-summary').textContent.includes('Student Assist Desk'))
+})
+check('Tag, queue, caller type, job prefix, date and keyword search combine without restricting exports', () => {
+  const e = taggedNotes()
+  choose(input(e, 'Filter tag: Student Assist Desk'))
+  choose(input(e, 'Filter queue: ITS Service Desk'))
+  choose(input(e, 'Filter caller type: Student'))
+  choose(input(e, 'Filter job number: IMS'))
+  date(e, '2026-10-27')
+  assert.deepEqual(names(e), ['00123456'])
+  assert.equal(e.ui().querySelector('.history-result-count').textContent, '1 matching note')
+  search(e, 'Manual')
+  assert.equal(cards(e).length, 0)
+  search(e, 'Student Assist Desk')
+  assert.deepEqual(names(e), ['00123456'])
+  assert.equal(e.ui().querySelector('.notes-total').textContent, '6')
+  assert.equal(api(e).parseCallNotesText(api(e).exportCallNotesText()).length, 6)
+})
+check('Each job prefix is case insensitive and Other excludes missing job numbers', () => {
+  const e = taggedNotes()
+  const expected = { IMS: '00123456', REQ: 'Manual Example', INC: 'Call Example', SCTASK: 'Second Call', Other: 'Legacy Example', Missing: 'Missing Example' }
+  const before = JSON.stringify(api(e).callHistorySession().records)
+  for (const [prefix, caller] of Object.entries(expected)) {
+    const field = input(e, 'Filter job number: ' + prefix)
+    choose(field)
+    assert.deepEqual(names(e), [caller])
+    choose(field, false)
+  }
+  assert.equal(cards(e).length, 6)
+  assert.equal(JSON.stringify(api(e).callHistorySession().records), before)
+})
+check('Several job prefixes, Other and Missing can be selected together within one category', () => {
+  const e = taggedNotes()
+  choose(input(e, 'Filter job number: REQ'))
+  choose(input(e, 'Filter job number: INC'))
+  assert.deepEqual(names(e).sort(), ['Call Example', 'Manual Example'])
+  choose(input(e, 'Filter job number: Missing'))
+  choose(input(e, 'Filter job number: Other'))
+  assert.deepEqual(names(e).sort(), ['Call Example', 'Legacy Example', 'Manual Example', 'Missing Example'])
+  choose(input(e, 'Filter tag: Call'))
+  assert.deepEqual(names(e).sort(), ['Call Example', 'Legacy Example', 'Missing Example'])
+})
+check('Job classification uses the requested prefix rather than guessing a ticket-number format', () => {
+  const e = loadNotes([
+    record(1, 'Bare REQ', null, '2026-10-27', { jobNumber: 'REQ' }),
+    record(2, 'Spaced Task', null, '2026-10-27', { jobNumber: '  ScTaSk 0099  ' }),
+    record(3, 'Other Entry', null, '2026-10-27', { jobNumber: 'CASE INC9000001' }),
+    record(4, 'Placeholder', null, '2026-10-27', { jobNumber: 'NO JOB NUMBER' })
+  ])
+  choose(input(e, 'Filter job number: REQ'))
+  assert.deepEqual(names(e), ['Bare REQ'])
+  choose(input(e, 'Filter job number: REQ'), false)
+  choose(input(e, 'Filter job number: SCTASK'))
+  assert.deepEqual(names(e), ['Spaced Task'])
+  choose(input(e, 'Filter job number: SCTASK'), false)
+  choose(input(e, 'Filter job number: Other'))
+  assert.deepEqual(names(e), ['Other Entry'])
+})
+check('Saving a changed job number immediately re-filters the record and keeps deletion/Undo counts correct', () => {
+  const e = taggedNotes()
+  choose(input(e, 'Filter job number: Other'))
+  const card = cards(e)[0]
+  card.querySelector('.history-edit-toggle').onclick()
+  const field = card.querySelector('.history-job-input')
+  field.value = 'IMS9000055'
+  field.oninput()
+  card.querySelector('.history-edit-toggle').onclick()
+  assert.equal(cards(e).length, 0)
+  assert.equal(e.ui().querySelector('.history-result-count').textContent, '0 matching notes')
+  choose(input(e, 'Filter job number: IMS'))
+  assert.equal(cards(e).length, 2)
+  cards(e).find(card => card.querySelector('.history-caller').textContent === 'Legacy Example').querySelector('.history-delete').onclick()
+  assert.equal(e.ui().querySelector('.history-result-count').textContent, '1 matching note')
+  e.button('Undo delete').onclick()
+  assert.equal(e.ui().querySelector('.history-result-count').textContent, '2 matching notes')
+})
+check('Clear filters resets tag and job choices while keeping the keyword search', () => {
+  const e = taggedNotes()
+  choose(input(e, 'Filter tag: Student Assist Desk'))
+  choose(input(e, 'Filter job number: IMS'))
+  search(e, 'Example')
+  assert.equal(cards(e).length, 0)
+  e.button('Clear filters').onclick()
+  assert.equal(cards(e).length, 4)
+  assert.equal(e.ui().querySelector('.history-search').value, 'Example')
+  for (const tag of ['Call', 'Student Assist Desk', 'Manual Note']) assert(!input(e, 'Filter tag: ' + tag).checked)
+  for (const job of ['IMS', 'REQ', 'INC', 'SCTASK', 'Other', 'Missing']) assert(!input(e, 'Filter job number: ' + job).checked)
+})
+check('Combined tag and job results remain paged and searchable across every matching record', () => {
+  const e = loadNotes(Array.from({ length: 180 }, (_, index) => record(index + 1, 'Fictional Entry ' + index, 'ITS Service Desk', '2026-10-27', {
+    origin: index % 3 === 2 ? 'manual' : '8x8',
+    number: index % 3 === 1 ? '55848' : '+1555010000' + index,
+    jobNumber: (index % 2 ? 'REQ' : 'IMS') + String(index)
+  })))
+  choose(input(e, 'Filter tag: Call'))
+  choose(input(e, 'Filter tag: Student Assist Desk'))
+  choose(input(e, 'Filter job number: IMS'))
+  assert.equal(cards(e).length, 50)
+  assert.equal(e.ui().querySelector('.history-result-count').textContent, '60 matching notes')
+  e.button('Next').onclick()
+  assert.equal(cards(e).length, 10)
+  search(e, 'Fictional Entry 174')
+  assert.deepEqual(names(e), ['Fictional Entry 174'])
+  assert.equal(e.ui().querySelector('.history-result-count').textContent, '1 matching note')
+  assert.equal(api(e).parseCallNotesText(api(e).exportCallNotesText()).length, 180)
 })
 console.log(`${passed} notes workflow scenarios passed.`)

@@ -1,9 +1,9 @@
-/* Publish the authorised v1.2.4 prototype with both verified downloads. */
+/* Publish the authorised v1.2.5 prototype with both verified downloads. */
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { buildBookmark } = require('./build-bookmark.cjs')
-const RELEASE_VERSION = '1.2.4'
+const RELEASE_VERSION = '1.2.5'
 
 function prepareRelease (root, repository, commit) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repository || '') || !/^[a-f0-9]{40}$/.test(commit || '')) {
@@ -18,7 +18,7 @@ function prepareRelease (root, repository, commit) {
     throw new Error('Automated prototype releases start at version 1.2.1.')
   }
   // Future updates need their own version-scoped publisher and workflow.
-  if (version !== RELEASE_VERSION) throw new Error('This publisher is limited to prototype v1.2.4.')
+  if (version !== RELEASE_VERSION) throw new Error('This publisher is limited to prototype v1.2.5.')
   const source = read('Service-Desk-8x8-Assistant.js')
   const snapshot = read('releases/edge-prototype/' + version + '/Service-Desk-8x8-Assistant.js')
   const metadata = JSON.parse(read('package.json'))
@@ -166,10 +166,10 @@ if (require.main === module) {
   if (process.argv.includes('--check')) {
     console.log('Verified release inputs: prototype v' + info.version + ', JavaScript and bookmark.')
   } else {
-    // Only the fixed v1.2.4 snapshot workflow can publish; there is no future release trigger.
+    // Only the fixed v1.2.5 snapshot workflow can publish; there is no future release trigger.
     if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_EVENT_NAME !== 'push' ||
         info.version !== RELEASE_VERSION || process.env.PROTOTYPE_RELEASE_VERSION !== RELEASE_VERSION ||
-        process.env.PROTOTYPE_RELEASE_APPROVED !== 'v1.2.4-snapshot') {
+        process.env.PROTOTYPE_RELEASE_APPROVED !== 'v1.2.5-snapshot') {
       throw new Error('Prototype publication requires a main-branch GitHub Actions run adding its release snapshot.')
     }
     publishRelease(info).then((url) => console.log('Published prototype:', url)).catch((error) => { console.error(error.message); process.exitCode = 1 })
