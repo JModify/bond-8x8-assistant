@@ -2,6 +2,13 @@
 
 The standalone JavaScript assistant is a **prototype**. Its intended deployment is an organisation-approved Microsoft Edge extension. Older entries use the historical term "script"; archived files are unchanged.
 
+## 1.2.4 (Prototype) — 2026-10-29
+
+- Correct Student Assist Desk matching to phone numbers ending in 55848. Reject the previously supplied 55858 suffix without changing recorded telephone data; saved/imported badges and searchable labels derive from the corrected rule.
+- Make Call Notes result counts prominent directly above the notes, showing every matching record across pages, zero/singular wording and the overall saved-note total. Keep counts current through filters, keyword searches and saved-record changes, while totals/export retain their full scope.
+- Replace floating filter controls with consistent Caller type, Queue, Job number and Date groups, highlighted selected choices, aligned job/date cards and a header-level Clear filters button. Shorten the filter headings without changing classification, search or filter rules.
+- Preserve earlier releases, bookmarks and extension 1.0.0. Publish the exact tested prototype and matching bookmark through this version's scoped release workflow.
+
 ## 1.2.3 (Prototype) — 2026-10-28
 
 - Keep Me's status, clock and G1 control independent of Groups readability. Recognise mounted empty lists with no rectangle and explicitly identified empty Groups regions, including solo sessions and final sign-outs. Preserve hidden/loading/virtualised-roster checks, cached other-agent rows and saved G1 preferences; keep queue alert eligibility separate from displayed Me updates.

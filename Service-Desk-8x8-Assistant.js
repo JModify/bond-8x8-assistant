@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.2.3
+/* Service Desk 8x8 Assistant — Prototype v1.2.4
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -67,7 +67,7 @@
   const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.2.3'
+  const VERSION = deployment?.version || '1.2.4'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -209,7 +209,7 @@
   }
   function studentAssistNumber (number) {
     // The desk's extension may arrive with a prefix; only the native telephone digits count.
-    return !!readablePhone(number) && phoneDigits(number).endsWith('55858')
+    return !!readablePhone(number) && phoneDigits(number).endsWith('55848')
   }
   function callerNumberKey (number) {
     if (!readablePhone(number)) return ''
@@ -1666,22 +1666,32 @@
     .history-search-tools button { margin: 0; flex-shrink: 0; padding: 8px 10px; }
     .history-filter-toggle[data-active="true"] { color: #245dc1; background: #eaf1ff; border-color: #a4bde9; }
     .history-filters {
-      padding: 11px;
+      padding: 10px;
       margin-bottom: 11px;
       background: #f8faff;
       border: 1px solid #d7e0ec;
       border-radius: 9px;
     }
-    .history-filters fieldset { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
-    .history-filters legend { font-size: 11px; font-weight: 650; margin-bottom: 6px; }
-    .history-filter-options { display: flex; flex-wrap: wrap; gap: 7px 12px; }
-    .history-filter-queues { max-height: 105px; overflow: auto; }
-    .history-filter-check { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1.5; }
-    .history-filter-check input { margin: 0; }
-    .history-filter-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
-    .history-filter-date { display: grid; gap: 5px; font-size: 11px; font-weight: 600; }
-    .history-filter-date input { font: 12px system-ui; padding: 6px 8px; border: 1px solid #a4b2c7; border-radius: 6px; background: white; color: #172235; }
-    .history-filter-bottom button { margin: 0; }
+    .history-filter-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .history-filter-heading h4 { margin: 0; font-size: 12px; color: #334155; }
+    .history-filter-heading button { margin: 0; padding: 4px 7px; font-size: 10px; }
+    .history-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .history-filters fieldset { min-width: 0; margin: 0; padding: 7px 9px 9px; border: 1px solid #dce4ef; border-radius: 7px; background: #fff; }
+    .history-filters legend { padding: 0 4px; font-size: 11px; font-weight: 650; color: #334155; }
+    .history-filter-wide { grid-column: 1 / -1; }
+    .history-filter-options { display: flex; flex-wrap: wrap; gap: 6px; }
+    .history-filter-queues { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 110px; overflow: auto; }
+    .history-filter-check { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border: 1px solid #e1e7ef; border-radius: 6px; background: #f8fafc; font-size: 11px; line-height: 1.5; cursor: pointer; }
+    .history-filter-check:has(input:checked) { background: #eaf1ff; border-color: #b5cbed; color: #245dc1; }
+    .history-filter-check input { margin: 0; flex-shrink: 0; accent-color: #245dc1; }
+    .history-filter-date { display: block; }
+    .history-filter-date input { display: block; width: 100%; min-width: 0; box-sizing: border-box; font: 12px system-ui; padding: 5px 6px; border: 1px solid #c7d3e2; border-radius: 6px; background: #f8fafc; color: #172235; }
+    .history-result-bar { padding: 9px 10px; border: 1px solid #dce4ef; border-radius: 8px; background: #f8faff; }
+    .history-result-bar[data-filtered="true"] { background: #eef4ff; border-color: #cbdcf5; }
+    .history-result-details { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 7px; min-width: 0; }
+    .history-result-count { color: #245dc1; font-size: 12px; font-weight: 650; }
+    .history-result-context { color: #667085; font-size: 10px; }
+    .history-result-bar .history-session-count { text-align: right; font-size: 10px; }
     .history-filter-summary { font-size: 10px; line-height: 1.5; color: #245dc1; margin: 0 0 10px; overflow-wrap: anywhere; }
     .history-list {
       min-height: 0;
@@ -2255,14 +2265,19 @@
   const historyStudents = createHistoryStatistic('Students (predicted)', 'notes-students')
   const historyStaff = createHistoryStatistic('Staff (predicted)', 'notes-staff')
   const historyMissingJobs = createHistoryStatistic('Missing job numbers', 'notes-missing-jobs')
-  const historySummary = createElement('div', '', historyPanel, 'history-summary')
+  const historySummary = createElement('div', '', historyPanel, 'history-summary history-result-bar')
+  const historyResultDetails = createElement('div', '', historySummary, 'history-result-details')
+  const historyResults = createElement('strong', '', historyResultDetails, 'history-result-count')
+  historyResults.setAttribute('role', 'status')
+  historyResults.setAttribute('aria-live', 'polite')
+  historyResults.setAttribute('aria-atomic', 'true')
+  const historyResultContext = createElement('span', '', historyResultDetails, 'history-result-context')
   createElement(
     'span',
     deployment?.persistent ? 'Saved in this browser' : 'This session',
     historySummary,
     'history-session-count'
   )
-  const historyResults = createElement('span', '', historySummary, 'small')
   const historyTransfer = createElement('div', '', historyPanel, 'history-transfer')
   const historyAdd = createElement('button', '+ Add note', historyTransfer, 'primary history-add')
   historyAdd.title = 'Add a manual note'
@@ -2287,8 +2302,12 @@
   const historyFilterPanel = createElement('section', '', historyPanel, 'history-filters hidden')
   historyFilterPanel.id = 'its-note-filters'
   historyFilterPanel.setAttribute('aria-label', 'Filter Call Notes')
-  const typeFilters = createElement('fieldset', '', historyFilterPanel)
-  createElement('legend', 'Caller type (prediction)', typeFilters)
+  const historyFilterHeading = createElement('div', '', historyFilterPanel, 'history-filter-heading')
+  createElement('h4', 'Filter notes', historyFilterHeading)
+  const historyClearFilters = createElement('button', 'Clear filters', historyFilterHeading)
+  const historyFilterGrid = createElement('div', '', historyFilterPanel, 'history-filter-grid')
+  const typeFilters = createElement('fieldset', '', historyFilterGrid, 'history-filter-wide')
+  createElement('legend', 'Caller type', typeFilters)
   const typeFilterOptions = createElement('div', '', typeFilters, 'history-filter-options')
   const historyTypeInputs = new Map()
   for (const type of ['Staff', 'Student', 'Unknown']) {
@@ -2299,23 +2318,27 @@
     label.append(doc.createTextNode(type))
     historyTypeInputs.set(type, input)
   }
-  const queueFilters = createElement('fieldset', '', historyFilterPanel)
-  createElement('legend', 'Queue — select any that apply', queueFilters)
+  const queueFilters = createElement('fieldset', '', historyFilterGrid, 'history-filter-wide')
+  createElement('legend', 'Queue', queueFilters)
   const historyQueueOptions = createElement('div', '', queueFilters, 'history-filter-options history-filter-queues')
   const historyQueueInputs = new Map()
-  const historyFilterBottom = createElement('div', '', historyFilterPanel, 'history-filter-bottom')
-  const missingJobLabel = createElement('label', '', historyFilterBottom, 'history-filter-check')
+  const jobFilters = createElement('fieldset', '', historyFilterGrid)
+  createElement('legend', 'Job number', jobFilters)
+  const missingJobLabel = createElement('label', '', jobFilters, 'history-filter-check')
   const historyMissingOnly = createElement('input', '', missingJobLabel)
   historyMissingOnly.type = 'checkbox'
   historyMissingOnly.setAttribute('aria-label', 'Only notes missing a job number')
-  missingJobLabel.append(doc.createTextNode('Missing job numbers'))
-  const dateLabel = createElement('label', 'Date', historyFilterBottom, 'history-filter-date')
+  missingJobLabel.append(doc.createTextNode('Missing only'))
+  const dateFilters = createElement('fieldset', '', historyFilterGrid)
+  createElement('legend', 'Date', dateFilters)
+  const dateLabel = createElement('label', '', dateFilters, 'history-filter-date')
   const historyDate = createElement('input', '', dateLabel)
   historyDate.type = 'date'
   historyDate.setAttribute('aria-label', 'Filter notes by date')
-  const historyClearFilters = createElement('button', 'Clear filters', historyFilterBottom)
   const historyFilterSummary = createElement('p', '', historyPanel, 'history-filter-summary hidden')
   const historyList = createElement('div', '', historyPanel, 'history-list')
+  // Keep the matching count next to the actual results, below both search and filters.
+  historyPanel.insertBefore(historySummary, historyList)
   historyList.setAttribute('role', 'region')
   historyList.setAttribute('aria-label', deployment?.persistent ? 'Saved calls, newest first' : 'Calls saved this session, newest first')
   historyList.tabIndex = 0
@@ -4634,7 +4657,11 @@
     setText(historyStaff, String(records.filter((record) => record.callerPrediction === 'Staff').length))
     setText(historyMissingJobs, String(records.filter((record) => !cleanJobNumber(record.jobNumber)).length))
     const scoped = !!query || historyFilters.types.size || historyFilters.queues.size || historyFilters.missingJob || !!historyFilters.date
-    setText(historyResults, scoped ? `${filtered.length} of ${records.length} notes` : 'Newest first')
+    // Count the complete matching set before paging; totals/export still include every saved note.
+    const resultCount = scoped ? filtered.length : records.length
+    setText(historyResults, `${resultCount}${scoped ? ' matching' : ''} ${resultCount === 1 ? 'note' : 'notes'}`)
+    setText(historyResultContext, scoped ? `of ${records.length} total` : 'Newest first')
+    historySummary.setAttribute('data-filtered', String(!!scoped))
     historyExport.disabled = transferBusy || !records.length
     historyDownload.disabled = transferBusy || !records.length
     historyAdd.disabled = transferBusy

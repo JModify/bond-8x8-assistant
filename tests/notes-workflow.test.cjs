@@ -187,7 +187,7 @@ check('An unreadable own clock still freezes Me instead of extrapolating a cache
 })
 
 check('Student Assist Desk is derived from the native phone suffix on live and saved calls', () => {
-  for (const number of ['55858', '+1 (555) 015-5858']) {
+  for (const number of ['55848', '+1 (555) 015-5848']) {
     const e = environment()
     e.showCall({ number, transactionId: 'fictional-student-assist' })
     assert(!e.ui().querySelector('.call-heading').querySelector('.student-assist').classList.contains('hidden'))
@@ -200,8 +200,14 @@ check('Student Assist Desk is derived from the native phone suffix on live and s
   }
 })
 check('Caller names, note text and similar phone suffixes cannot create a Student Assist Desk tag', () => {
-  const e = loadNotes([record(1, '55858', 'ITS Service Desk', '2026-10-27', { number: '+15550155859', notes: 'Student Assist Desk 55858' })])
+  const e = loadNotes([record(1, '55848', 'ITS Service Desk', '2026-10-27', { number: '+15550155849', notes: 'Student Assist Desk 55848' })])
   assert.equal(cards(e)[0].querySelector('.student-assist'), null)
+})
+check('The superseded 55858 suffix is not tagged as Student Assist Desk on imported or live calls', () => {
+  const e = loadNotes([record(1, 'Fictional Caller', 'ITS Service Desk', '2026-10-27', { number: '+15550155858' })])
+  assert.equal(cards(e)[0].querySelector('.student-assist'), null)
+  e.showCall({ number: '55858', transactionId: 'fictional-old-desk-suffix' })
+  assert(e.ui().querySelector('.call-heading').querySelector('.student-assist').classList.contains('hidden'))
 })
 check('Old manual records keep their source and styling while displaying Manual Note', () => {
   const e = filteredNotes()
@@ -273,6 +279,45 @@ check('Keyword search is scoped to selected filters rather than all notes', () =
   search(e, 'REQ9000004')
   assert.deepEqual(names(e), ['00987654'])
   assert(e.ui().querySelector('.history-filter-summary').textContent.includes('27/10/2026'))
+})
+check('The visible result count follows combined filters, keyword search and zero or singular matches', () => {
+  const e = filteredNotes()
+  const count = e.ui().querySelector('.history-result-count')
+  const total = e.ui().querySelector('.history-result-context')
+  assert.equal(count.textContent, '6 notes')
+  assert.equal(count.getAttribute('aria-live'), 'polite')
+  date(e, '2026-10-27')
+  assert.equal(count.textContent, '3 matching notes')
+  assert.equal(total.textContent, 'of 6 total')
+  search(e, 'Alpha')
+  assert.equal(count.textContent, '1 matching note')
+  search(e, 'Transfer')
+  assert.equal(count.textContent, '0 matching notes')
+  search(e, '')
+  choose(input(e, 'Only notes missing a job number'))
+  assert.equal(count.textContent, '1 matching note')
+  e.button('Clear filters').onclick()
+  assert.equal(count.textContent, '6 notes')
+  assert.equal(total.textContent, 'Newest first')
+})
+check('Result counts cover all matching pages and stay correct after scoped deletion and Undo', () => {
+  const e = loadNotes(Array.from({ length: 120 }, (_, index) => record(index + 1,
+    index % 2 ? '00123456' : 'Fictional Staff ' + index, 'ITS Service Desk')))
+  choose(input(e, 'Filter caller type: Student'))
+  const count = e.ui().querySelector('.history-result-count')
+  const total = e.ui().querySelector('.history-result-context')
+  assert.equal(count.textContent, '60 matching notes')
+  assert.equal(cards(e).length, 50)
+  e.button('Next').onclick()
+  assert.equal(cards(e).length, 10)
+  assert.equal(count.textContent, '60 matching notes')
+  cards(e)[0].querySelector('.history-delete').onclick()
+  assert.equal(count.textContent, '59 matching notes')
+  assert.equal(total.textContent, 'of 119 total')
+  e.button('Undo delete').onclick()
+  assert.equal(count.textContent, '60 matching notes')
+  assert.equal(total.textContent, 'of 120 total')
+  assert.equal(api(e).parseCallNotesText(api(e).exportCallNotesText()).length, 120)
 })
 check('Date filtering uses the Brisbane call date across midnight and excludes unknown dates', () => {
   const midnight = Date.parse('2026-10-27T00:00:00+10:00')

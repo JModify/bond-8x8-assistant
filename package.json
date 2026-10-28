@@ -1,6 +1,6 @@
 {
   "name": "bond-8x8-assistant",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "private": true,
   "description": "Service Desk 8x8 Assistant prototype and development Microsoft Edge extension",
   "scripts": {
