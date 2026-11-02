@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.2.6
+/* Service Desk 8x8 Assistant — Prototype v1.2.7
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -67,7 +67,7 @@
   const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.2.6'
+  const VERSION = deployment?.version || '1.2.7'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -90,6 +90,7 @@
   // Monitor exactly these inbound queues; saved settings cannot redirect monitoring.
   const QUEUES = Object.freeze(['ITS Academic Hotline', 'ITS Internal TRNFR', 'ITS Service Desk'])
   const NOTE_TAGS = Object.freeze({ call: 'Call', studentAssist: 'Student Assist Desk', manual: 'Manual Note' })
+  const DEFAULT_STUDENT_ASSIST_EXTENSION = '55848'
   const JOB_PREFIXES = Object.freeze(['IMS', 'REQ', 'INC', 'SCTASK'])
   function parseDuration (text) {
     const value = normaliseStatus(text)
@@ -211,7 +212,7 @@
   }
   function studentAssistNumber (number) {
     // The desk's extension may arrive with a prefix; only the native telephone digits count.
-    return !!readablePhone(number) && phoneDigits(number).endsWith('55848')
+    return !!readablePhone(number) && phoneDigits(number).endsWith(studentAssistExtension)
   }
   function noteTag (record) {
     // One derived tag is shared by rendering, filters and search, including older imports.
@@ -224,6 +225,18 @@
     const digits = phoneDigits(number)
     // Match Australian international/local formatting without suffix-matching unrelated callers.
     return /^61[23478]\d{8}$/.test(digits) ? '0' + digits.slice(2) : digits
+  }
+  function sharedPhoneNumber (value) {
+    if (typeof value !== 'string' || !/^\+?[\d\s().-]+$/.test(value.trim())) return null
+    const number = phoneDigits(value)
+    // Shared lines use a full number, never an extension/suffix. Preserve the entered
+    // country/local form for display while deduplicating equivalent Australian forms.
+    return number.length >= 7 && number.length <= 15
+      ? { number, key: callerNumberKey(number) }
+      : null
+  }
+  function nameSuggestionExempt (number) {
+    return studentAssistNumber(number) || exemptNameNumbers.has(callerNumberKey(number))
   }
   function readCallPage (docs) {
     const cards = docs
@@ -1122,6 +1135,15 @@
     .assistant-settings .setting-value input {
       width: 85px;
     }
+    .name-setting-entry { display: flex; align-items: center; gap: 6px; }
+    .name-setting-entry input { flex: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid #c7d3e2; border-radius: 6px; font: 12px system-ui; }
+    .name-setting-entry button { margin: 0; flex-shrink: 0; }
+    .name-setting-feedback { margin: 7px 0 0; font-size: 11px; color: #a12635; }
+    .shared-number-list { max-height: 132px; overflow-y: auto; margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+    .shared-number-row { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border: 1px solid #e1e7ef; border-radius: 6px; background: #fff; }
+    .shared-number-row span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .shared-number-row button { margin: 0; padding: 3px 7px; font-size: 11px; }
+    .shared-number-empty { margin: 0; font-size: 11px; color: #667085; }
     .section-heading {
       margin: 14px 0 8px;
       font-size: 13px;
@@ -1518,6 +1540,10 @@
     .caller-suggestion-actions { display: flex; gap: 5px; }
     .caller-suggestion-actions button { margin: 0; padding: 5px 9px; font-size: 14px; }
     .caller-suggestion-actions .primary { background: #6941a5; border-color: #6941a5; }
+    .shared-number-suggestion { flex-wrap: wrap; }
+    .shared-number-suggestion .caller-suggestion-copy { flex-basis: 180px; }
+    .shared-number-suggestion .caller-suggestion-actions { margin-left: auto; }
+    .shared-number-suggestion .primary { font-size: 11px; }
     .caller-notes-label {
       display: block;
       margin-top: 12px;
@@ -2177,7 +2203,7 @@
   callerSuggestion.setAttribute('aria-label', 'Caller suggestion from previous notes')
   callerSuggestion.setAttribute('aria-live', 'polite')
   const suggestionCopy = createElement('div', '', callerSuggestion, 'caller-suggestion-copy')
-  createElement('small', 'Previous notes suggest', suggestionCopy)
+  const suggestionHeading = createElement('small', 'Previous notes suggest', suggestionCopy)
   const suggestionName = createElement('strong', '', suggestionCopy)
   const suggestionReason = createElement('small', '', suggestionCopy)
   const suggestionActions = createElement('div', '', callerSuggestion, 'caller-suggestion-actions')
@@ -2504,6 +2530,16 @@
     ? settingNumber(preferences.waitingAlertSeconds, 180, 1, 3600)
     : secondsPreference('coverSeconds', 'coverMinutes', 180, 3600)
   let notificationDisplaySeconds = settingNumber(preferences.notificationDisplaySeconds, 5, 1, 300)
+  let studentAssistExtension = typeof preferences.studentAssistExtension === 'string' && /^\d{3,15}$/.test(preferences.studentAssistExtension)
+    ? preferences.studentAssistExtension
+    : DEFAULT_STUDENT_ASSIST_EXTENSION
+  // Only deliberately configured shared-line numbers become durable preferences;
+  // saved caller names and the rest of the phone history stay in their existing stores.
+  const exemptNameNumbers = new Map()
+  for (const value of Array.isArray(preferences.exemptNameNumbers) ? preferences.exemptNameNumbers : []) {
+    const entry = sharedPhoneNumber(value)
+    if (entry && !exemptNameNumbers.has(entry.key)) exemptNameNumbers.set(entry.key, entry.number)
+  }
   muted = preferences.muted === true
   // AudioContext uses an empty sink ID for the operating system's default device.
   let outputDeviceId =
@@ -2583,6 +2619,8 @@
           dispositionSeconds,
           waitingAlertSeconds,
           notificationDisplaySeconds,
+          studentAssistExtension,
+          exemptNameNumbers: [...exemptNameNumbers.values()],
           desktopNotifications,
           muted,
           outputDeviceId,
@@ -2596,6 +2634,98 @@
   }
   // Write the converted values once so a later run never multiplies them again.
   savePreferences()
+  const exemptCard = createElement('div', '', settingsPanel, 'settings-card exempt-name-settings')
+  createElement('h4', 'Exempt Name Suggestion', exemptCard)
+  createElement('p', 'Add shared phone numbers to turn off caller name suggestions and automatic name filling. Enter the full number, including the area or country code.', exemptCard, 'settings-description')
+  const exemptEntry = createElement('div', '', exemptCard, 'name-setting-entry')
+  const exemptInput = createElement('input', '', exemptEntry)
+  exemptInput.type = 'tel'
+  exemptInput.maxLength = 48
+  exemptInput.autocomplete = 'off'
+  exemptInput.placeholder = 'Full shared phone number'
+  exemptInput.setAttribute('aria-label', 'Shared phone number to exempt')
+  const exemptAdd = createElement('button', 'Add', exemptEntry)
+  exemptAdd.setAttribute('aria-label', 'Add shared phone number')
+  const exemptFeedback = createElement('p', '', exemptCard, 'name-setting-feedback hidden')
+  exemptFeedback.setAttribute('role', 'status')
+  const exemptList = createElement('div', '', exemptCard, 'shared-number-list')
+  exemptList.setAttribute('role', 'list')
+  exemptList.setAttribute('aria-label', 'Numbers exempt from name suggestions')
+  function renderNameExemptions () {
+    exemptList.textContent = ''
+    if (!exemptNameNumbers.size) createElement('p', 'No shared numbers added.', exemptList, 'shared-number-empty')
+    for (const [key, number] of exemptNameNumbers) {
+      const row = createElement('div', '', exemptList, 'shared-number-row')
+      row.setAttribute('role', 'listitem')
+      createElement('span', number, row)
+      const remove = createElement('button', 'Remove', row)
+      remove.setAttribute('aria-label', 'Remove shared number ' + number)
+      remove.onclick = () => {
+        if (destroyed) return
+        exemptNameNumbers.delete(key)
+        exemptFeedback.classList.add('hidden')
+        renderNameExemptions()
+        savePreferences()
+        safeScan()
+      }
+    }
+  }
+  function addNameExemption () {
+    if (destroyed) return
+    const entry = sharedPhoneNumber(exemptInput.value)
+    const message = !entry
+      ? 'Enter a full phone number using 7 to 15 digits.'
+      : exemptNameNumbers.has(entry.key) ? 'This number is already on the list.' : ''
+    setText(exemptFeedback, message)
+    exemptFeedback.classList.toggle('hidden', !message)
+    exemptInput.setAttribute('aria-invalid', String(!!message))
+    if (message) return
+    exemptNameNumbers.set(entry.key, entry.number)
+    exemptInput.value = ''
+    renderNameExemptions()
+    savePreferences()
+    safeScan()
+  }
+  exemptAdd.onclick = addNameExemption
+  renderNameExemptions()
+  const deskNumberCard = createElement('div', '', settingsPanel, 'settings-card student-assist-settings')
+  createElement('h4', 'Student Assist Desk Number', deskNumberCard)
+  createElement('p', 'Extension used to recognise Student Assist Desk calls and notes. Caller name suggestions and automatic name filling are always off for this line.', deskNumberCard, 'settings-description')
+  const deskNumberEntry = createElement('div', '', deskNumberCard, 'name-setting-entry')
+  const deskNumberInput = createElement('input', '', deskNumberEntry)
+  deskNumberInput.type = 'text'
+  deskNumberInput.inputMode = 'numeric'
+  deskNumberInput.maxLength = 15
+  deskNumberInput.value = studentAssistExtension
+  deskNumberInput.setAttribute('aria-label', 'Student Assist Desk extension')
+  const deskNumberSave = createElement('button', 'Save', deskNumberEntry)
+  deskNumberSave.setAttribute('aria-label', 'Save Student Assist Desk extension')
+  const deskNumberFeedback = createElement('p', '', deskNumberCard, 'name-setting-feedback hidden')
+  deskNumberFeedback.setAttribute('role', 'status')
+  function saveStudentAssistExtension () {
+    if (destroyed) return
+    const value = deskNumberInput.value.trim()
+    const valid = /^\d{3,15}$/.test(value)
+    deskNumberInput.setAttribute('aria-invalid', String(!valid))
+    deskNumberFeedback.classList.toggle('hidden', valid)
+    setText(deskNumberFeedback, valid ? '' : 'Enter an extension using 3 to 15 digits.')
+    if (!valid) return
+    studentAssistExtension = value
+    deskNumberInput.value = value
+    savePreferences()
+    // Tags and tag searches are derived from the setting, never written back into records.
+    // Invalidate presentation only; a configuration change must not rewrite the data file.
+    historyRenderKey = ''
+    safeScan()
+  }
+  deskNumberSave.onclick = saveStudentAssistExtension
+  deskNumberInput.onchange = saveStudentAssistExtension
+  for (const [input, confirm] of [[exemptInput, addNameExemption], [deskNumberInput, saveStudentAssistExtension]]) {
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation()
+      if (event.key === 'Enter') { event.preventDefault(); confirm() }
+    })
+  }
   const STATISTICS_KEY = 'service-desk-8x8-statistics-v1'
   const STATISTICS_ZONE = 'Australia/Brisbane'
   function dayKey (time) {
@@ -3074,7 +3204,9 @@
     // edit must not silently acquire a name; no identity marker is added to the saved record.
     const mayAssumeCaller = !!number && !enteredCaller && !draft.callerInputEdited &&
       !touchedCallFields.get(draft.id)?.has('callerInput') && draft.dismissedCallerNumber !== number
-    const caller = enteredCaller || (mayAssumeCaller ? previousCaller(draft.number)?.caller : '') || 'Unknown'
+    const match = mayAssumeCaller ? previousCaller(draft.number) : null
+    // Several saved identities are evidence of a shared line, not a safe automatic name.
+    const caller = enteredCaller || (match?.names.size === 1 ? match.caller : '') || 'Unknown'
     const record = {
       ...draft,
       caller,
@@ -4843,6 +4975,9 @@
   if (historyPrevious) historyPrevious.onclick = () => changeHistoryPage(-1)
   if (historyNext) historyNext.onclick = () => changeHistoryPage(1)
   function previousCaller (number) {
+    // This gate covers visible suggestions, explicit acceptance and final automatic naming.
+    // Recheck current configuration each time so a late action cannot bypass a new exemption.
+    if (nameSuggestionExempt(number)) return null
     if (callerIndexRevision !== historyRevision) {
       // Rebuild once per saved-note revision, never once per call-clock tick. Use all
       // saved notes irrespective of current filters; manual notes cannot identify a phone.
@@ -4874,28 +5009,53 @@
       draft.dismissedCallerNumber !== number
       ? previousCaller(draft.number)
       : null
-    offeredCaller = entry ? { draftId: draft.id, number, caller: entry.caller } : null
+    const shared = !!entry && entry.names.size > 1
+    offeredCaller = entry ? { draftId: draft.id, number, caller: entry.caller, shared } : null
     callerSuggestion.classList.toggle('hidden', !offeredCaller)
+    callerSuggestion.classList.toggle('shared-number-suggestion', shared)
     if (!entry) return
-    setText(suggestionName, entry.caller)
-    setText(suggestionReason, entry.names.size > 1
-      ? `${entry.names.size} names or IDs are saved for this number. Please confirm.`
-      : 'Previously saved for this number. Please confirm the caller’s identity.')
-  }
-  function resolveCallerSuggestion (accept) {
-    if (destroyed || !offeredCaller || callerInput.disabled || callView.classList.contains('hidden')) return
+    setText(suggestionHeading, shared ? 'Several callers use this number' : 'Previous notes suggest')
+    setText(suggestionName, shared ? 'Mark as shared number' : entry.caller)
+    const canMark = !shared || !!sharedPhoneNumber(draft.number)
+    setText(suggestionReason, !canMark
+      ? 'Enter the full phone number under Exempt Name Suggestion in Settings.'
+      : shared
+        ? `${entry.names.size} names or IDs are saved for this line. Turn off name suggestions for it.`
+        : 'Previously saved for this number. Please confirm the caller’s identity.')
+    setText(suggestionAccept, shared ? 'Mark as shared number' : '✓')
+    const action = shared ? 'Mark as shared number' : 'Accept caller suggestion'
+    suggestionAccept.title = action
+    suggestionAccept.setAttribute('aria-label', action)
+    suggestionAccept.disabled = !canMark
+    const dismiss = shared ? 'Dismiss shared number suggestion for this call' : 'Dismiss caller suggestion for this call'
+    suggestionReject.title = dismiss
+    suggestionReject.setAttribute('aria-label', dismiss)
+    // Bind this rendered offer to its actions; an old queued callback cannot act on a new call.
     const offered = offeredCaller
+    suggestionAccept.onclick = () => resolveCallerSuggestion(true, offered)
+    suggestionReject.onclick = () => resolveCallerSuggestion(false, offered)
+  }
+  function resolveCallerSuggestion (accept, offered = offeredCaller) {
+    if (destroyed || !offered || offered !== offeredCaller || callerInput.disabled || callView.classList.contains('hidden')) return
     const draft = currentCallDraft()
     const page = readCallPage(getReadableDocuments())
-    // Only an explicit tick may replace typed text. Late clicks still cannot fill another
-    // interaction, a completed card or an identity that no longer matches the offered number.
+    const match = draft ? previousCaller(draft.number) : null
+    // Only an explicit tick may replace typed text. Revalidate the prompt's kind too:
+    // a changed history must not turn a stale name-accept action into a shared-line decision.
     if (!draft || draft.id !== offered.draftId ||
       page?.phase !== 'call' || page.identityConflict || matchingCallDraft(page)?.id !== draft.id ||
       callerNumberKey(draft.number) !== offered.number ||
       callerNumberKey(page.number || draft.number) !== offered.number ||
-      previousCaller(draft.number)?.caller !== offered.caller) return
+      match?.caller !== offered.caller || (match.names.size > 1) !== offered.shared) return
+    const shared = offered.shared && accept ? sharedPhoneNumber(draft.number) : null
+    if (offered.shared && accept && !shared) return
     draft.dismissedCallerNumber = offered.number
-    if (accept) {
+    if (shared) {
+      // Mark only the current full number. Existing manual text, notes and native metadata stay intact.
+      exemptNameNumbers.set(shared.key, shared.number)
+      renderNameExemptions()
+      savePreferences()
+    } else if (accept) {
       draft.callerInput = offered.caller
       draft.callerInputEdited = true
       callerInput.value = offered.caller
@@ -4906,6 +5066,7 @@
     offeredCaller = null
     callerSuggestion.classList.add('hidden')
     saveCallHistory()
+    if (shared) safeScan()
     if (accept) callerInput.focus?.({ preventScroll: true })
   }
   suggestionAccept.onclick = () => resolveCallerSuggestion(true)
@@ -4918,7 +5079,14 @@
     setText(callElapsed, callClock(page.durationSeconds))
     setText(callNumber, page.number || draft?.number || 'Unavailable')
     setText(callQueue, page.queue || draft?.queue || 'Unavailable')
-    callStudentAssist.classList.toggle('hidden', !studentAssistNumber(page.number || draft?.number))
+    const number = page.number || draft?.number
+    const fromStudentAssist = studentAssistNumber(number)
+    callStudentAssist.classList.toggle('hidden', !fromStudentAssist)
+    setText(callerHelp, fromStudentAssist
+      ? 'Student Assist Desk is a shared line. Enter this caller’s name or student number; it saves at Wrap up.'
+      : nameSuggestionExempt(number)
+        ? 'Shared number. Enter this caller’s name or student number; it saves at Wrap up.'
+        : 'Saves to Call Notes at Wrap up. An untouched name can use a matching previous note.')
     callerInput.disabled = !draft || page.identityConflict
     notesInput.disabled = callerInput.disabled
     if (editingCallId !== draft?.id || callerInput.value !== (draft?.callerInput || '')) {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.7 (Prototype) — 2026-11-02
+
+- Exempt Student Assist Desk calls from number-based name suggestions and automatic naming while retaining their purple label and manual name/SID/notes entry. Add Student Assist Desk Number in Settings, default 55848, controlling suffix-based labels, saved tags, filters/search and exemptions together.
+- Add Exempt Name Suggestion with a compact scrolling list, Add and Remove. Validate full numbers, deduplicate formatting/Australian local aliases and match complete numbers rather than suffixes. Save only deliberately configured/marked line numbers as browser preferences; preserve caller-history storage and TXT format.
+- Replace name offers for numbers with several distinct saved identities with Mark as shared number. Marking adds the current full number to exemptions without changing typed fields or earlier notes. Dismissal stays per call; ambiguous lines never auto-fill an identity. Bind actions to their rendered offer and reject stale decisions after history/configuration changes, call switches, Wrap up or destruction.
+- Preserve manual names, deliberate clears, call counters, native details and prior records. Extension changes refresh derived presentation without rewriting Call Notes. Keep earlier releases/bookmarks and extension 1.0.0 unchanged; publish this exact prototype and matching bookmark through its scoped workflow.
+
 ## 1.2.6 (Prototype) — 2026-10-29
 
 - Tighten vertical queue/tag filter options. Collapse the filter panel when leaving Call Notes, including automatic call/break/disposition views, while retaining criteria and keyword search.

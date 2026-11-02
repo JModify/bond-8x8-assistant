@@ -53,7 +53,7 @@ function record (id, caller, queue, day = '2026-10-27', extra = {}) {
 function loadNotes (records, preferences = {}) {
   const e = environment({ g1: [], ...preferences })
   e.setTime(Date.parse('2026-10-28T12:00:00+10:00'))
-  api(e).importCallNotesText(api(e).exportCallNotesText(records))
+  if (records.length) api(e).importCallNotesText(api(e).exportCallNotesText(records))
   // Use the visible main shortcut; the hidden on-call shortcut deliberately remembers a call visit.
   e.ui().querySelector('.notes-shortcut').onclick()
   return e
@@ -453,15 +453,17 @@ check('Typing or clearing a caller name keeps its suggestion visible until an ex
   e.showWrapUp(120, { transactionId: 'fictional-typed-call', number: '+15550100001', seconds: 40 })
   assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Unknown')
 })
-check('Shared numbers suggest the most recent named record and explicitly disclose alternatives', () => {
+check('Several saved names replace identity suggestions with a shared-number prompt', () => {
   const e = loadNotes([
     record(1, 'Newer Example', null, '2026-10-28', { number: '5551234' }),
     record(2, 'Older Example', null, '2026-10-27', { number: '5551234' }),
     record(3, 'Unknown', null, '2026-10-28', { number: '5551234' })
   ])
   e.showCall({ number: '5551234', transactionId: 'fictional-shared-line' })
-  assert.equal(suggestedName(e), 'Newer Example')
+  assert.equal(suggestedName(e), 'Mark as shared number')
   assert(suggestion(e).textContent.includes('2 names or IDs'))
+  assert.equal(input(e, 'Accept caller suggestion'), null)
+  assert(input(e, 'Mark as shared number'))
 })
 check('Australian local/international forms match, but a shared suffix never matches another number', () => {
   const e = loadNotes([record(1, 'Fictional AU Example', null, '2026-10-27', { number: '02 5550 0001' })])
@@ -830,7 +832,7 @@ check('An untouched matching caller is saved as the ordinary name at Wrap up wit
   e.wrapTime(110)
   assert.equal(api(e).callHistorySession().records.length, 2)
 })
-check('Untouched caller assumptions use the latest named match even while notes are filtered away', () => {
+check('Several saved names prevent automatic naming even while notes are filtered away', () => {
   const e = loadNotes([
     record(1, 'Older Example', null, '2026-10-27', { number: '5551234' }),
     record(2, 'Latest Example', null, '2026-10-28', { number: '5551234' })
@@ -838,7 +840,7 @@ check('Untouched caller assumptions use the latest named match even while notes 
   search(e, 'No matching fictional keyword')
   e.showCall({ number: '5551234', transactionId: 'fictional-latest-assumption' })
   e.showWrapUp(120, { number: '5551234', transactionId: 'fictional-latest-assumption', seconds: 30 })
-  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Latest Example')
+  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Unknown')
 })
 check('A typed caller name wins over the automatic match while its suggestion remains available', () => {
   const e = loadNotes([record(1, 'Saved Example', null)])
@@ -944,5 +946,247 @@ check('Automatic call and break views also close filters while a data gap in Cal
   toggle.onclick()
   e.showBreak(30)
   assert(e.ui().querySelector('.history-filters').classList.contains('hidden'))
+})
+
+const prefs = e => JSON.parse(e.storage.get('service-desk-8x8-preferences-v5'))
+function addShared (e, number) {
+  input(e, 'Shared phone number to exempt').value = number
+  input(e, 'Add shared phone number').onclick()
+}
+function setDeskExtension (e, value) {
+  input(e, 'Student Assist Desk extension').value = value
+  input(e, 'Save Student Assist Desk extension').onclick()
+}
+check('Student Assist calls stay labelled and editable while both automatic name paths are exempt', () => {
+  for (const caller of ['', '00987654']) {
+    const number = '+61555055848'
+    const e = loadNotes([record(1, 'Previous Desk Caller', null, '2026-10-27', { number })])
+    e.showCall({ number, transactionId: 'fictional-desk-exempt' })
+    assert(!suggestionVisible(e))
+    const badge = e.ui().querySelector('.call-heading').querySelector('.student-assist')
+    assert.equal(badge.textContent, 'Student Assist Desk')
+    assert(!badge.classList.contains('hidden'))
+    assert(!e.ui().querySelector('#its-caller-identifier').disabled)
+    assert(e.ui().querySelector('.caller-help').textContent.includes('shared line'))
+    if (caller) e.caller(caller)
+    e.notes('This caller has separate notes')
+    e.showWrapUp(120, { number, transactionId: 'fictional-desk-exempt', seconds: 30 })
+    const saved = api(e).callHistorySession().records.at(-1)
+    assert.equal(saved.caller, caller || 'Unknown')
+    assert.equal(saved.notes, 'This caller has separate notes')
+    assert.equal(saved.number, number)
+    assert.equal(api(e).statistics().total, 1)
+  }
+})
+check('Configured shared full numbers suppress even a single historical identity without losing manual text', () => {
+  for (const caller of ['', 'Entered Example']) {
+    const e = loadNotes([record(1, 'Previous Example', null)], { exemptNameNumbers: ['+1 (555) 010-0001'] })
+    e.showCall({ number: '+15550100001', transactionId: 'fictional-configured-shared' })
+    assert(!suggestionVisible(e))
+    assert(e.ui().querySelector('.caller-help').textContent.includes('Shared number'))
+    if (caller) e.caller(caller)
+    e.showWrapUp(120, { number: '+15550100001', transactionId: 'fictional-configured-shared', seconds: 35 })
+    assert.equal(api(e).callHistorySession().records.at(-1).caller, caller || 'Unknown')
+  }
+})
+check('Adding full shared numbers deduplicates formatting and Australian local/international aliases', () => {
+  const e = loadNotes([])
+  addShared(e, '+61 (2) 5550-0001')
+  assert.deepEqual(prefs(e).exemptNameNumbers, ['61255500001'])
+  addShared(e, '02 5550 0001')
+  assert.equal(e.ui().querySelectorAll('.shared-number-row').length, 1)
+  assert(e.ui().querySelector('.name-setting-feedback').textContent.includes('already'))
+  addShared(e, '+1 555 010 0001')
+  assert.deepEqual(prefs(e).exemptNameNumbers, ['61255500001', '15550100001'])
+  input(e, 'Remove shared number 61255500001').onclick()
+  assert.deepEqual(prefs(e).exemptNameNumbers, ['15550100001'])
+  e.rerun()
+  e.reload()
+  assert.equal(e.ui().querySelectorAll('.shared-number-row').length, 1)
+  assert(input(e, 'Remove shared number 15550100001'))
+})
+check('Short extensions and invalid shared inputs cannot add exclusions or erase existing settings', () => {
+  const e = loadNotes([], { g1: ['Me'], waitingAlertSeconds: 75, exemptNameNumbers: ['15550100001'] })
+  for (const value of ['', '55848', '555123x', '1e10', '1234567890123456']) {
+    addShared(e, value)
+    assert.deepEqual(prefs(e).exemptNameNumbers, ['15550100001'])
+    assert.equal(input(e, 'Shared phone number to exempt').getAttribute('aria-invalid'), 'true')
+  }
+  assert.deepEqual(prefs(e).g1, ['Me'])
+  assert.equal(prefs(e).waitingAlertSeconds, 75)
+  assert(!JSON.stringify(prefs(e)).includes('Fictional support notes'))
+})
+check('Shared-line matching uses the complete normalised number rather than another caller suffix', () => {
+  const e = loadNotes([
+    record(1, 'AU Example', null, '2026-10-27', { number: '02 5550 0001' }),
+    record(2, 'Other Country Example', null, '2026-10-27', { number: '+1 555 2555 0001' })
+  ], { exemptNameNumbers: ['61255500001'] })
+  e.showCall({ number: '+61 2 5550 0001', transactionId: 'fictional-exempt-au' })
+  assert(!suggestionVisible(e))
+  e.showCall({ number: '+1 555 2555 0001', transactionId: 'fictional-allowed-country' })
+  assert(suggestionVisible(e))
+  assert.equal(suggestedName(e), 'Other Country Example')
+})
+check('Mark as shared adds the current full line without replacing entered caller fields or old notes', () => {
+  const number = '+15550100001'
+  const e = loadNotes([
+    record(1, 'First Example', null, '2026-10-27', { number }),
+    record(2, 'Second Example', null, '2026-10-28', { number })
+  ])
+  const before = JSON.stringify(api(e).callHistorySession().records)
+  e.showCall({ number, transactionId: 'fictional-mark-shared' })
+  e.caller('Current Example')
+  e.notes('Current private fixture notes')
+  input(e, 'Mark as shared number').onclick()
+  assert(!suggestionVisible(e))
+  assert.deepEqual(prefs(e).exemptNameNumbers, ['15550100001'])
+  assert.equal(e.ui().querySelector('#its-caller-identifier').value, 'Current Example')
+  assert.equal(e.ui().querySelector('#its-caller-notes').value, 'Current private fixture notes')
+  assert.equal(JSON.stringify(api(e).callHistorySession().records), before)
+  e.rerun()
+  e.reload()
+  assert(!suggestionVisible(e))
+  e.showWrapUp(120, { number, transactionId: 'fictional-mark-shared', seconds: 40 })
+  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Current Example')
+  e.restoreMain()
+  e.showCall({ number, transactionId: 'fictional-marked-next-call' })
+  assert(!suggestionVisible(e))
+  e.showWrapUp(120, { number, transactionId: 'fictional-marked-next-call', seconds: 15 })
+  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Unknown')
+  assert.equal(api(e).statistics().total, 2)
+})
+check('Dismissing a shared-line prompt is per call and never accepts one of its saved identities', () => {
+  const e = loadNotes([
+    record(1, 'First Example', null, '2026-10-27', { number: '5551234' }),
+    record(2, 'Second Example', null, '2026-10-28', { number: '5551234' })
+  ])
+  e.showCall({ number: '5551234', transactionId: 'fictional-dismiss-shared' })
+  input(e, 'Dismiss shared number suggestion for this call').onclick()
+  e.rerun()
+  assert(!suggestionVisible(e))
+  assert.deepEqual(prefs(e).exemptNameNumbers, [])
+  e.showWrapUp(120, { number: '5551234', transactionId: 'fictional-dismiss-shared', seconds: 20 })
+  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Unknown')
+  e.restoreMain()
+  e.showCall({ number: '5551234', transactionId: 'fictional-shared-prompt-next' })
+  assert.equal(suggestedName(e), 'Mark as shared number')
+})
+check('Removing an exemption permits normal suggestions and automatic naming on the same line', () => {
+  const e = loadNotes([record(1, 'Saved Example', null)], { exemptNameNumbers: ['15550100001'] })
+  e.showCall({ number: '+15550100001', transactionId: 'fictional-remove-exemption' })
+  assert(!suggestionVisible(e))
+  input(e, 'Remove shared number 15550100001').onclick()
+  assert.equal(suggestedName(e), 'Saved Example')
+  e.showWrapUp(120, { number: '+15550100001', transactionId: 'fictional-remove-exemption', seconds: 20 })
+  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Saved Example')
+})
+check('Changing the Student Assist extension immediately updates saved tags, filters and tag searches', () => {
+  const e = loadNotes([
+    record(1, 'Original Desk Example', null, '2026-10-27', { number: '55848' }),
+    record(2, 'New Desk Example', null, '2026-10-27', { number: '12345' }),
+    record(3, 'Manual Example', null, '2026-10-27', { number: '12345', origin: 'manual' })
+  ])
+  const original = JSON.stringify(api(e).callHistorySession().records)
+  choose(input(e, 'Filter tag: Student Assist Desk'))
+  assert.deepEqual(names(e), ['Original Desk Example'])
+  setDeskExtension(e, '12345')
+  assert.deepEqual(names(e), ['New Desk Example'])
+  e.button('Clear filters').onclick()
+  search(e, 'Student Assist Desk')
+  assert.deepEqual(names(e), ['New Desk Example'])
+  assert.equal(cards(e)[0].querySelector('.history-source').textContent, 'Student Assist Desk')
+  assert.equal(JSON.stringify(api(e).callHistorySession().records), original)
+  const parsed = api(e).parseCallNotesText(api(e).exportCallNotesText())
+  assert.equal(parsed.length, 3)
+  assert.equal(parsed[0].number, api(e).callHistorySession().records[0].number)
+  e.rerun()
+  assert.equal(input(e, 'Student Assist Desk extension').value, '12345')
+  assert.equal(prefs(e).studentAssistExtension, '12345')
+  e.showCall({ number: '12345', transactionId: 'fictional-new-desk-extension' })
+  assert(!suggestionVisible(e))
+  assert(!e.ui().querySelector('.call-heading').querySelector('.student-assist').classList.contains('hidden'))
+  e.showCall({ number: '55848', transactionId: 'fictional-former-desk-extension' })
+  assert.equal(suggestedName(e), 'Original Desk Example')
+  assert(e.ui().querySelector('.call-heading').querySelector('.student-assist').classList.contains('hidden'))
+})
+check('Invalid Student Assist edits retain the prior rule and leading-zero extensions survive reruns', () => {
+  const e = loadNotes([])
+  for (const value of ['', '12', 'desk12345', '1234567890123456']) {
+    setDeskExtension(e, value)
+    assert.equal(prefs(e).studentAssistExtension, '55848')
+    assert.equal(input(e, 'Student Assist Desk extension').getAttribute('aria-invalid'), 'true')
+  }
+  setDeskExtension(e, ' 00123 ')
+  assert.equal(input(e, 'Student Assist Desk extension').value, '00123')
+  e.rerun()
+  assert.equal(prefs(e).studentAssistExtension, '00123')
+  e.showCall({ number: '+15550000123', transactionId: 'fictional-zero-extension' })
+  assert(!e.ui().querySelector('.call-heading').querySelector('.student-assist').classList.contains('hidden'))
+})
+check('Malformed saved settings fall back safely and deduplicate valid shared-line aliases', () => {
+  const e = loadNotes([], {
+    studentAssistExtension: 12345,
+    exemptNameNumbers: [null, 15550100001, {}, '55848', '61255500001', '02 5550 0001', 'not a number']
+  })
+  assert.equal(prefs(e).studentAssistExtension, '55848')
+  assert.deepEqual(prefs(e).exemptNameNumbers, ['61255500001'])
+  assert.equal(e.ui().querySelectorAll('.shared-number-row').length, 1)
+})
+check('Repeated equivalent names do not create a shared-line prompt or block normal name completion', () => {
+  const e = loadNotes([
+    record(1, 'Saved Example', null, '2026-10-27', { number: '5551234' }),
+    record(2, 'saved example', null, '2026-10-28', { number: '5551234' }),
+    record(3, 'Unknown', null, '2026-10-28', { number: '5551234' }),
+    record(4, 'Other Manual Example', null, '2026-10-28', { number: '5551234', origin: 'manual' })
+  ])
+  e.showCall({ number: '5551234', transactionId: 'fictional-single-identity' })
+  assert.equal(suggestedName(e), 'saved example')
+  e.showWrapUp(120, { number: '5551234', transactionId: 'fictional-single-identity', seconds: 20 })
+  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'saved example')
+})
+check('Stale name and shared-number actions cannot affect a different call, a changed offer or Wrap up', () => {
+  const number = '+15550100001'
+  const e = loadNotes([record(1, 'First Example', null, '2026-10-27', { number })])
+  e.showCall({ number, transactionId: 'fictional-stale-name' })
+  const acceptName = input(e, 'Accept caller suggestion').onclick
+  api(e).importCallNotesText(api(e).exportCallNotesText([record(2, 'Second Example', null, '2026-10-28', { number })]))
+  e.scan()
+  acceptName()
+  assert.equal(e.ui().querySelector('#its-caller-identifier').value, '')
+  const markShared = input(e, 'Mark as shared number').onclick
+  e.showCall({ number: '5559999', transactionId: 'fictional-different-call' })
+  markShared()
+  assert.deepEqual(prefs(e).exemptNameNumbers, [])
+  e.showCall({ number, transactionId: 'fictional-returned-shared' })
+  const late = input(e, 'Mark as shared number').onclick
+  e.showWrapUp(120, { number, transactionId: 'fictional-returned-shared', seconds: 20 })
+  late()
+  assert.deepEqual(prefs(e).exemptNameNumbers, [])
+  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Unknown')
+})
+check('A new exemption invalidates a displayed name action before it can fill the caller field', () => {
+  const e = loadNotes([record(1, 'Saved Example', null)])
+  e.showCall({ number: '+15550100001', transactionId: 'fictional-new-exemption' })
+  const accept = input(e, 'Accept caller suggestion').onclick
+  addShared(e, '+15550100001')
+  accept()
+  assert(!suggestionVisible(e))
+  assert.equal(e.ui().querySelector('#its-caller-identifier').value, '')
+  e.showWrapUp(120, { number: '+15550100001', transactionId: 'fictional-new-exemption', seconds: 20 })
+  assert.equal(api(e).callHistorySession().records.at(-1).caller, 'Unknown')
+})
+check('Closing the assistant invalidates late settings actions', () => {
+  const e = loadNotes([])
+  const add = input(e, 'Add shared phone number').onclick
+  const save = input(e, 'Save Student Assist Desk extension').onclick
+  const numberInput = input(e, 'Shared phone number to exempt')
+  const extensionInput = input(e, 'Student Assist Desk extension')
+  api(e).destroy()
+  const before = e.storage.get('service-desk-8x8-preferences-v5')
+  numberInput.value = '15550100001'
+  extensionInput.value = '12345'
+  add()
+  save()
+  assert.equal(e.storage.get('service-desk-8x8-preferences-v5'), before)
 })
 console.log(`${passed} notes workflow scenarios passed.`)
