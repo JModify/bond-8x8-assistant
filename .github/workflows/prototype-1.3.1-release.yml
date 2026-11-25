@@ -1,17 +1,17 @@
-name: Publish prototype v1.3.0
+name: Publish prototype v1.3.1
 
 on:
   push:
     branches: [main]
     paths:
-      - releases/edge-prototype/1.3.0/Service-Desk-8x8-Assistant.js
+      - releases/edge-prototype/1.3.1/Service-Desk-8x8-Assistant.js
 
 # One-off publication for this requested version. No manual or future-version trigger.
 permissions:
   contents: read
 
 concurrency:
-  group: prototype-1.3.0-release
+  group: prototype-1.3.1-release
   cancel-in-progress: false
 
 jobs:
@@ -35,9 +35,9 @@ jobs:
         run: |
           gh api "repos/$GH_REPO/tarball/$GITHUB_SHA" > "$RUNNER_TEMP/prototype.tar.gz"
           tar -xzf "$RUNNER_TEMP/prototype.tar.gz" --strip-components=1
-      - name: Publish both verified v1.3.0 downloads
+      - name: Publish both verified v1.3.1 downloads
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PROTOTYPE_RELEASE_VERSION: '1.3.0'
-          PROTOTYPE_RELEASE_APPROVED: v1.3.0-snapshot
+          PROTOTYPE_RELEASE_VERSION: '1.3.1'
+          PROTOTYPE_RELEASE_APPROVED: v1.3.1-snapshot
         run: node tools/publish-prototype-release.cjs

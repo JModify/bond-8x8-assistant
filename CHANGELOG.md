@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1 (Prototype) — 2026-11-25
+
+- Show Teaching space to the right of Phone number and Queue in the same Call Notes detail row, using neutral text instead of a separate blue panel. Keep two equal columns when there is no room match and bound long shared-room lists without changing saved data or the on-call view.
+- Publish the exact prototype and matching offline bookmark with the version-scoped release workflow. Preserve earlier downloads, snapshots and the frozen extension.
+
 ## 1.3.0 (Prototype) — 2026-11-25
 
 - Embed the supplied teaching-space reference: 178 named rooms, including 52 without phones; omit Room Type/descriptions and unnamed rows. Preserve both rooms listed for extension 52170, as confirmed by the author.

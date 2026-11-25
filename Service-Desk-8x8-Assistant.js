@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.3.0
+/* Service Desk 8x8 Assistant — Prototype v1.3.1
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -68,7 +68,7 @@
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const resumedTeachingSpaces = previousAssistant?.teachingSpaceSession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.3.0'
+  const VERSION = deployment?.version || '1.3.1'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -1688,6 +1688,12 @@
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 10px;
     }
+    .history-information {
+      /* Keep the optional room beside Phone number and Queue; hidden rooms use no column. */
+      grid-template-columns: none;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+    }
     .call-information {
       padding: 11px 12px;
       border: 1px solid #d7e0ec;
@@ -1711,6 +1717,7 @@
     .room-location .call-detail-label { color: #466584; }
     .room-location .call-detail-value { color: #245dc1; font-weight: 650; max-height: 96px; overflow: auto; }
     .call-room { font-size: 16px; }
+    .history-room { max-height: 96px; overflow: auto; }
     .caller-label {
       margin: 0;
       font-size: 12px;
@@ -5213,7 +5220,7 @@
       )
       setText(createCallDetail(information, 'Queue', 'history-queue'), record.queue || 'Unavailable')
       roomValue = createCallDetail(information, 'Teaching space', 'history-room')
-      roomValue.parentElement.className = 'room-location hidden'
+      roomValue.parentElement.classList.add('hidden')
     }
     // Share the real timing row with the tag. Manual entries use their existing job summary
     // on the left instead of inventing call timings; normal layout never overlays record text.

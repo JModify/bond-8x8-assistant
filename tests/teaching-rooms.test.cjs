@@ -147,6 +147,12 @@ check('The saved room remains visible and read-only while caller fields are edit
   openNotes(e)
   const card = cards(e)[0]
   const room = card.querySelector('.history-room')
+  const information = card.querySelector('.history-information')
+  assert.equal(room.parentElement.parentElement, information)
+  assert(information.children[0].querySelector('.history-number'))
+  assert(information.children[1].querySelector('.history-queue'))
+  assert.equal(information.children[2], room.parentElement)
+  assert(!room.parentElement.classList.contains('room-location'))
   assert.equal(room.tagName, 'SPAN')
   assert.equal(room.textContent, '01_1_39')
   card.querySelector('.history-edit-toggle').onclick()
