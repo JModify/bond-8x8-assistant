@@ -15,6 +15,26 @@ async function settle () {
   for (let count = 0; count < 12; count++) await new Promise((resolve) => setTimeout(resolve, 1))
 }
 function error (name, message = name) { return Object.assign(new Error(message), { name }) }
+function rewriteDataMetadata (text, change) {
+  const lines = text.split(/\r?\n/)
+  const index = lines.findIndex(line => line.startsWith('Assistant autosave: '))
+  const metadata = JSON.parse(lines[index].slice('Assistant autosave: '.length))
+  change(metadata)
+  lines[index] = 'Assistant autosave: ' + JSON.stringify(metadata)
+  return lines.join('\r\n')
+}
+function registerFromDisk (disk) {
+  const line = disk.text.split(/\r?\n/).find(line => line.startsWith('Assistant autosave: '))
+  return new Map(JSON.parse(line.slice('Assistant autosave: '.length)).teachingSpaces)
+}
+function editTeachingExtension (e, room, value) {
+  e.button('Settings').onclick()
+  e.button('Open Teaching Space Register').onclick()
+  const field = e.ui().querySelector(`[aria-label="Extension for ${room}"]`)
+  field.value = value
+  field.oninput()
+  field.onchange()
+}
 function fakeDisk (text = '') {
   const disk = { text, permission: 'granted', requests: 0, reads: 0, writes: [], aborts: 0, opened: [], writeGate: null, lock: Promise.resolve() }
   disk.handle = {
@@ -253,7 +273,8 @@ check('Background autosave protects a note even when no shutdown event ever fire
   const m = make()
   await m.choose()
   importNote(m.e, 'Casey Example')
-  const queued = [...m.e.jobs].find(([, job]) => job.ms === 750)
+  // The initial register save can make this use the regular five-second coalescing window.
+  const queued = [...m.e.jobs].find(([, job]) => job.ms === 750 || job.ms === 5000)
   assert(queued)
   m.e.jobs.delete(queued[0])
   queued[1].fn()
@@ -579,7 +600,7 @@ check('Data files reject duplicate keys, oversized files and invalid backup meta
   const exportText = seed.e.window.__itsCallAssist.exportCallNotesText()
   const body = exportText.slice(exportText.indexOf('--------------------') + 22)
   const duplicate = exportText + body
-  const invalidMeta = seed.disk.text.replace('"format":1', '"format":99')
+  const invalidMeta = seed.disk.text.replace(/"format":[12]/, '"format":99')
   for (const text of [duplicate, invalidMeta]) {
     const m = make(fakeDisk(text))
     await m.choose()
@@ -666,6 +687,7 @@ check('Blocked preference storage does not prevent remembering and restoring the
 check('Failure to forget a connection is reported instead of promising future disconnection', async () => {
   const m = make()
   await m.choose()
+  const writes = m.disk.writes.length
   m.database.deleteFails = true
   m.e.window.localStorage.setItem = () => { throw error('SecurityError') }
   await m.e.button('Disconnect').onclick()
@@ -673,7 +695,7 @@ check('Failure to forget a connection is reported instead of promising future di
   assert(m.status().includes('remove its file access'))
   importNote(m.e)
   await settle()
-  assert.equal(m.disk.writes.length, 0)
+  assert.equal(m.disk.writes.length, writes)
 })
 check('A blocked-session rerun preserves intentional clears after a failed file write', async () => {
   const m = make(fakeDisk(), fakeDatabase(), { blockSessionStorage: true })
@@ -998,7 +1020,7 @@ check('Automatic retries never repeat a declined prompt, but recover when browse
   assert.equal(disk.reads, 0)
   disk.permission = 'granted'
   await retryDataFile(m)
-  assert(m.status().includes('Connected.'))
+  assert(!m.e.button('Save now').classList.contains('hidden'))
   assert.equal(disk.requests, 1)
 })
 check('Returning to the tab promptly retries an already permitted file', async () => {
@@ -1011,7 +1033,7 @@ check('Returning to the tab promptly retries an already permitted file', async (
   const next = [...m.e.jobs.values()].find((job) => job.fn.name === 'recover')
   assert.equal(next.ms, 0)
   await retryDataFile(m)
-  assert(m.status().includes('Connected.'))
+  assert(!m.e.button('Save now').classList.contains('hidden'))
   assert.equal(disk.requests, 0)
 })
 check('Returning to an idle connected tab detects revoked access before the next note is entered', async () => {
@@ -1027,7 +1049,7 @@ check('Returning to an idle connected tab detects revoked access before the next
   m.e.pointerDown(m.e.window.document.body)
   await settle()
   assert.equal(m.disk.requests, 1)
-  assert(m.status().includes('Connected.'))
+  assert(!m.e.button('Save now').classList.contains('hidden'))
 })
 check('A remembered location survives a failed database open and is recovered automatically', async () => {
   const disk = fakeDisk('--------------------\nRestored Example\nFictional archived note\nINC9000000\n--------------------\n')
@@ -1141,6 +1163,154 @@ check('A cancelled edit is repaired automatically even if a previous file close 
   await settle()
   assert(m.disk.text.includes('Original Cancel Example'))
   assert(!m.disk.text.includes('Cancelled Commit Example'))
+})
+check('Teaching-room metadata survives automatic saving and a fresh browser session', async () => {
+  const first = make()
+  await first.choose()
+  first.e.showCall({ number: '50292', transactionId: 'fictional-file-room' })
+  first.e.caller('Room Caller Example')
+  await first.save()
+  assert(first.disk.text.includes('Room location: "01_1_39"'))
+  first.e.showWrapUp(120, { number: '50292', transactionId: 'fictional-file-room', seconds: 30 })
+  await first.save()
+  const next = make(first.disk, first.database)
+  await settle()
+  assert.equal(records(next.e).length, 1)
+  assert.equal(records(next.e)[0].roomLocation, '01_1_39')
+  assert.equal(records(next.e)[0].caller, 'Room Caller Example')
+  assert.equal(records(next.e)[0].recordKey, records(first.e)[0].recordKey)
+})
+check('An older automatic data file can gain room metadata without a conflict or duplicate record', async () => {
+  const first = make()
+  await first.choose()
+  first.e.showCall({ number: '50292', transactionId: 'fictional-older-room-file' })
+  first.e.showWrapUp(120, { number: '50292', transactionId: 'fictional-older-room-file', seconds: 30 })
+  await first.save()
+  const older = rewriteDataMetadata(first.disk.text.replace(/^Room location:.*\r?\n/gm, ''), meta => { meta.format = 1; delete meta.teachingSpaces })
+  const disk = fakeDisk(older)
+  const next = make(disk, fakeDatabase(disk.handle))
+  await settle()
+  assert.equal(records(next.e).length, 1)
+  assert.equal(records(next.e)[0].roomLocation, '01_1_39')
+  await next.save()
+  assert(disk.text.includes('Room location: "01_1_39"'))
+  assert(!next.status().includes('different edits'))
+})
+check('The full teaching register saves and restores even when there are no call notes', async () => {
+  const first = make()
+  await first.choose()
+  assert.equal(registerFromDisk(first.disk).size, 178)
+  assert.equal(registerFromDisk(first.disk).get('01_1_56'), '')
+  editTeachingExtension(first.e, '01_1_56', '59998')
+  await first.save()
+  assert.equal(registerFromDisk(first.disk).get('01_1_56'), '59998')
+  const next = make(first.disk, first.database)
+  await settle()
+  assert.equal(records(next.e).length, 0)
+  next.e.showCall({ number: '59998', transactionId: 'fictional-restored-register' })
+  assert.equal(next.e.ui().querySelector('.call-room').textContent, '01_1_56')
+})
+check('Invalid register data prevents an entire data file from being partially imported', async () => {
+  const seed = make()
+  importNote(seed.e, 'Seed File Example')
+  await seed.choose()
+  const badText = rewriteDataMetadata(seed.disk.text, meta => {
+    meta.teachingSpaces = [['01_1_39', '1234']]
+  })
+  const disk = fakeDisk(badText)
+  const next = make(disk, fakeDatabase(disk.handle))
+  await settle()
+  assert.equal(records(next.e).length, 0)
+  assert.equal(disk.text, badText)
+  assert.equal(disk.writes.length, 0)
+  assert(next.status().includes('Register'))
+})
+check('Conflicting external register edits never overwrite unsaved local room corrections', async () => {
+  const m = make()
+  await m.choose()
+  editTeachingExtension(m.e, '01_1_39', '59998')
+  const external = rewriteDataMetadata(m.disk.text, meta => {
+    meta.generation = 'fictional-external-register-generation'
+    meta.teachingSpaces = meta.teachingSpaces.map(([room, extension]) => [room, room === '01_1_39' ? '59997' : extension])
+  })
+  m.disk.text = external
+  const writes = m.disk.writes.length
+  await m.e.button('Reconnect').onclick()
+  await settle()
+  const prefs = JSON.parse(m.e.storage.get('service-desk-8x8-preferences-v5'))
+  assert.equal(new Map(prefs.teachingSpaces).get('01_1_39'), '59998')
+  assert.equal(m.disk.text, external)
+  assert.equal(m.disk.writes.length, writes)
+  assert(m.status().includes('different Teaching Space Register'))
+})
+check('A delayed startup register restore cannot replace a correction typed in the meantime', async () => {
+  const first = make()
+  await first.choose()
+  editTeachingExtension(first.e, '01_1_39', '59997')
+  await first.save()
+  let release
+  first.disk.readGate = new Promise(resolve => { release = resolve })
+  const next = make(first.disk, first.database)
+  editTeachingExtension(next.e, '01_1_39', '59998')
+  release()
+  await settle()
+  const prefs = JSON.parse(next.e.storage.get('service-desk-8x8-preferences-v5'))
+  assert.equal(new Map(prefs.teachingSpaces).get('01_1_39'), '59998')
+  assert.equal(registerFromDisk(first.disk).get('01_1_39'), '59997')
+  assert(next.status().includes('different Teaching Space Register'))
+})
+check('A newer register edit repairs an already committing older save without another user edit', async () => {
+  const m = make()
+  await m.choose()
+  editTeachingExtension(m.e, '01_1_39', '59998')
+  let release
+  m.disk.closeGate = new Promise(resolve => { release = resolve })
+  const pending = m.save()
+  await settle()
+  editTeachingExtension(m.e, '01_1_39', '59997')
+  release()
+  await pending
+  await settle()
+  m.disk.closeGate = null
+  for (const [id, job] of [...m.e.jobs]) {
+    if (job.ms === 5000) { m.e.jobs.delete(id); job.fn() }
+  }
+  await settle()
+  assert.equal(registerFromDisk(m.disk).get('01_1_39'), '59997')
+})
+check('Register edits survive a blocked-preference rerun and later repair a failed file write', async () => {
+  const m = make(fakeDisk(), fakeDatabase(), {
+    beforeStart: ({ window }) => {
+      window.localStorage = { getItem () { throw error('SecurityError') }, setItem () { throw error('SecurityError') } }
+    }
+  })
+  await m.choose()
+  editTeachingExtension(m.e, '01_1_39', '59999')
+  m.disk.writeError = error('NotReadableError', 'Temporary disk failure')
+  await m.save()
+  m.e.rerun()
+  await settle()
+  assert.equal(new Map(m.e.window.__itsCallAssist.teachingSpaceSession().spaces).get('01_1_39'), '59999')
+  assert.equal(registerFromDisk(m.disk).get('01_1_39'), '50292')
+  m.disk.writeError = null
+  await m.save()
+  assert.equal(registerFromDisk(m.disk).get('01_1_39'), '59999')
+})
+check('The released older prototype refuses an upgraded file instead of deleting its register', async () => {
+  const seed = make()
+  await seed.choose()
+  editTeachingExtension(seed.e, '01_1_39', '59999')
+  await seed.save()
+  const disk = fakeDisk(seed.disk.text)
+  const m = make(disk, fakeDatabase(disk.handle))
+  const previousSource = fs.readFileSync(path.join(__dirname, '..', 'releases', 'edge-prototype', '1.2.7', 'Service-Desk-8x8-Assistant.js'), 'utf8')
+    .replace('root.__itsCallAssist = { destroy, inspect: () => lastSample }', 'root.__itsCallAssist = { destroy, inspect: () => lastSample, rescan: safeScan }')
+  m.e.runScript(previousSource)
+  await settle()
+  assert.equal(m.e.window.__itsCallAssist.version, '1.2.7')
+  assert.equal(disk.text, seed.disk.text)
+  assert.equal(disk.writes.length, 0)
+  assert(m.status().includes('unrecognised backup information'))
 })
 ;(async () => {
   for (const { name, fn } of checks) {

@@ -44,7 +44,10 @@ ${source}// END UNCHANGED PROTOTYPE
 })()`
   // Compile without running the payload; void prevents a string result replacing the 8x8 page.
   vm.compileFunction(launch, [], { filename: 'assistant-bookmark.js' })
-  const url = 'javascript:' + encodeURIComponent(launch)
+  // Keep safe URI punctuation literal to leave room for the embedded register. Encode
+  // query/fragment delimiters and ampersands so neither URL nor HTML parsing changes code.
+  // Decoding still returns the exact released source, with no eval or runtime download.
+  const url = 'javascript:' + encodeURI(launch).replace(/[?#&]/g, character => encodeURIComponent(character))
   if (url.length > BOOKMARK_INPUT_LIMIT) throw new Error('The offline bookmark exceeds the supported build size. Keep using the saved snippet.')
   return url
 }

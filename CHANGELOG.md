@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 (Prototype) — 2026-11-25
+
+- Embed the supplied teaching-space reference: 178 named rooms, including 52 without phones; omit Room Type/descriptions and unnamed rows. Preserve both rooms listed for extension 52170, as confirmed by the author.
+- Match the last five digits of readable native call numbers through an index rebuilt only when the register changes. Display a blue teaching-space panel on calls and saved notes, retain room metadata through hold, partial pages, wrap-up, restart and recovery, and include it in search and TXT transfers. Caller fields remain separate and saved room details are read-only.
+- Add Settings → Teaching Space Register as a separate searchable scrolling menu. Edit room IDs and five-digit/blank extensions; validate changes, support shared extensions, retain input/caret during polling and save on field/menu/lifecycle changes. Keep captured rooms on completed notes after later corrections.
+- Save the full register with the connected automatic data file, including empty call archives. Use autosave format 2 so older prototypes cannot discard the register; continue reading older files and keep the TXT v1 notes body. Retain validated preference/in-memory backups, restore older files compatibly, reject partial/conflicting restores and protect newer register edits from stale or already committing writes. Keep manual TXT transfers scoped to notes.
+- Reduce bookmark encoding overhead while preserving the exact offline source, existing launch guards and URL-size limit. Keep earlier releases, bookmarks, images and extension 1.0.0 immutable; publish this version with both verified downloads.
+
 ## 1.2.7 (Prototype) — 2026-11-02
 
 - Exempt Student Assist Desk calls from number-based name suggestions and automatic naming while retaining their purple label and manual name/SID/notes entry. Add Student Assist Desk Number in Settings, default 55848, controlling suffix-based labels, saved tags, filters/search and exemptions together.

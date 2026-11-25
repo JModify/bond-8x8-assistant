@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.2.7
+/* Service Desk 8x8 Assistant — Prototype v1.3.0
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -66,14 +66,18 @@
   const previousAssistant = root.__itsCallAssist
   const previousShutdown = previousAssistant?.destroy() || priorFileHandoff?.promise
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
+  const resumedTeachingSpaces = previousAssistant?.teachingSpaceSession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.2.7'
+  const VERSION = deployment?.version || '1.3.0'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
   const SECONDS_PER_MINUTE = 60
   const MILLISECONDS_PER_SECOND = 1000
   const MAX_NOTES_LENGTH = 20000
+  const MAX_TEACHING_SPACES = 2000
+  // Every shared room may contribute a 60-character ID plus its separator.
+  const MAX_ROOM_LOCATION_LENGTH = MAX_TEACHING_SPACES * 63
   // Bound whole-file parsing and rewriting; note size matters as well as record count.
   const MAX_IMPORT_BYTES = 20 * 1024 * 1024
   const MAX_IMPORT_RECORDS = 10000
@@ -91,6 +95,188 @@
   const QUEUES = Object.freeze(['ITS Academic Hotline', 'ITS Internal TRNFR', 'ITS Service Desk'])
   const NOTE_TAGS = Object.freeze({ call: 'Call', studentAssist: 'Student Assist Desk', manual: 'Manual Note' })
   const DEFAULT_STUDENT_ASSIST_EXTENSION = '55848'
+  // All named teaching spaces from the supplied workbook, including rooms without phones.
+  // Names after the dash and Room Type are omitted; blank extensions remain editable.
+  const DEFAULT_TEACHING_SPACES = Object.freeze({
+    '01_1_39': '50292',
+    '01_1_41': '50192',
+    '01_1_43': '50241',
+    '01_1_45': '50240',
+    '01_1_46': '50295',
+    '01_1_47': '50294',
+    '01_1_48': '50193',
+    '01_1_49': '50210',
+    '01_1_50': '50199',
+    '01_1_51': '53088',
+    '01_1_52': '50190',
+    '01_1_56': '',
+    '01_1_57': '55602',
+    '01_1_58': '50247',
+    '01_1_59': '52590',
+    '01_1_60': '50253',
+    '01_1_61': '51361',
+    '01_1_62': '50246',
+    '01_1_63': '51360',
+    '01_1_64': '50244',
+    '01_1_67': '50211',
+    '01_1_69': '51354',
+    '01_1_71': '50286',
+    '01_1_72': '51353',
+    '01_1_73': '50284',
+    '01_1_74': '51352',
+    '01_1_77': '50282',
+    '01_1_79': '53561',
+    '01_1_81': '50285',
+    '01_1_83': '50280',
+    '01_1_85': '50281',
+    '01_1_87': '51221',
+    '01_1_89': '51281',
+    '01_3_38': '53559',
+    '01_3_70': '52571',
+    '01_4_41': '55514',
+    '01_4_43': '52023',
+    '02_3_07': '51335',
+    '02_3_09': '54681',
+    '03_1_02': '54682',
+    '03_1_04': '',
+    '03_1_06': '',
+    '03_1_08': '',
+    '03_1_11': '',
+    '03_1_12': '',
+    '03_1_13': '',
+    '03_2_26': '',
+    '04_1_16': '',
+    '04_1_18': '',
+    '04_1_20': '',
+    '04_1_22': '',
+    '04_1_28': '',
+    '04_1_30': '52173',
+    '04_1_31': '52172',
+    '04_2_22': '52170',
+    '04_2_24': '52170',
+    '04_2_26': '51469',
+    '04_2_28': '51467',
+    '04_2_30': '51468',
+    '04_2_31': '51466',
+    '04_2_32': '',
+    '04_2_34': '53520',
+    '04_2_36': '',
+    '04_2_57': '51010',
+    '04_2_62': '',
+    '04_2_98': '51292',
+    '04_3_32': '54683',
+    '04_3_37': '',
+    '04_3_39': '50298',
+    '04_3_41': '',
+    '05_1_17': '',
+    '05_2_23': '',
+    '05_2_24': '',
+    '05_2_27': '52003',
+    '05_2_29': '',
+    '05_2_31': '',
+    '05_2_33': '50260',
+    '05_2_42': '50296',
+    '05_2_61': '50297',
+    '05_2_79': '',
+    '05_2_81A': '55734',
+    '05_3_04': '51006',
+    '05_3_22': '55743',
+    '05_3_23': '52252',
+    '05_3_24': '55842',
+    '05_3_25': '50265',
+    '05_3_26': '',
+    '05_3_27': '',
+    '05_3_35': '50263',
+    '05_3_40': '50261',
+    '05_3_49': '50272',
+    '05_3_53': '',
+    '05_4_33': '50274',
+    '06_2_01': '',
+    '06_2_03': '',
+    '06_2_05': '',
+    '06_2_07': '',
+    '06_2_09': '',
+    '06_2_10': '',
+    '06_2_11': '',
+    '06_2_13': '',
+    '06_2_14': '51584',
+    '06_2_16': '',
+    '06_2_18': '',
+    '06_2_19': '',
+    '06_2_38': '',
+    '06_3_05': '54426',
+    '06_3_07': '50196',
+    '06_3_12': '54424',
+    '06_3_14': '50197',
+    '06_3_19': '54425',
+    '06_3_21': '50194',
+    '06_3_23': '54427',
+    '06_3_27': '54428',
+    '06_3_29': '',
+    '06_4_01': '51382',
+    '06_4_03': '',
+    '06_4_05': '',
+    '06_4_07': '',
+    '06_4_11': '',
+    '06_4_15': '',
+    '06_4_17': '',
+    '06_4_19': '',
+    '06_4_21': '51393',
+    '06_4_23': '51383',
+    '06_4_25': '54441',
+    '06_4_27': '50276',
+    '06_4_29': '54022',
+    BIHSN_1_02: '55021',
+    BIHSN_1_03: '55022',
+    BIHSN_1_04: '50277',
+    BIHSN_1_05: '',
+    BIHSN_1_06: '55725',
+    BIHSN_1_07: '51582',
+    BIHSN_1_08: '54072',
+    BIHSN_1_09: '53562',
+    BIHSN_1_10: '50278',
+    BIHSN_1_11: '54013',
+    BIHSN_1_13: '',
+    BIHSN_1_14: '',
+    BIHSN_1_15: '',
+    BIHSN_1_16: '',
+    BIHSN_1_20: '55094',
+    BIHSN_1_21: '55033',
+    BIHSN_1_22: '51264',
+    BIHSN_2_25: '55512',
+    BIHSN_2_27: '50279',
+    BIHSN_2_29: '52186',
+    BIHSN_2_31: '51581',
+    BIHSN_2_32: '50214',
+    BIHSN_2_33: '55511',
+    BIHSN_2_34: '51455',
+    BIHSN_2_35: '54181',
+    BIHSN_3_01: '54082',
+    BIHSN_3_02: '54083',
+    BIHSN_3_04: '51583',
+    BIHSN_3_06: '54057',
+    BIHSN_3_07: '51570',
+    BIHSN_3_08: '51571',
+    BIHS_1_09: '51572',
+    BIHS_1_19: '51573',
+    BIHS_1_22: '51262',
+    BIHS_3_03: '51263',
+    BIHS_3_08: '51261',
+    BIHS_3_09: '51620',
+    BIHS_3_11: '51621',
+    BRIS_2_23: '51622',
+    BRIS_2_24: '51623',
+    BRIS_2_26: '51624',
+    BRIS_2_29: '51625',
+    BRIS_2_30: '51626',
+    BRIS_2_44: '51627',
+    RH_HG_202: '51628',
+    RH_HG_203: '51629',
+    RH_HG_209: '51630',
+    RH_HG_210: '51631',
+    RH_HG_217: '51632',
+    RH_HG_316: '51633'
+  })
   const JOB_PREFIXES = Object.freeze(['IMS', 'REQ', 'INC', 'SCTASK'])
   function parseDuration (text) {
     const value = normaliseStatus(text)
@@ -225,6 +411,20 @@
     const digits = phoneDigits(number)
     // Match Australian international/local formatting without suffix-matching unrelated callers.
     return /^61[23478]\d{8}$/.test(digits) ? '0' + digits.slice(2) : digits
+  }
+  function teachingRoom (number) {
+    // Only this room directory uses suffix matching; caller identities still use full numbers.
+    const digits = readablePhone(number) ? phoneDigits(number) : ''
+    return digits.length >= 5 ? teachingLookup.get(digits.slice(-5)) || null : null
+  }
+  function recordRoom (record, infer = true) {
+    if (record.origin === 'manual') return null
+    const saved = normaliseText(record.roomLocation)
+    // Preserve a captured room through TXT transfers and future directory changes. Old notes
+    // without the field can use their recorded phone number; never invent a manual-note location.
+    return saved.length <= MAX_ROOM_LOCATION_LENGTH && /^[a-z\d]+_[a-z\d]+_[a-z\d]+(?: \/ [a-z\d]+_[a-z\d]+_[a-z\d]+)*$/i.test(saved)
+      ? saved
+      : infer ? teachingRoom(record.number) : null
   }
   function sharedPhoneNumber (value) {
     if (typeof value !== 'string' || !/^\+?[\d\s().-]+$/.test(value.trim())) return null
@@ -1144,6 +1344,14 @@
     .shared-number-row span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-variant-numeric: tabular-nums; }
     .shared-number-row button { margin: 0; padding: 3px 7px; font-size: 11px; }
     .shared-number-empty { margin: 0; font-size: 11px; color: #667085; }
+    .teaching-register:not(.hidden) { display: flex; flex-direction: column; max-height: 70vh; }
+    .teaching-register > :not(.teaching-scroll) { flex-shrink: 0; }
+    .teaching-scroll { min-height: 0; max-height: 440px; overflow: auto; border: 1px solid #d7e0ec; border-radius: 8px; }
+    .teaching-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+    .teaching-table th { position: sticky; top: 0; background: #eaf1fb; padding: 8px; text-align: left; font-size: 12px; }
+    .teaching-table td { padding: 6px 8px; border-top: 1px solid #e4eaf2; vertical-align: top; }
+    .teaching-table input { width: 100%; box-sizing: border-box; padding: 6px 7px; border: 1px solid #d7e0ec; border-radius: 5px; font: 12px system-ui; background: white; }
+    .teaching-count { margin: 7px 0 10px; }
     .section-heading {
       margin: 14px 0 8px;
       font-size: 13px;
@@ -1499,6 +1707,10 @@
       font-weight: 550;
       overflow-wrap: anywhere;
     }
+    .room-location { grid-column: 1 / -1; padding: 8px 10px; border: 1px solid #cbdff5; border-radius: 7px; background: #eaf3ff; }
+    .room-location .call-detail-label { color: #466584; }
+    .room-location .call-detail-value { color: #245dc1; font-weight: 650; max-height: 96px; overflow: auto; }
+    .call-room { font-size: 16px; }
     .caller-label {
       margin: 0;
       font-size: 12px;
@@ -2185,6 +2397,10 @@
   }
   const callNumber = createCallDetail(callInformation, 'Phone number', 'call-number')
   const callQueue = createCallDetail(callInformation, 'Queue', 'call-queue')
+  const callRoom = createCallDetail(callInformation, 'Teaching space', 'call-room')
+  const callRoomBox = callRoom.parentElement
+  callRoomBox.className = 'room-location hidden'
+  callRoomBox.setAttribute('aria-live', 'polite')
   const callerLabel = createElement(
     'label',
     'Caller name or student number (optional)',
@@ -2291,6 +2507,22 @@
   const soundPanel = createElement('section', '', panel, 'menu-view sound-settings hidden')
   const settingsPanel = createElement('section', '', panel, 'menu-view assistant-settings hidden')
   const historyPanel = createElement('section', '', panel, 'menu-view call-history hidden')
+  const teachingPanel = createElement('section', '', panel, 'menu-view teaching-register hidden')
+  const teachingHeader = createElement('div', '', teachingPanel, 'menu-header')
+  createElement('h3', 'Teaching Space Register', teachingHeader)
+  createElement('button', 'Back', teachingHeader).onclick = () => openView('settings')
+  createElement('p', 'Edit a room ID or its five-digit phone extension. Leave the extension blank if the room has no phone. Changes save when you leave a field or press Enter.', teachingPanel, 'settings-description')
+  const teachingSearch = createElement('input', '', teachingPanel, 'history-search')
+  teachingSearch.type = 'search'
+  teachingSearch.placeholder = 'Search room or extension'
+  teachingSearch.setAttribute('aria-label', 'Search Teaching Space Register')
+  const teachingCount = createElement('p', '', teachingPanel, 'settings-description teaching-count')
+  const teachingScroll = createElement('div', '', teachingPanel, 'teaching-scroll')
+  const teachingTable = createElement('table', '', teachingScroll, 'teaching-table')
+  const teachingColumns = createElement('tr', '', createElement('thead', '', teachingTable))
+  createElement('th', 'Room', teachingColumns)
+  createElement('th', 'Extension', teachingColumns)
+  const teachingBody = createElement('tbody', '', teachingTable)
   const historyHeader = createElement('div', '', historyPanel, 'menu-header')
   createElement('h3', 'Call Notes', historyHeader)
   const historyBack = createElement('button', 'Back', historyHeader)
@@ -2334,7 +2566,7 @@
   const historySearchTools = createElement('div', '', historyPanel, 'history-search-tools')
   const historySearch = createElement('input', '', historySearchTools, 'history-search')
   historySearch.type = 'search'
-  historySearch.placeholder = 'Search name, ID, notes, job number, phone or queue'
+  historySearch.placeholder = 'Search name, ID, notes, job number, phone, queue or room'
   historySearch.setAttribute('aria-label', 'Search Call Notes')
   const historyFilterToggle = createElement('button', 'Filters', historySearchTools, 'history-filter-toggle')
   historyFilterToggle.setAttribute('aria-expanded', 'false')
@@ -2494,6 +2726,43 @@
   } catch {
     // Invalid JSON or blocked storage uses defaults for this run.
   }
+  function teachingRows () {
+    return [...teachingSpaces].sort(([a], [b]) => a.localeCompare(b))
+  }
+  function validatedTeachingSpaces (value) {
+    if (!Array.isArray(value) || !value.length || value.length > MAX_TEACHING_SPACES) throw new Error('The Teaching Space Register is not valid.')
+    const result = new Map()
+    for (const row of value) {
+      if (!Array.isArray(row) || row.length !== 2 || typeof row[0] !== 'string' || typeof row[1] !== 'string') {
+        throw new Error('Each teaching space needs a room ID and extension.')
+      }
+      const room = normaliseText(row[0]).toUpperCase()
+      const extension = row[1].trim()
+      if (!/^[a-z\d]+_[a-z\d]+_[a-z\d]+$/i.test(room) || room.length > 60 || !/^(?:\d{5})?$/.test(extension) || result.has(room)) {
+        throw new Error('The Teaching Space Register contains an invalid room or extension, or a duplicate room ID.')
+      }
+      result.set(room, extension)
+    }
+    return result
+  }
+  let teachingSpaces = new Map(Object.entries(DEFAULT_TEACHING_SPACES))
+  let teachingDirty = resumedTeachingSpaces ? resumedTeachingSpaces.dirty === true : preferences.teachingDirty === true
+  try {
+    const restored = resumedTeachingSpaces?.spaces || preferences.teachingSpaces
+    if (restored) teachingSpaces = validatedTeachingSpaces(restored)
+  } catch { teachingDirty = false }
+  let teachingRevision = 0
+  let teachingSignature = ''
+  const teachingLookup = new Map()
+  function rebuildTeachingLookup () {
+    teachingLookup.clear()
+    // Rebuild only on register changes. An extension may legitimately belong to several rooms.
+    for (const [room, extension] of teachingRows()) {
+      if (extension) teachingLookup.set(extension, [teachingLookup.get(extension), room].filter(Boolean).join(' / '))
+    }
+    teachingSignature = JSON.stringify(teachingRows())
+  }
+  rebuildTeachingLookup()
   // This set owns persistent G1 membership. Roster refreshes never remove entries;
   // only an explicit checkbox change may alter the user's saved choices.
   const selected = new Set(
@@ -2565,7 +2834,7 @@
   createElement('button', 'Open Sound Settings', soundsCard).onclick = () => openView('sounds')
   const dataLocation = createElement('div', '', settingsPanel, 'settings-card data-location')
   createElement('h4', 'Data location', dataLocation)
-  createElement('p', 'Choose a text file for automatic saving and restoring of Call Notes. Changes save while the assistant is open, with another save attempted when you leave.', dataLocation, 'settings-description')
+  createElement('p', 'Choose a text file for automatic saving and restoring of Call Notes and your Teaching Space Register. Changes save while the assistant is open, with another save attempted when you leave.', dataLocation, 'settings-description')
   const dataLocationInfo = createElement('p', 'No data file selected.', dataLocation, 'settings-description data-location-status')
   dataLocationInfo.setAttribute('role', 'status')
   const dataChoose = createElement('button', 'Choose data file', dataLocation)
@@ -2621,6 +2890,8 @@
           notificationDisplaySeconds,
           studentAssistExtension,
           exemptNameNumbers: [...exemptNameNumbers.values()],
+          teachingSpaces: teachingRows(),
+          teachingDirty,
           desktopNotifications,
           muted,
           outputDeviceId,
@@ -2634,6 +2905,116 @@
   }
   // Write the converted values once so a later run never multiplies them again.
   savePreferences()
+  const teachingCard = createElement('div', '', settingsPanel, 'settings-card')
+  createElement('h4', 'Teaching Space Register', teachingCard)
+  createElement('p', 'Look up or correct teaching-space room IDs and desk-phone extensions. The register saves with your connected data file.', teachingCard, 'settings-description')
+  createElement('button', 'Open Teaching Space Register', teachingCard).onclick = () => openView('register')
+  const teachingWidgets = new Map()
+  const teachingDrafts = new Set()
+  let teachingRendered = ''
+  function applyTeachingSpaces (spaces, dirty) {
+    teachingSpaces = spaces
+    teachingDirty = dirty
+    teachingRevision++
+    rebuildTeachingLookup()
+    savePreferences()
+    // Ongoing calls follow corrections immediately. Completed notes keep their captured room.
+    for (const draft of callHistory.pending) {
+      const room = teachingRoom(draft.number)
+      if (room) draft.roomLocation = room
+      else delete draft.roomLocation
+    }
+    automaticData?.changed()
+  }
+  function commitTeachingRow (widget) {
+    if (destroyed || !teachingDrafts.has(widget)) return
+    const room = normaliseText(widget.room.value).toUpperCase()
+    const extension = widget.phone.value.trim()
+    const error = !/^[a-z\d]+_[a-z\d]+_[a-z\d]+$/i.test(room) || room.length > 60
+      ? 'Use a room ID such as 01_1_39.'
+      : teachingSpaces.has(room) && room !== widget.key
+        ? 'That room is already listed.'
+        : !/^(?:\d{5})?$/.test(extension) ? 'Use five digits, or leave the extension blank.' : ''
+    setText(widget.error, error)
+    widget.error.classList.toggle('hidden', !error)
+    if (error) return
+    const changed = room !== widget.key || extension !== teachingSpaces.get(widget.key)
+    teachingDrafts.delete(widget)
+    if (changed) {
+      const spaces = new Map(teachingSpaces)
+      spaces.delete(widget.key)
+      spaces.set(room, extension)
+      teachingWidgets.delete(widget.key)
+      widget.key = room
+      teachingWidgets.set(room, widget)
+      applyTeachingSpaces(spaces, true)
+      teachingRendered = teachingSignature
+    }
+    widget.room.value = room
+    widget.phone.value = extension
+    widget.room.setAttribute('aria-label', 'Room ID for ' + room)
+    widget.phone.setAttribute('aria-label', 'Extension for ' + room)
+  }
+  function saveTeachingEdits () {
+    for (const widget of [...teachingDrafts]) commitTeachingRow(widget)
+  }
+  function filterTeachingRegister () {
+    const query = normaliseStatus(teachingSearch.value)
+    let visible = 0
+    for (const widget of teachingWidgets.values()) {
+      const matches = normaliseStatus(widget.key + ' ' + teachingSpaces.get(widget.key)).includes(query)
+      widget.row.classList.toggle('hidden', !matches)
+      if (matches) visible++
+    }
+    setText(teachingCount, query ? `${visible} of ${teachingSpaces.size} teaching spaces` : `${teachingSpaces.size} teaching spaces`)
+  }
+  function renderTeachingRegister () {
+    if (activeView !== 'register') return
+    // Build the long list only when opened or restored; polling keeps active inputs attached.
+    if (teachingRendered !== teachingSignature && !teachingDrafts.size) {
+      teachingBody.textContent = ''
+      teachingWidgets.clear()
+      for (const [room, extension] of teachingRows()) {
+        const row = createElement('tr', '', teachingBody)
+        const roomCell = createElement('td', '', row)
+        const roomInput = createElement('input', '', roomCell)
+        const phone = createElement('input', '', createElement('td', '', row))
+        roomInput.type = 'text'
+        roomInput.maxLength = 60
+        roomInput.value = room
+        roomInput.setAttribute('aria-label', 'Room ID for ' + room)
+        phone.type = 'text'
+        phone.inputMode = 'numeric'
+        phone.maxLength = 5
+        phone.value = extension
+        phone.placeholder = 'Not set'
+        phone.setAttribute('aria-label', 'Extension for ' + room)
+        const error = createElement('p', '', roomCell, 'name-setting-feedback hidden')
+        error.setAttribute('role', 'status')
+        const widget = { row, key: room, room: roomInput, phone, error }
+        teachingWidgets.set(room, widget)
+        for (const input of [roomInput, phone]) {
+          for (const event of ['keypress', 'keyup']) input.addEventListener(event, key => key.stopPropagation())
+          input.oninput = () => { teachingDrafts.add(widget) }
+          input.onchange = () => { commitTeachingRow(widget); safeScan() }
+          input.addEventListener('keydown', (event) => {
+            event.stopPropagation()
+            if (event.key === 'Enter') { event.preventDefault(); commitTeachingRow(widget); safeScan() }
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              teachingDrafts.delete(widget)
+              roomInput.value = widget.key
+              phone.value = teachingSpaces.get(widget.key)
+              error.classList.add('hidden')
+            }
+          })
+        }
+      }
+      teachingRendered = teachingSignature
+    }
+    filterTeachingRegister()
+  }
+  teachingSearch.oninput = () => { saveTeachingEdits(); filterTeachingRegister() }
   const exemptCard = createElement('div', '', settingsPanel, 'settings-card exempt-name-settings')
   createElement('h4', 'Exempt Name Suggestion', exemptCard)
   createElement('p', 'Add shared phone numbers to turn off caller name suggestions and automatic name filling. Enter the full number, including the area or country code.', exemptCard, 'settings-description')
@@ -2878,7 +3259,7 @@
   const historyDays = new Map()
   const historySearchIndex = new WeakMap()
   function searchableNote (record) {
-    const fields = [record.caller, record.notes, record.jobNumber, record.number, record.queue, record.transactionId,
+    const fields = [record.caller, record.notes, record.jobNumber, record.number, record.queue, record.transactionId, recordRoom(record),
       NOTE_TAGS[noteTag(record)]]
     let cached = historySearchIndex.get(record)
     // Reuse normalised long notes while their editable fields are unchanged. Weak keys
@@ -2928,7 +3309,7 @@
   }
   // Finite numbers can still exceed JavaScript's supported date range.
   const validCallTime = (time) => Number.isFinite(time) && Number.isFinite(new Date(time).getTime())
-  function savedCall (value, pending) {
+  function savedCall (value, pending, inferRoom = true) {
     // Session storage is editable. Validate its data before displaying it or restoring a draft.
     if (
       !value ||
@@ -2962,6 +3343,8 @@
       waitSeconds: seconds('waitSeconds'),
       holdSeconds: seconds('holdSeconds')
     }
+    const room = recordRoom({ ...call, roomLocation: value.roomLocation }, inferRoom)
+    if (room) call.roomLocation = room
     if (value.recovered === true) call.recovered = true
     if (pending) {
       call.callerInput =
@@ -3082,6 +3465,8 @@
     record.recordKey ||= newNoteKey()
     record.originalId ||= record.id
     record.origin ||= '8x8'
+    const room = recordRoom(record)
+    if (room) record.roomLocation = room
   }
   function saveCallHistory () {
     automaticData?.changed()
@@ -3185,6 +3570,13 @@
     ]) {
       // Hidden Info tabs and partial renders cannot erase previously readable details.
       if (page[key] !== null && page[key] !== undefined) draft[key] = page[key]
+    }
+    if (page.number != null) {
+      // A newly readable native number can add, change or clear the match. A hidden Info tab
+      // retains this call's last known location instead of borrowing another interaction's room.
+      const room = teachingRoom(draft.number)
+      if (room) draft.roomLocation = room
+      else delete draft.roomLocation
     }
     if (Number.isFinite(page.durationSeconds)) {
       // The interaction timer is distinct from Busy, hold and disposition clocks.
@@ -3374,6 +3766,11 @@
     widget.tag.classList.toggle('student-assist', tag === 'studentAssist')
     widget.tag.classList.toggle('call-source', tag === 'call')
     widget.recovery.classList.toggle('hidden', !record.recovered)
+    if (widget.roomValue) {
+      const room = recordRoom(record)
+      widget.roomValue.parentElement.classList.toggle('hidden', !room)
+      setText(widget.roomValue, room || '')
+    }
     // Polling must leave the active editor's text, selection and caret untouched.
     if (!editing) {
       widget.input.value = record.caller === 'Unknown' ? '' : record.caller
@@ -3555,6 +3952,7 @@
     ['First detected', 'detectedAt', 'date'],
     ['Saved at', 'completedAt', 'date'],
     ['Phone number', 'number', 'text'],
+    ['Room location', 'roomLocation', 'text'],
     ['Queue', 'queue', 'text'],
     ['Call reference', 'transactionId', 'text'],
     ['Channel', 'channel', 'text'],
@@ -3567,6 +3965,11 @@
   ]
   // Resolve each labelled field once; large imports must not repeat every label comparison per row.
   const NOTE_FIELDS_BY_LABEL = new Map(NOTE_TEXT_FIELDS.map((field) => [normaliseStatus(field[0]), field]))
+  function noteFieldValue (record, key) {
+    // File comparisons and transfers share the same legacy-room fallback, preventing false
+    // conflicts or duplicate imports when an older note did not yet store its room explicitly.
+    return key === 'roomLocation' ? recordRoom(record) : record[key]
+  }
   const isNoteSeparator = (line) => /^\s*-{20,}\s*$/.test(line)
   function escapedNoteLine (line) {
     // Protect delimiter-like notes and leading backslashes without flattening multiline text.
@@ -3597,7 +4000,7 @@
       if (record.notes) lines.push(...record.notes.split('\n').map(escapedNoteLine))
       lines.push(escapedNoteLine(record.jobNumber || 'NO JOB NUMBER'), NOTE_DETAILS)
       for (const [label, key, type] of NOTE_TEXT_FIELDS) {
-        const value = record[key]
+        const value = noteFieldValue(record, key)
         let text = 'Not recorded'
         if (value !== null && value !== undefined) {
           if (type === 'date') text = new Date(value).toISOString()
@@ -3688,14 +4091,14 @@
     }
     const notes = body.join('\n').trim()
     // Refuse oversized fields rather than silently losing caller information during a round trip.
-    const limits = { recordKey: 180, number: 80, queue: 200, transactionId: 160, channel: 200, channelNumber: 80 }
+    const limits = { recordKey: 180, number: 80, roomLocation: MAX_ROOM_LOCATION_LENGTH, queue: 200, transactionId: 160, channel: 200, channelNumber: 80 }
     const oversizedDetail = Object.entries(limits).some(
       ([key, limit]) => typeof fields[key] === 'string' && fields[key].length > limit
     )
     if (caller.length > 160 || notes.length > MAX_NOTES_LENGTH || jobNumber.length > 80 || oversizedDetail) {
       throw new Error('A record contains more text than the assistant can keep.')
     }
-    const record = savedCall({ ...fields, id: 1, caller, notes, jobNumber }, false)
+    const record = savedCall({ ...fields, id: 1, caller, notes, jobNumber }, false, false)
     if (!record) throw new Error('A record contains an invalid date or call detail.')
     // Missing legacy identifiers/times are not invented. Row numbers are assigned only at import.
     record.recordKey = fields.recordKey || null
@@ -3751,7 +4154,7 @@
     // Compare full legacy content without hashing away differences or guessing call identities.
     const details = NOTE_TEXT_FIELDS
       .filter(([, key]) => !['recordKey', 'originalId'].includes(key))
-      .map(([, key]) => record[key])
+      .map(([, key]) => noteFieldValue(record, key))
     return JSON.stringify([record.caller, record.notes, record.jobNumber, ...details])
   }
   function importCallNotesText (text, records = parseCallNotesText(text)) {
@@ -3765,6 +4168,8 @@
     let added = 0
     let skipped = 0
     for (const record of records) {
+      const room = recordRoom(record)
+      if (room) record.roomLocation = room
       const signature = legacyNoteSignature(record)
       const duplicates = legacyCounts.get(signature) || 0
       // Stable keys make assistant exports idempotent. Multiset matching preserves identical
@@ -3944,8 +4349,11 @@
   function dataSignature (records) {
     // Row numbers can change on restore; compare the actual text and recorded details instead.
     return JSON.stringify(records.map((record) => [record.recordKey, record.caller, record.notes, record.jobNumber,
-      ...NOTE_TEXT_FIELDS.filter(([, key]) => key !== 'recordKey').map(([, key]) => record[key] ?? null)
+      ...NOTE_TEXT_FIELDS.filter(([, key]) => key !== 'recordKey').map(([, key]) => noteFieldValue(record, key) ?? null)
     ]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  }
+  function dataStateSignature (records, spaces = teachingRows()) {
+    return JSON.stringify([dataSignature(records), spaces])
   }
   function createAutomaticData () {
     const DATABASE = 'service-desk-8x8-data-location-v1'
@@ -4003,7 +4411,7 @@
       inheritedChanges = parent.uncheckpointed === true
     }
     const active = (token) => token === epoch && !stopping && !destroyed
-    const modelVersion = () => JSON.stringify([historyRevision, callHistory.pending, historyEdit, newManualRecord])
+    const modelVersion = () => JSON.stringify([historyRevision, teachingRevision, callHistory.pending, historyEdit, newManualRecord])
     function cancelRecovery () {
       root.clearTimeout(recoveryTimer)
       recoveryTimer = null
@@ -4140,11 +4548,15 @@
       const metadata = preamble.split('\n').filter((line) => line.startsWith(HEADER))
       if (metadata.length > 1) throw new Error('The data file has duplicate backup information.')
       const meta = metadata.length ? JSON.parse(metadata[0].slice(HEADER.length)) : null
-      if (meta && (meta.format !== 1 || typeof meta.fileId !== 'string' || !meta.fileId || meta.fileId.length > 180 ||
+      if (meta && (![1, 2].includes(meta.format) || typeof meta.fileId !== 'string' || !meta.fileId || meta.fileId.length > 180 ||
           typeof meta.generation !== 'string' || !meta.generation || meta.generation.length > 180)) {
         throw new Error('This data file uses unrecognised backup information. It has not been changed.')
       }
       const records = await parseCallNotesFile(text, true, isCurrent)
+      if (meta?.format === 2 || meta?.teachingSpaces !== undefined) {
+        // Validate the entire register before any note or preference can be changed.
+        meta.teachingSpaces = [...validatedTeachingSpaces(meta.teachingSpaces)].sort(([a], [b]) => a.localeCompare(b))
+      }
       const keys = new Set()
       for (const record of records) {
         record.recordKey ||= newNoteKey()
@@ -4164,9 +4576,14 @@
       const sameFile = !!meta && checkpoint?.fileId === meta.fileId
       const sameGeneration = sameFile && checkpoint.generation === meta.generation &&
         (!checkpoint.digest || checkpoint.digest === digest)
-      const dirty = sameFile && (checkpoint.dirty === true || inheritedChanges || historyRevision !== cleanRevision)
+      const dirty = sameFile && (checkpoint.dirty === true || inheritedChanges || historyRevision !== cleanRevision || teachingDirty)
+      const registerDiffers = !!meta?.teachingSpaces && JSON.stringify(meta.teachingSpaces) !== teachingSignature
+      const keepRegister = sameGeneration && teachingDirty
+      if (registerDiffers && (teachingDrafts.size || (teachingDirty && !keepRegister))) {
+        throw new Error('This file and this tab have different Teaching Space Register edits. Choose a new data file to keep both copies.')
+      }
       // A commit may have reached disk just before its session checkpoint was interrupted.
-      if (dirty && !sameGeneration && dataSignature(dataSnapshot()) !== dataSignature(records)) {
+      if (dirty && !sameGeneration && dataStateSignature(dataSnapshot()) !== dataStateSignature(records, meta?.teachingSpaces || teachingRows())) {
         throw new Error('The data file changed while this tab had unsaved notes. Choose a new data file to keep both copies.')
       }
       const previousKeys = new Set(sameFile && Array.isArray(checkpoint.keys) ? checkpoint.keys : [])
@@ -4177,7 +4594,13 @@
         for (const key of previousKeys) if (!fileKeys.has(key)) local.delete(key)
       }
       const recover = []
-      for (const record of records) {
+      for (const fileRecord of records) {
+        const previous = local.get(fileRecord.recordKey)
+        // Older files lack the captured room; retain it for the same call/number.
+        const record = previous?.roomLocation && !fileRecord.roomLocation &&
+          callerNumberKey(previous.number) === callerNumberKey(fileRecord.number)
+          ? copyHistoryRecord(fileRecord, { roomLocation: previous.roomLocation })
+          : fileRecord
         const pending = record.recovered && record.transactionId
           ? callHistory.pending.find((call) => call.transactionId === record.transactionId)
           : null
@@ -4197,9 +4620,15 @@
         local.set(record.recordKey, copyHistoryRecord(record, { id: existing?.id || 0 }))
       }
       // Validation/conflict checks finish before any live record or call field is changed.
+      if (meta?.teachingSpaces && !keepRegister && (registerDiffers || teachingDirty)) {
+        applyTeachingSpaces(new Map(meta.teachingSpaces), false)
+        teachingRendered = ''
+      }
       for (const record of local.values()) {
         if (!record.id) record.id = callHistory.nextId++
         record.originalId ||= record.id
+        const room = recordRoom(record)
+        if (room) record.roomLocation = room
       }
       callHistory.records = [...local.values()]
       for (const { record, pending, completed } of recover) {
@@ -4207,7 +4636,7 @@
           pending.recordKey = record.recordKey
           pending.originalId = record.originalId || pending.originalId
           if (validCallTime(record.detectedAt)) pending.detectedAt = Math.min(pending.detectedAt, record.detectedAt)
-          for (const key of ['number', 'queue', 'channel', 'channelNumber', 'waitSeconds', 'holdSeconds']) {
+          for (const key of ['number', 'roomLocation', 'queue', 'channel', 'channelNumber', 'waitSeconds', 'holdSeconds']) {
             if (pending[key] == null && record[key] != null) pending[key] = record[key]
           }
           if (record.durationSeconds !== null) pending.durationSeconds = Math.max(pending.durationSeconds || 0, record.durationSeconds)
@@ -4288,8 +4717,8 @@
         expectedText = text
         fileId = meta?.fileId || newNoteKey()
         generation = meta?.generation || ''
-        lastSignature = dataSignature(records)
-        const dirty = dataSignature(dataSnapshot()) !== lastSignature
+        lastSignature = dataStateSignature(records, meta?.teachingSpaces || null)
+        const dirty = dataStateSignature(dataSnapshot()) !== lastSignature
         lastModelVersion = dirty ? '' : modelVersion()
         if (!dirty) { cleanRevision = historyRevision; inheritedChanges = false }
         checkpoint = { fileId, generation, keys: records.map((record) => record.recordKey), digest, dirty }
@@ -4304,7 +4733,7 @@
         } catch { remembered = false }
         try { settingsStorage.setItem(ENABLED, 'true') } catch {}
         if (!active(token)) return
-        rememberCheckpoint(dataSignature(dataSnapshot()) !== lastSignature)
+        rememberCheckpoint(dataStateSignature(dataSnapshot()) !== lastSignature)
         status(remembered ? 'Connected. Changes save automatically.' : 'Connected for this session. Choose this file again after reopening Edge.', !remembered)
       } finally {
         if (active(token)) { loading = false; changed(); if (!ready) scheduleRecovery() }
@@ -4329,8 +4758,9 @@
       timer = null
       if (!handle || !ready || loading) return flight
       const records = dataSnapshot()
-      const signature = dataSignature(records)
+      const signature = dataStateSignature(records)
       if (signature === lastSignature) {
+        if (teachingDirty) { teachingDirty = false; savePreferences() }
         cleanRevision = historyRevision
         inheritedChanges = false
         lastModelVersion = modelVersion()
@@ -4341,7 +4771,9 @@
       const target = handle
       const targetId = fileId
       const nextGeneration = newNoteKey()
-      const meta = { format: 1, fileId: targetId, generation: nextGeneration }
+      // Older prototypes reject format 2, preventing them from discarding the new register.
+      // Call Notes themselves retain the readable TXT v1 body and import compatibility.
+      const meta = { format: 2, fileId: targetId, generation: nextGeneration, teachingSpaces: teachingRows() }
       const text = exportCallNotesText(records).replace(/(Exported: [^\r\n]+)(\r?\n)/,
         '$1$2' + HEADER + JSON.stringify(meta) + '\r\n')
       if (records.length > MAX_IMPORT_RECORDS || new root.Blob([text]).size > MAX_IMPORT_BYTES) {
@@ -4371,7 +4803,7 @@
             if (!current() || await readNotesFile(await target.getFile()) !== expectedText) {
               throw new Error('The data file changed during saving. Your notes remain in this tab.')
             }
-            if (dataSignature(dataSnapshot()) !== signature) {
+            if (dataStateSignature(dataSnapshot()) !== signature) {
               // Typing or Escape superseded this queued snapshot. Never commit that stale draft.
               await writable.abort()
               writable = null
@@ -4387,8 +4819,12 @@
             lastSavedAt = Date.now()
             recoveryDelay = 2000
             lastProblem = ''
+            if (JSON.stringify(meta.teachingSpaces) === teachingSignature) {
+              teachingDirty = false
+              savePreferences()
+            }
             checkpoint = { fileId: targetId, generation, keys: records.map((record) => record.recordKey), digest, dirty: false }
-            rememberCheckpoint(dataSignature(dataSnapshot()) !== signature)
+            rememberCheckpoint(dataStateSignature(dataSnapshot()) !== signature)
             if (!checkpoint.dirty) {
               cleanRevision = historyRevision
               inheritedChanges = false
@@ -4568,7 +5004,7 @@
     }
     dataChoose.onclick = choose
     dataReconnect.onclick = resume
-    dataSave.onclick = () => flush()
+    dataSave.onclick = () => { saveTeachingEdits(); return flush() }
     dataDisconnect.onclick = disconnect
     dataFileStatus.onclick = () => {
       if (needsAccess) return resume()
@@ -4594,7 +5030,7 @@
         handle,
         disconnected: explicitlyDisconnected,
         checkpoint: checkpoint && { ...checkpoint, keys: [...(checkpoint.keys || [])] },
-        uncheckpointed: inheritedChanges || historyRevision !== cleanRevision || checkpoint?.dirty === true,
+        uncheckpointed: inheritedChanges || historyRevision !== cleanRevision || teachingDirty || checkpoint?.dirty === true,
         touched: [...touchedCallFields].map(([id, fields]) => [id, [...fields]])
       })
     }
@@ -4768,6 +5204,7 @@
     jobInput.autocomplete = 'off'
     jobInput.placeholder = 'e.g. INC1234567 or REQ123456'
     jobInput.setAttribute('aria-label', `Job number for call #${record.id}`)
+    let roomValue = null
     if (record.origin !== 'manual') {
       const information = createElement('div', '', card, 'history-information')
       setText(
@@ -4775,6 +5212,8 @@
         record.number || 'Unavailable'
       )
       setText(createCallDetail(information, 'Queue', 'history-queue'), record.queue || 'Unavailable')
+      roomValue = createCallDetail(information, 'Teaching space', 'history-room')
+      roomValue.parentElement.className = 'room-location hidden'
     }
     // Share the real timing row with the tag. Manual entries use their existing job summary
     // on the left instead of inventing call timings; normal layout never overlays record text.
@@ -4803,7 +5242,7 @@
     }
     const savedAt = createElement('p', 'Saved at: ' + historyTime(record.completedAt), details)
     if (record.origin === 'text') createElement('p', 'Imported from a text file. Missing details remain unknown.', details)
-    const widget = { card, caller, input, button, deleteButton, prediction, savedAt, notes, job, fields, notesInput, jobInput, tag, recovery }
+    const widget = { card, caller, input, button, deleteButton, prediction, savedAt, notes, job, fields, notesInput, jobInput, tag, recovery, roomValue }
     button.onclick = () =>
       historyEdit?.id === record.id ? saveHistoryEdit() : beginHistoryEdit(record, widget)
     input.oninput = () => {
@@ -5079,6 +5518,9 @@
     setText(callElapsed, callClock(page.durationSeconds))
     setText(callNumber, page.number || draft?.number || 'Unavailable')
     setText(callQueue, page.queue || draft?.queue || 'Unavailable')
+    const room = page.number ? teachingRoom(page.number) : recordRoom(draft || {})
+    callRoomBox.classList.toggle('hidden', !room || page.identityConflict)
+    setText(callRoom, room || '')
     const number = page.number || draft?.number
     const fromStudentAssist = studentAssistNumber(number)
     callStudentAssist.classList.toggle('hidden', !fromStudentAssist)
@@ -5122,7 +5564,7 @@
   }
   callerInput.oninput = () => saveOnCallInput(callerInput, 'callerInput', 160)
   notesInput.oninput = () => saveOnCallInput(notesInput, 'notesInput', MAX_NOTES_LENGTH)
-  for (const input of [callerInput, notesInput, historySearch]) {
+  for (const input of [callerInput, notesInput, historySearch, teachingSearch]) {
     // Keep typing in assistant fields from bubbling into 8x8 keyboard shortcuts.
     for (const event of ['keydown', 'keypress', 'keyup']) {
       input.addEventListener(event, (e) => e.stopPropagation())
@@ -5425,11 +5867,12 @@
       ? historyPanel
       : activeView === 'settings'
         ? settingsPanel
-        : activeView === 'sounds' ? soundPanel : normalView
+        : activeView === 'sounds' ? soundPanel : activeView === 'register' ? teachingPanel : normalView
     if (dataWarning.parentElement !== warningParent) {
       warningParent.insertBefore(dataWarning, activeView === 'main' ? content : warningParent.children[1] || null)
     }
     if (historyEdit && (compact || activeView !== 'history')) saveHistoryEdit(false)
+    if (compact || activeView !== 'register') saveTeachingEdits()
     panel.classList.toggle('compact', compact && !onCall)
     panel.classList.toggle('call-panel', onCall)
     panel.classList.toggle('history-panel', !compact && activeView === 'history')
@@ -5440,6 +5883,8 @@
     soundPanel.classList.toggle('hidden', compact || activeView !== 'sounds')
     settingsPanel.classList.toggle('hidden', compact || activeView !== 'settings')
     historyPanel.classList.toggle('hidden', compact || activeView !== 'history')
+    teachingPanel.classList.toggle('hidden', compact || activeView !== 'register')
+    if (!compact) renderTeachingRegister()
     bottom.classList.remove('hidden')
     footer.classList.toggle('hidden', compact || activeView !== 'main')
     windowResizer?.apply()
@@ -5517,6 +5962,7 @@
     syncViews()
   }
   function openView (view) {
+    if (activeView === 'register' && view !== 'register') saveTeachingEdits()
     if (activeView === 'history' && view !== 'history') saveHistoryEdit()
     // Leaving Sound Settings cancels the sample sound, while actual reminders continue.
     if (activeView === 'sounds' && view !== 'sounds') stopSound('preview')
@@ -7217,6 +7663,7 @@
     // Set the shutdown flag before async output changes can resume sounds or save devices.
     saveStatistics()
     saveShortBreaks()
+    saveTeachingEdits()
     saveHistoryEdit(false)
     saveCallHistory()
     const finalFileSave = automaticData?.stop()
@@ -7261,13 +7708,14 @@
   root.__itsCallAssist = { destroy, inspect: () => lastSample }
   root.__itsCallAssist.version = VERSION
   function finaliseCallNotes () {
+    saveTeachingEdits()
     saveHistoryEdit(false)
     saveCallHistory()
     automaticData?.flush()
   }
   function saveHiddenData () {
     // Hidden/pagehide events are only extra opportunities; ongoing saves cover unannounced crashes.
-    if (doc.visibilityState === 'hidden') automaticData?.flush()
+    if (doc.visibilityState === 'hidden') { saveTeachingEdits(); automaticData?.flush() }
   }
   root.__itsCallAssist.finaliseCallNotes = finaliseCallNotes
   // Packaged builds can show the saved notes directly from the extension toolbar.
@@ -7287,6 +7735,8 @@
   })
   // Data-only copies support restarts without exposing mutable draft/record objects.
   root.__itsCallAssist.callHistorySession = () => JSON.parse(JSON.stringify(callHistory))
+  // An in-memory register handoff also protects edits when preference storage is blocked.
+  root.__itsCallAssist.teachingSpaceSession = () => ({ spaces: teachingRows(), dirty: teachingDirty })
   root.__itsCallAssist.dataFileSession = () => automaticData?.session() || null
   // Preserve the latest observed call count when the page closes or navigates away.
   root.addEventListener?.('pagehide', saveStatistics)
