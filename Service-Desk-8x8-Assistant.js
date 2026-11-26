@@ -1,4 +1,4 @@
-/* Service Desk 8x8 Assistant — Prototype v1.3.2
+/* Service Desk 8x8 Assistant — Prototype v1.3.3
  * Author: Joshua Lavagna-Slater
  * JavaScript prototype for an organisation-approved Microsoft Edge extension.
  * The standalone prototype runs in the page; the extension is a separate build.
@@ -68,7 +68,7 @@
   const resumedCallHistory = previousAssistant?.callHistorySession?.()
   const resumedTeachingSpaces = previousAssistant?.teachingSpaceSession?.()
   const doc = root.document
-  const VERSION = deployment?.version || '1.3.2'
+  const VERSION = deployment?.version || '1.3.3'
   const SCAN_INTERVAL_MS = 1000
   const ROSTER_SETTLE_MS = SCAN_INTERVAL_MS
   const FRESHNESS_WINDOW_MS = 30000
@@ -2610,7 +2610,9 @@
   const historyAdd = createElement('button', '+ Add note', historyTransfer, 'primary history-add')
   historyAdd.title = 'Add a manual note'
   const historyImport = createElement('button', 'Import TXT', historyTransfer)
+  historyImport.title = 'Add extra notes to the current data.'
   const historyExport = createElement('button', 'Export TXT', historyTransfer)
+  historyExport.title = 'Save a separate copy of all notes and the room register.'
   const historyDownload = createElement('button', 'Download TXT', historyTransfer, 'hidden')
   const historyFile = createElement('input', '', historyPanel, 'hidden')
   historyFile.type = 'file'
@@ -2890,15 +2892,17 @@
   createElement('button', 'Open Sound Settings', soundsCard).onclick = () => openView('sounds')
   const dataLocation = createElement('div', '', settingsPanel, 'settings-card data-location')
   createElement('h4', 'Data location', dataLocation)
-  createElement('p', 'Choose a text file for automatic saving and restoring of Call Notes and your Teaching Space Register. Changes save while the assistant is open, with another save attempted when you leave.', dataLocation, 'settings-description')
+  createElement('p', 'Open an existing file to load its notes and room register, or create a new file from the current data.', dataLocation, 'settings-description')
   const dataLocationInfo = createElement('p', 'No data file selected.', dataLocation, 'settings-description data-location-status')
   dataLocationInfo.setAttribute('role', 'status')
   const dataChoose = createElement('button', 'Choose data file', dataLocation)
+  const dataNew = createElement('button', 'Create new file', dataLocation)
   const dataReconnect = createElement('button', 'Reconnect', dataLocation, 'hidden')
   const dataSave = createElement('button', 'Save now', dataLocation, 'hidden')
   const dataDisconnect = createElement('button', 'Disconnect', dataLocation, 'hidden')
-  createElement('p', 'Use Edge’s file picker to choose the folder. The assistant reconnects when it starts; Edge may ask for access when you next click in 8x8. A crash or power loss can interrupt the latest save.', dataLocation, 'settings-description data-location-help')
+  createElement('p', 'Changes save automatically. The assistant reconnects when it starts; Edge may ask for file access again. A crash or power loss can interrupt the latest save.', dataLocation, 'settings-description data-location-help')
   dataChoose.disabled = !!deployment || typeof root.showSaveFilePicker !== 'function'
+  dataNew.disabled = dataChoose.disabled
   if (dataChoose.disabled) {
     dataLocationInfo.textContent = deployment
       ? 'The extension already saves Call Notes in this browser.'
@@ -4277,14 +4281,14 @@
     if (destroyed) return
     historyImport.disabled = busy
     historyAdd.disabled = busy
-    historyExport.disabled = historyDownload.disabled = busy || !callHistory.records.length
+    historyExport.disabled = historyDownload.disabled = busy
   }
   function downloadCallNotes () {
-    if (destroyed || transferBusy || !callHistory.records.length) return
+    if (destroyed || transferBusy) return
     saveHistoryEdit()
     let url
     try {
-      const file = new root.Blob([exportCallNotesText()], { type: 'text/plain;charset=utf-8' })
+      const file = new root.Blob([exportDataText()], { type: 'text/plain;charset=utf-8' })
       url = root.URL.createObjectURL(file)
       const link = createElement('a', '', historyPanel, 'hidden')
       link.href = url
@@ -4301,7 +4305,7 @@
   }
   historyDownload.onclick = downloadCallNotes
   historyExport.onclick = async () => {
-    if (destroyed || transferBusy || !callHistory.records.length) return
+    if (destroyed || transferBusy) return
     saveHistoryEdit()
     if (typeof root.showSaveFilePicker !== 'function') return downloadCallNotes()
     setTransferBusy(true)
@@ -4319,7 +4323,7 @@
         return
       }
       if (destroyed) return
-      const text = exportCallNotesText()
+      const text = exportDataText()
       writable = await handle.createWritable()
       if (destroyed) {
         await writable.abort()
@@ -4329,7 +4333,7 @@
       // File System Access commits the selected file only when its stream is closed.
       await writable.close()
       writable = null
-      transferMessage('Call Notes exported to your selected location.')
+      transferMessage('Data exported to your selected location.')
     } catch (error) {
       if (writable) await writable.abort().catch(() => {})
       if (error.name === 'AbortError') transferMessage('Export cancelled.')
@@ -4420,6 +4424,16 @@
   function dataStateSignature (records, spaces = teachingRows()) {
     return JSON.stringify([dataSignature(records), spaces])
   }
+  function dataFileText (records, meta) {
+    return exportCallNotesText(records).replace(/(Exported: [^\r\n]+)(\r?\n)/,
+      '$1$2Assistant autosave: ' + JSON.stringify(meta) + '\r\n')
+  }
+  function exportDataText () {
+    // A separate copy carries every note/draft and the register, without sharing a file identity.
+    return dataFileText(dataSnapshot(), {
+      format: 2, fileId: newNoteKey(), generation: newNoteKey(), teachingSpaces: teachingRows()
+    })
+  }
   function createAutomaticData () {
     const DATABASE = 'service-desk-8x8-data-location-v1'
     const CHECKPOINT = 'service-desk-8x8-data-checkpoint-v1'
@@ -4449,6 +4463,7 @@
     let wantsConnection = !!handle
     let explicitlyDisconnected = resumedDataFile?.disconnected === true
     let choosing = false
+    let switching = false
     let recoveryTimer = null
     let recoveryDelay = 2000
     let lastProblem = ''
@@ -4606,14 +4621,14 @@
     async function readData (text, isCurrent) {
       if (!text.trim()) return { records: [], meta: null }
       // An arbitrary text document must not be silently converted into an assistant data file.
-      if (!/^\uFEFF?Service Desk 8x8 Assistant.*Call Notes \(TXT v/m.test(text) && !/^\s*-{20,}\s*$/m.test(text)) {
+      if (!/^\s*-{20,}\s*$/m.test(text)) {
         throw new Error('Choose an assistant TXT export or an empty file. This file has not been changed.')
       }
       const preamble = text.replace(/\r\n?/g, '\n').split(/^\s*-{20,}\s*$/m)[0]
       const metadata = preamble.split('\n').filter((line) => line.startsWith(HEADER))
       if (metadata.length > 1) throw new Error('The data file has duplicate backup information.')
       const meta = metadata.length ? JSON.parse(metadata[0].slice(HEADER.length)) : null
-      if (meta && (![1, 2].includes(meta.format) || typeof meta.fileId !== 'string' || !meta.fileId || meta.fileId.length > 180 ||
+      if (metadata.length && (!meta || typeof meta !== 'object' || Array.isArray(meta) || ![1, 2].includes(meta.format) || typeof meta.fileId !== 'string' || !meta.fileId || meta.fileId.length > 180 ||
           typeof meta.generation !== 'string' || !meta.generation || meta.generation.length > 180)) {
         throw new Error('This data file uses unrecognised backup information. It has not been changed.')
       }
@@ -4637,14 +4652,15 @@
       const hash = await root.crypto.subtle.digest('SHA-256', bytes)
       return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
     }
-    function restoreData (records, meta, digest) {
-      const sameFile = !!meta && checkpoint?.fileId === meta.fileId
+    function restoreData (records, meta, digest, replace = false) {
+      const sameFile = !replace && !!meta && checkpoint?.fileId === meta.fileId
       const sameGeneration = sameFile && checkpoint.generation === meta.generation &&
         (!checkpoint.digest || checkpoint.digest === digest)
       const dirty = sameFile && (checkpoint.dirty === true || inheritedChanges || historyRevision !== cleanRevision || teachingDirty)
-      const registerDiffers = !!meta?.teachingSpaces && JSON.stringify(meta.teachingSpaces) !== teachingSignature
+      const spaces = meta?.teachingSpaces || (replace ? Object.entries(DEFAULT_TEACHING_SPACES).sort(([a], [b]) => a.localeCompare(b)) : null)
+      const registerDiffers = !!spaces && JSON.stringify(spaces) !== teachingSignature
       const keepRegister = sameGeneration && teachingDirty
-      if (registerDiffers && (teachingDrafts.size || (teachingDirty && !keepRegister))) {
+      if (!replace && registerDiffers && (teachingDrafts.size || (teachingDirty && !keepRegister))) {
         throw new Error('This file and this tab have different Teaching Space Register edits. Choose a new data file to keep both copies.')
       }
       // A commit may have reached disk just before its session checkpoint was interrupted.
@@ -4653,7 +4669,7 @@
       }
       const previousKeys = new Set(sameFile && Array.isArray(checkpoint.keys) ? checkpoint.keys : [])
       const fileKeys = new Set(records.map((record) => record.recordKey))
-      const local = new Map(callHistory.records.map((record) => [record.recordKey, copyHistoryRecord(record)]))
+      const local = new Map((replace ? [] : callHistory.records).map((record) => [record.recordKey, copyHistoryRecord(record)]))
       // Apply an externally saved deletion only to a known, clean checkpoint, never to new local notes.
       if (sameFile && !sameGeneration && !dirty && !historyEdit) {
         for (const key of previousKeys) if (!fileKeys.has(key)) local.delete(key)
@@ -4666,12 +4682,18 @@
           callerNumberKey(previous.number) === callerNumberKey(fileRecord.number)
           ? copyHistoryRecord(fileRecord, { roomLocation: previous.roomLocation })
           : fileRecord
-        const pending = record.recovered && record.transactionId
+        let pending = record.recovered && record.transactionId
           ? callHistory.pending.find((call) => call.transactionId === record.transactionId)
           : null
-        const completed = record.recovered && record.transactionId
+        const completed = !replace && record.recovered && record.transactionId
           ? [...local.values()].find((call) => call.origin === '8x8' && call.transactionId === record.transactionId)
           : null
+        if (replace && pending) {
+          // Keep the observed interaction, but take its editable fields only from the selected file.
+          pending = { ...pending, callerInput: '', notesInput: '' }
+          delete pending.callerInputEdited
+          delete pending.dismissedCallerNumber
+        }
         if (pending || completed) { recover.push({ record, pending, completed }); continue }
         const existing = local.get(record.recordKey)
         if (sameGeneration && dirty) {
@@ -4685,8 +4707,26 @@
         local.set(record.recordKey, copyHistoryRecord(record, { id: existing?.id || 0 }))
       }
       // Validation/conflict checks finish before any live record or call field is changed.
-      if (meta?.teachingSpaces && !keepRegister && (registerDiffers || teachingDirty)) {
-        applyTeachingSpaces(new Map(meta.teachingSpaces), false)
+      if (replace) {
+        // File selection replaces this dataset, not the independent call counter/capture guards.
+        historyEdit = newManualRecord = lastDeletedNote = null
+        historyUndo.classList.add('hidden')
+        historyTransferStatus.classList.add('hidden')
+        teachingDrafts.clear()
+        touchedCallFields.clear()
+        callHistory.pending = recover.filter(item => item.pending).map(item => item.pending)
+        if (!callHistory.pending.some(call => call.id === callHistory.currentId)) callHistory.currentId = null
+        editingCallId = offeredCaller = null
+        callerInput.value = notesInput.value = ''
+        historySearch.value = ''
+        historyWidgets.clear()
+        historyList.textContent = ''
+        historyDays.clear()
+        historyEmpty = null
+        historyRenderKey = ''
+      }
+      if (spaces && !keepRegister && (replace || registerDiffers || teachingDirty)) {
+        applyTeachingSpaces(new Map(spaces), false)
         teachingRendered = ''
       }
       for (const record of local.values()) {
@@ -4720,7 +4760,8 @@
       }
       historyRevision++
       saveCallHistory()
-      renderHistory()
+      if (replace) historyClearFilters.onclick()
+      else renderHistory()
     }
     function problem (error) {
       const wasReady = ready
@@ -4740,43 +4781,46 @@
       lastProblem = message
       scheduleRecovery()
     }
-    async function connect (candidate, token, startup = false) {
+    async function connect (candidate, token, startup = false, prepared = null) {
       loading = true
       try {
         if (!candidate || candidate.kind !== 'file' || typeof candidate.queryPermission !== 'function' ||
             typeof candidate.getFile !== 'function' || typeof candidate.createWritable !== 'function') {
           throw new Error('Choose your data file again. Its saved connection is no longer valid.')
         }
-        let permission = await candidate.queryPermission({ mode: 'readwrite' })
-        if (!active(token)) return
-        if (permission === 'prompt' && startup && !startupPermissionAttempted) {
-          startupPermissionPending = true
-          // A bookmark may retain transient activation. Check it now, after the asynchronous reads.
-          if (root.navigator.userActivation?.isActive === true) {
-            startupPermissionPending = false
-            startupPermissionAttempted = true
-            permission = await candidate.requestPermission({ mode: 'readwrite' })
-            if (!active(token)) return
+        if (!prepared) {
+          let permission = await candidate.queryPermission({ mode: 'readwrite' })
+          if (!active(token)) return
+          if (permission === 'prompt' && startup && !startupPermissionAttempted) {
+            startupPermissionPending = true
+            // A bookmark may retain transient activation. Check it now, after the asynchronous reads.
+            if (root.navigator.userActivation?.isActive === true) {
+              startupPermissionPending = false
+              startupPermissionAttempted = true
+              permission = await candidate.requestPermission({ mode: 'readwrite' })
+              if (!active(token)) return
+            }
           }
+          if (permission !== 'granted') {
+            if (permission !== 'prompt') startupPermissionPending = false
+            handle = candidate
+            ready = false
+            needsAccess = true
+            status(startupPermissionPending
+              ? 'File access needed. Click in 8x8 to reconnect, or use Reconnect.'
+              : 'File access needed. Click Reconnect.', true)
+            return
+          }
+          startupPermissionPending = false
+          startupPermissionAttempted = false
+          const text = await readNotesFile(await candidate.getFile())
+          const digest = await fileDigest(text)
+          if (!active(token)) return
+          prepared = { text, digest, ...await readData(text, () => active(token)) }
         }
-        if (permission !== 'granted') {
-          if (permission !== 'prompt') startupPermissionPending = false
-          handle = candidate
-          ready = false
-          needsAccess = true
-          status(startupPermissionPending
-            ? 'File access needed. Click in 8x8 to reconnect, or use Reconnect.'
-            : 'File access needed. Click Reconnect.', true)
-          return
-        }
-        startupPermissionPending = false
-        startupPermissionAttempted = false
-        const text = await readNotesFile(await candidate.getFile())
-        const digest = await fileDigest(text)
+        const { text, digest, records, meta } = prepared
         if (!active(token)) return
-        const { records, meta } = await readData(text, () => active(token))
-        if (!active(token)) return
-        restoreData(records, meta, digest)
+        restoreData(records, meta, digest, prepared.replace === true)
         if (!active(token)) return
         handle = candidate
         expectedText = text
@@ -4805,7 +4849,7 @@
       }
     }
     function changed () {
-      if (stopping || destroyed || !handle || !ready || loading) return
+      if (stopping || destroyed || !handle || !ready || loading || switching) return
       // Only the small live draft/editor and a saved-record revision change while typing.
       // Defer full-archive comparisons to the coalesced save instead of every keypress/clock tick.
       const version = modelVersion()
@@ -4821,7 +4865,7 @@
       if ((destroyed || stopping) && final !== true) return flight
       root.clearTimeout(timer)
       timer = null
-      if (!handle || !ready || loading) return flight
+      if (!handle || !ready || loading || (switching && !final)) return flight
       const records = dataSnapshot()
       const signature = dataStateSignature(records)
       if (signature === lastSignature) {
@@ -4839,8 +4883,7 @@
       // Older prototypes reject format 2, preventing them from discarding the new register.
       // Call Notes themselves retain the readable TXT v1 body and import compatibility.
       const meta = { format: 2, fileId: targetId, generation: nextGeneration, teachingSpaces: teachingRows() }
-      const text = exportCallNotesText(records).replace(/(Exported: [^\r\n]+)(\r?\n)/,
-        '$1$2' + HEADER + JSON.stringify(meta) + '\r\n')
+      const text = dataFileText(records, meta)
       if (records.length > MAX_IMPORT_RECORDS || new root.Blob([text]).size > MAX_IMPORT_BYTES) {
         problem(new Error('Auto-save limit reached: 10,000 notes or 20 MB. Export an archive before starting a new data file.'))
         return flight
@@ -4913,53 +4956,68 @@
       })
       return flight
     }
-    async function choose () {
-      if (destroyed || stopping || dataChoose.disabled) return
+    async function choose (openExisting = false) {
+      if (destroyed || stopping || dataChoose.disabled || choosing) return
       if (transferBusy) { status('Finish the TXT import or export before changing your data file.'); return }
       startupPermissionPending = false
       startupPermissionAttempted = true
       let token = epoch
       const selection = ++pickerEpoch
-      const wasReady = ready
       let chosen = false
       choosing = true
+      setTransferBusy(true)
       cancelRecovery()
       try {
         // Open the picker directly in the click gesture, before any awaited I/O.
-        const candidate = await root.showSaveFilePicker({
+        const options = {
           id: 'assistant-automatic-data',
-          suggestedName: '8x8-Assistant-Data.txt',
           types: [{ description: 'Assistant data text file', accept: { 'text/plain': ['.txt'] } }]
-        })
+        }
+        const candidate = openExisting
+          ? (await root.showOpenFilePicker({ ...options, multiple: false }))?.[0]
+          : await root.showSaveFilePicker({ ...options, suggestedName: '8x8-Assistant-Data.txt' })
         if (!active(token) || selection !== pickerEpoch) return
+        if (!candidate || candidate.kind !== 'file' || typeof candidate.queryPermission !== 'function' ||
+            typeof candidate.getFile !== 'function' || typeof candidate.createWritable !== 'function') throw new Error('Choose a valid assistant data file.')
+        // Request selected-file write access while the genuine picker interaction is still recent.
+        let permission = await candidate.queryPermission({ mode: 'readwrite' })
+        if (!active(token) || selection !== pickerEpoch) return
+        if (permission === 'prompt') permission = await candidate.requestPermission({ mode: 'readwrite' })
+        if (!active(token) || selection !== pickerEpoch) return
+        if (permission !== 'granted') throw new Error('File access was not allowed. Your current data file is unchanged.')
+        await flush()
         await flight.catch(() => {})
         await Promise.resolve(previousShutdown).catch(() => {})
         if (!active(token) || selection !== pickerEpoch) return
         inheritFinalCheckpoint()
-        // Until a file is actually chosen, the previous connection keeps saving normally.
+        // Keep the old handle and dataset until permissions, every record and the register validate.
+        switching = true
+        const text = await readNotesFile(await candidate.getFile())
+        const digest = await fileDigest(text)
+        const current = () => active(token) && selection === pickerEpoch
+        const prepared = { text, digest, ...await readData(text, current), replace: !!text.trim() }
+        if (!current()) return
+        if (await readNotesFile(await candidate.getFile()) !== text) throw new Error('The selected file changed while opening. Select it again.')
+        if (!current()) return
         token = ++epoch
         ready = false
         root.clearTimeout(timer)
         timer = null
         chosen = true
-        handle = candidate
         explicitlyDisconnected = false
         wantsConnection = true
         try { settingsStorage.setItem(ENABLED, 'true') } catch {}
-        // Keep the selected handle even if its first read encounters a transient error.
-        try { await connection('put', candidate) } catch { remembered = false }
-        if (!active(token)) return
-        await connect(candidate, token)
+        await connect(candidate, token, false, prepared)
+        switching = false
         if (active(token)) await flush()
       } catch (error) {
         if (!active(token)) return
         if (chosen) problem(error)
         else {
-          ready = wasReady
           if (error.name !== 'AbortError') status(error.message || 'The data file could not be selected.', true)
         }
       } finally {
-        if (selection === pickerEpoch) choosing = false
+        if (selection === pickerEpoch) { choosing = switching = false; setTransferBusy(false) }
         if (active(token)) { changed(); if (!ready) scheduleRecovery() }
       }
     }
@@ -5067,7 +5125,8 @@
           return flush(true)
         }).finally(() => { database?.close?.(); database = null })
     }
-    dataChoose.onclick = choose
+    dataChoose.onclick = () => choose(typeof root.showOpenFilePicker === 'function')
+    dataNew.onclick = () => choose()
     dataReconnect.onclick = resume
     dataSave.onclick = () => { saveTeachingEdits(); return flush() }
     dataDisconnect.onclick = disconnect
@@ -5387,8 +5446,7 @@
     setText(historyResults, `${resultCount}${scoped ? ' matching' : ''} ${resultCount === 1 ? 'note' : 'notes'}`)
     setText(historyResultContext, scoped ? `of ${records.length} total` : 'Newest first')
     historySummary.setAttribute('data-filtered', String(!!scoped))
-    historyExport.disabled = transferBusy || !records.length
-    historyDownload.disabled = transferBusy || !records.length
+    historyExport.disabled = historyDownload.disabled = transferBusy
     historyAdd.disabled = transferBusy
     const pageSize = HISTORY_PAGE_SIZE
     const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))

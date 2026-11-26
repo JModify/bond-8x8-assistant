@@ -4,9 +4,9 @@ See phone coverage, keep call notes and get reminders to finish wrap-up or retur
 
 This is a **JavaScript prototype** that runs in your 8x8 page.
 
-**Author:** Joshua Lavagna-Slater · **Prototype version:** 1.3.2
+**Author:** Joshua Lavagna-Slater · **Prototype version:** 1.3.3
 
-[Prototype code](Service-Desk-8x8-Assistant.js) · [Download release](https://github.com/JModify/bond-8x8-assistant/releases/tag/v1.3.2) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
+[Prototype code](Service-Desk-8x8-Assistant.js) · [Download release](https://github.com/JModify/bond-8x8-assistant/releases/tag/v1.3.3) · [Technical guide](TECHNICAL.md) · [Release notes](CHANGELOG.md)
 
 ## Future direction
 
@@ -25,7 +25,7 @@ Choose either launch method. Both run the same assistant.
 
 **Recommended.** Start the assistant with one click from Edge’s favourites bar.
 
-1. [Download the bookmark installer (.html)](https://github.com/JModify/bond-8x8-assistant/releases/download/v1.3.2/Service-Desk-8x8-Assistant-Bookmark-1.3.2.html).
+1. [Download the bookmark installer (.html)](https://github.com/JModify/bond-8x8-assistant/releases/download/v1.3.3/Service-Desk-8x8-Assistant-Bookmark-1.3.3.html).
 2. Open the downloaded file in **Microsoft Edge**. Press **Ctrl+Shift+B** to show the favourites bar.
 3. Drag **8x8 Assistant** onto the bar. The file also includes an import option.
 4. Open your signed-in **8x8 tab**, then click the saved **8x8 Assistant** favourite.
@@ -36,7 +36,7 @@ After refreshing or reopening 8x8, click the favourite again. Replace it with th
 
 Save an editable copy in Edge’s DevTools and run it from the Snippets menu.
 
-1. [Download the JavaScript file (.js)](https://github.com/JModify/bond-8x8-assistant/releases/download/v1.3.2/Service-Desk-8x8-Assistant-Prototype-1.3.2.js). Open it in **Notepad** and copy all the code.
+1. [Download the JavaScript file (.js)](https://github.com/JModify/bond-8x8-assistant/releases/download/v1.3.3/Service-Desk-8x8-Assistant-Prototype-1.3.3.js). Open it in **Notepad** and copy all the code.
 2. Open your signed-in **8x8 tab** and press **Ctrl+Shift+I**.
 3. Open **Sources**. If it is hidden, click **+** and choose **Sources**.
 
@@ -65,7 +65,7 @@ After refreshing or reopening 8x8, open the saved snippet and press **Ctrl+Enter
 3. Keep **ITS Academic Hotline**, **ITS Internal TRNFR** and **ITS Service Desk** visible in the queue list.
 4. Tick **G1** for agents covering phones, including **Me** when you are covering phones. Unticked agents are **G2**.
 
-**Optional auto-save:** open **Settings → Data location → Choose data file**, choose a TXT file and allow access. The assistant reconnects and restores Call Notes and your Teaching Space Register when it starts, and retries temporary connection problems automatically. Edge may ask for access again on your next click in 8x8; **Reconnect** remains available in Settings.
+**Optional auto-save:** open **Settings → Data location**. **Choose data file** loads an existing TXT file; **Create new file** saves the current data to a new file. Allow access when Edge asks. The assistant reconnects and restores Call Notes and your Teaching Space Register when it starts, and retries temporary connection problems automatically. Edge may ask for access again on your next click in 8x8; **Reconnect** remains available in Settings.
 
 ## Assistant views
 
@@ -84,7 +84,7 @@ The view changes automatically as you take calls, wrap up or go on break. Click 
 
 - **Resize:** drag the assistant’s top-left corner. Double-click it to restore the default size.
 - **Speaker icon:** mute or unmute sounds while monitoring and counting continue. **Call Notes** sits to the left of the icons.
-- **Call Notes → Export TXT / Import TXT:** save a readable Notepad file or bring saved notes back. Export lets you choose a location where Edge allows it; otherwise it downloads the file. Import adds notes and skips records already present.
+- **Call Notes → Export TXT / Import TXT:** export a separate copy of all notes and the room register. Import adds extra notes to your current data and skips duplicates. To switch datasets, use **Settings → Data location → Change data file** instead; an invalid file leaves the current connection intact.
 - **Gear icon → Settings:** choose a data file, change lunch length, reminder delays and notifications. Manage shared-number exemptions, the Student Assist extension and the **Teaching Space Register** here too.
 - **Teaching Space Register:** search all 224 named spaces and edit room IDs or extensions. Rooms without phones are included. The register saves with your connected data file; each call note keeps its recorded room. Choose **Restore CSV defaults** to replace an older register with the corrected list.
 - **Shared lines:** when several caller names are saved for one number, choose **Mark as shared number** to stop name suggestions for that line.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.3 (Prototype) — 2026-11-26
+
+- Validate selected data files completely before changing the active connection. A populated or initialized file replaces loaded notes and the room register instead of merging and overwriting it; a genuinely empty/new file starts with current data. Invalid, cancelled, denied or stale selections retain the prior connection and notes.
+- Separate opening an existing data file from creating one, with a combined-picker fallback. Clear old editors, Undo, search and filters after a successful switch while preserving native call statistics and capture guards. Keep normal startup/reconnect conflict protection and stable-reference draft recovery.
+- Make UI TXT exports full independent snapshots of all notes, recoverable drafts and the register, including register-only files. Keep Import TXT additive and protect the active file from export overwrites.
+- Add targeted file-workflow regressions and publish both versioned downloads without changing earlier releases or the extension.
+
 ## 1.3.2 (Prototype) — 2026-11-26
 
 - Replace the incorrect Excel-based defaults with the supplied cmn_location CSV: all 224 rooms, 147 with five-digit extensions and 77 with blank/No Phone entries. Omit descriptions and Room Type. Extension 52170 now maps to 03_1_06 and 03_1_08.
