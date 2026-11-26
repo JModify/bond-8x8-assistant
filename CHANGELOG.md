@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2 (Prototype) — 2026-11-26
+
+- Replace the incorrect Excel-based defaults with the supplied cmn_location CSV: all 224 rooms, 147 with five-digit extensions and 77 with blank/No Phone entries. Omit descriptions and Room Type. Extension 52170 now maps to 03_1_06 and 03_1_08.
+- Add Restore CSV defaults to Teaching Space Register. Confirm before replacing saved/customised rows, use normal automatic-file persistence and conflict protection, and preserve completed Call Notes. Cancelling retains unfinished row edits.
+- Publish the exact prototype and matching offline bookmark; keep historical releases, bookmarks and the frozen extension unchanged.
+
 ## 1.3.1 (Prototype) — 2026-11-25
 
 - Show Teaching space to the right of Phone number and Queue in the same Call Notes detail row, using neutral text instead of a separate blue panel. Keep two equal columns when there is no room match and bound long shared-room lists without changing saved data or the on-call view.

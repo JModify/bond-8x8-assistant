@@ -58,7 +58,7 @@ check('Room matches use the final five native digits for extensions and formatte
   }
 })
 check('Anonymous, short and unlisted numbers do not acquire a teaching-space location', () => {
-  for (const number of [null, '0292', '99999', '51634']) {
+  for (const number of [null, '0292', '99999']) {
     const e = environment({ g1: [] })
     e.showCall({ number, transactionId: 'fictional-unmatched-room' })
     assert(callRoom(e).parentElement.classList.contains('hidden'))
@@ -69,12 +69,12 @@ check('Anonymous, short and unlisted numbers do not acquire a teaching-space loc
 check('An extension listed against two rooms displays and saves both without choosing one', () => {
   const e = environment({ g1: [] })
   e.showCall({ number: '52170', transactionId: 'fictional-two-rooms' })
-  assert.equal(callRoom(e).textContent, '04_2_22 / 04_2_24')
+  assert.equal(callRoom(e).textContent, '03_1_06 / 03_1_08')
   e.showWrapUp(120, { number: '52170', transactionId: 'fictional-two-rooms', seconds: 25 })
-  assert.equal(records(e)[0].roomLocation, '04_2_22 / 04_2_24')
+  assert.equal(records(e)[0].roomLocation, '03_1_06 / 03_1_08')
   openNotes(e)
   const search = e.ui().querySelector('.history-search')
-  for (const room of ['04_2_22', '04_2_24']) {
+  for (const room of ['03_1_06', '03_1_08']) {
     search.value = room
     search.oninput()
     assert.equal(cards(e).length, 1)
@@ -82,7 +82,7 @@ check('An extension listed against two rooms displays and saves both without cho
 })
 check('Named campus prefixes retain their room IDs and omit descriptions and dangling dashes', () => {
   const e = environment({ g1: [] })
-  for (const [number, room] of [['50277', 'BIHSN_1_04'], ['51623', 'BRIS_2_24'], ['51633', 'RH_HG_316']]) {
+  for (const [number, room] of [['51622', 'BIHSN_1_04'], ['55892', 'BRIS_2_44'], ['51302', 'RH_HG_316']]) {
     e.showCall({ number, transactionId: 'fictional-campus-' + number })
     assert.equal(callRoom(e).textContent, room)
     e.showWrapUp(120, { number, transactionId: 'fictional-campus-' + number, seconds: 20 })
@@ -194,14 +194,14 @@ check('Room searches cover every matching page and combine with existing filters
 check('Room metadata round-trips through TXT and old exports gain their phone-based match once', () => {
   const e = environment({ g1: [] })
   const text = api(e).exportCallNotesText([record(1, '52170')])
-  assert(text.includes('Room location: "04_2_22 / 04_2_24"'))
+  assert(text.includes('Room location: "03_1_06 / 03_1_08"'))
   const parsed = api(e).parseCallNotesText(text)
-  assert.equal(parsed[0].roomLocation, '04_2_22 / 04_2_24')
+  assert.equal(parsed[0].roomLocation, '03_1_06 / 03_1_08')
   const older = text.replace(/^Room location:.*\r?\n/gm, '')
   api(e).importCallNotesText(older)
   api(e).importCallNotesText(text)
   assert.equal(records(e).length, 1)
-  assert.equal(records(e)[0].roomLocation, '04_2_22 / 04_2_24')
+  assert.equal(records(e)[0].roomLocation, '03_1_06 / 03_1_08')
   assert.equal(api(e).statistics().total, 0)
 })
 check('A captured historical room survives a TXT transfer even without a current directory match', () => {
@@ -271,9 +271,9 @@ check('The dedicated register lists every named room, including rooms without an
   const e = environment({ g1: [] })
   assert.equal(e.ui().querySelector('.teaching-table').querySelector('tbody').children.length, 0)
   openRegister(e)
-  assert.equal(e.ui().querySelector('.teaching-table').querySelector('tbody').children.length, 178)
+  assert.equal(e.ui().querySelector('.teaching-table').querySelector('tbody').children.length, 224)
   assert.equal(registerInput(e, 'Extension for 01_1_39').value, '50292')
-  assert.equal(registerInput(e, 'Extension for 01_1_56').value, '')
+  assert.equal(registerInput(e, 'Extension for 01_1_54').value, '')
   assert.equal(registerInput(e, 'Room ID for BRIS_2_24').value, 'BRIS_2_24')
   e.ui().querySelector('.teaching-register').querySelector('.menu-header').querySelector('button').onclick()
   assert(!e.ui().querySelector('.assistant-settings').classList.contains('hidden'))
@@ -297,16 +297,16 @@ check('Register edits update live matching and persist while earlier notes retai
 check('A room with no phone can gain an extension, and a cleared extension stops future matching', () => {
   const e = environment({ g1: [] })
   openRegister(e)
-  setRegister(e, 'Extension for 01_1_56', '59998')
+  setRegister(e, 'Extension for 01_1_54', '59998')
   e.showCall({ number: '59998', transactionId: 'fictional-new-room-phone' })
-  assert.equal(callRoom(e).textContent, '01_1_56')
+  assert.equal(callRoom(e).textContent, '01_1_54')
   e.showWrapUp(120, { number: '59998', transactionId: 'fictional-new-room-phone', seconds: 30 })
   e.restoreMain()
   openRegister(e)
-  setRegister(e, 'Extension for 01_1_56', '')
+  setRegister(e, 'Extension for 01_1_54', '')
   e.showCall({ number: '59998', transactionId: 'fictional-cleared-room-phone' })
   assert(callRoom(e).parentElement.classList.contains('hidden'))
-  assert.equal(records(e)[0].roomLocation, '01_1_56')
+  assert.equal(records(e)[0].roomLocation, '01_1_54')
 })
 check('Several rooms can share an extension without a guessed single-room assignment', () => {
   const e = environment({ g1: [] })
@@ -325,7 +325,7 @@ check('Invalid register edits preserve the last valid values and Escape restores
   assert.equal(field.value, '50292')
   setRegister(e, 'Room ID for 01_1_41', '01_1_39')
   assert.equal(new Map(preferences(e).teachingSpaces).get('01_1_41'), '50192')
-  assert.equal(new Map(preferences(e).teachingSpaces).size, 178)
+  assert.equal(new Map(preferences(e).teachingSpaces).size, 224)
 })
 check('Register search narrows rows by room or extension without rebuilding an active input', () => {
   const e = environment({ g1: [] })
@@ -333,13 +333,13 @@ check('Register search narrows rows by room or extension without rebuilding an a
   const search = registerInput(e, 'Search Teaching Space Register')
   search.value = '51623'
   search.oninput()
-  assert.equal(e.ui().querySelector('.teaching-count').textContent, '1 of 178 teaching spaces')
-  const field = registerInput(e, 'Extension for BRIS_2_24')
+  assert.equal(e.ui().querySelector('.teaching-count').textContent, '1 of 224 teaching spaces')
+  const field = registerInput(e, 'Extension for BIHSN_1_05')
   field.value = '512'
   field.oninput()
   field.selectionStart = 2
   e.scan()
-  assert.equal(registerInput(e, 'Extension for BRIS_2_24'), field)
+  assert.equal(registerInput(e, 'Extension for BIHSN_1_05'), field)
   assert.equal(field.value, '512')
   assert.equal(field.selectionStart, 2)
 })
@@ -385,5 +385,47 @@ check('Register corrections survive rerunning even when browser preference stora
   e.rerun()
   e.showCall({ number: '59999', transactionId: 'fictional-memory-register' })
   assert.equal(callRoom(e).textContent, '01_1_39')
+})
+check('CSV defaults correct the shifted mappings and retain every no-phone room', () => {
+  const e = environment({ g1: [] })
+  const spaces = new Map(api(e).teachingSpaceSession().spaces)
+  assert.equal(spaces.size, 224)
+  assert.equal([...spaces.values()].filter(extension => !extension).length, 77)
+  assert.equal(spaces.get('03B_3_19'), '')
+  assert.equal(spaces.get('BR240_26_12'), '')
+  assert.equal(spaces.get('04_2_24'), '')
+  for (const [number, room] of [['50298', '04_2_22'], ['51623', 'BIHSN_1_05'], ['51302', 'RH_HG_316'], ['51634', 'BIHSN_1_20']]) {
+    e.showCall({ number, transactionId: 'fictional-csv-correction-' + number })
+    assert.equal(callRoom(e).textContent, room)
+  }
+})
+check('Cancelling CSV restore preserves the saved register and an unfinished row edit', () => {
+  const e = environment({ g1: [], teachingSpaces: [['01_1_39', '59999']] })
+  openRegister(e)
+  const field = setRegister(e, 'Extension for 01_1_39', '59998', false)
+  let prompted = false
+  e.window.confirm = message => { prompted = message.includes('saved Call Notes'); return false }
+  e.button('Restore CSV defaults').onclick()
+  assert(prompted)
+  assert.equal(field.value, '59998')
+  assert.equal(api(e).teachingSpaceSession().spaces.length, 1)
+  assert.equal(new Map(api(e).teachingSpaceSession().spaces).get('01_1_39'), '59999')
+})
+check('Confirmed CSV restore replaces an old saved register and preserves completed Call Notes', () => {
+  const e = environment({ g1: [], teachingSpaces: [['04_2_22', '52170'], ['04_2_24', '52170']] })
+  api(e).importCallNotesText(api(e).exportCallNotesText([record(1, '52170', { roomLocation: '04_2_22 / 04_2_24' })]))
+  const before = JSON.stringify(records(e))
+  openRegister(e)
+  setRegister(e, 'Extension for 04_2_22', '1234', false)
+  e.window.confirm = () => true
+  e.button('Restore CSV defaults').onclick()
+  assert.equal(registerInput(e, 'Extension for 04_2_22').value, '50298')
+  assert.equal(registerInput(e, 'Extension for 03_1_06').value, '52170')
+  assert.equal(new Map(preferences(e).teachingSpaces).size, 224)
+  assert.equal(JSON.stringify(records(e)), before)
+  e.rerun()
+  e.showCall({ number: '52170', transactionId: 'fictional-restored-csv' })
+  assert.equal(callRoom(e).textContent, '03_1_06 / 03_1_08')
+  assert.equal(JSON.stringify(records(e)), before)
 })
 console.log(`${passed} teaching-room scenarios passed.`)
